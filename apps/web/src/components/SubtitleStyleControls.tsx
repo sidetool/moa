@@ -80,15 +80,24 @@ export function SubtitlePreview({ look, size }: { look: SubtitleLook; size?: Siz
 /** Slider for quick changes, with the value beside it editable for an exact number. */
 function Range({ label, value, min, max, step, unit, empty, disabled, onSlide, onCommit }: { label: string; value: number | null; min: number; max: number; step: number; unit: string; empty?: string; disabled?: boolean; onSlide: (value: number) => void; onCommit: (value: number) => void }) {
   const text = value === null ? '' : String(value);
-  const [draft, setDraft] = useState(text);
-  useEffect(() => { setDraft(text); }, [text]);
+  const [draft, setDraftState] = useState(text);
+  // Mirrors the draft synchronously, so Escape and unmount read the latest text.
+  const latest = useRef(text);
+  const setDraft = (next: string) => { latest.current = next; setDraftState(next); };
+  useEffect(() => { setDraft(text); }, [text]); // eslint-disable-line react-hooks/exhaustive-deps
   const commit = () => {
-    const next = Number(draft.replace(',', '.'));
-    if (draft.trim() === '' || !Number.isFinite(next)) { setDraft(text); return; }
+    const typed = latest.current;
+    if (typed === text) return;
+    const next = Number(typed.replace(',', '.'));
+    if (typed.trim() === '' || !Number.isFinite(next)) { setDraft(text); return; }
     const clamped = Math.min(max, Math.max(min, Math.round(next * 10) / 10));
     setDraft(String(clamped));
     if (clamped !== value) onCommit(clamped);
   };
+  // Closing the panel while typing removes the field without a blur; keep what was typed.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  useEffect(() => () => commitRef.current(), []);
   const position = value ?? min;
   return (
     <div className="sub-style-range">
