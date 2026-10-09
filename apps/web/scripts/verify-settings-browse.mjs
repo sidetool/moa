@@ -47,21 +47,23 @@ try {
     });
     const base = server.resolvedUrls.local[0];
     await page.goto(`${base}settings`);
-    const category = page.getByRole('combobox', { name: '설정 카테고리', exact: true });
+    const title = page.locator('.settings-panel-head h2');
     const menu = page.getByRole('navigation', { name: '설정 메뉴', exact: true });
-    await (width >= 900 ? menu : category).waitFor();
+    await menu.waitFor();
     assert.equal(await page.locator('.settings-panel > .settings-group').count(), 1);
     assert.equal(await page.getByRole('combobox', { name: 'defaultSubtitleLang', exact: true }).count(), 0);
-    if (width >= 900) {
-      assert.equal(await category.isVisible(), false);
+    // Wide screens show a category beside the menu; narrow screens open on the menu alone.
+    assert.equal(await title.isVisible(), width >= 900);
+    await menu.getByRole('link', { name: '자막', exact: true }).click();
+    await title.filter({ hasText: '자막' }).waitFor();
+    if (width >= 900) await menu.locator('[aria-current="page"]').filter({ hasText: '자막' }).waitFor();
+    else assert.equal(await page.locator('.settings-nav').isVisible(), false);
+    if (width < 900) {
+      await page.getByRole('link', { name: '설정', exact: true }).click();
+      await menu.waitFor();
+      assert.equal(await title.isVisible(), false);
       await menu.getByRole('link', { name: '자막', exact: true }).click();
-      await menu.locator('[aria-current="page"]').filter({ hasText: '자막' }).waitFor();
-    } else {
-      assert.equal(await menu.isVisible(), false);
-      await category.click();
-      assert.equal(await page.getByRole('listbox', { name: '설정 카테고리' }).evaluate(element => getComputedStyle(element).animationName), 'pop');
-      await category.press('ArrowDown');
-      await category.press('Enter');
+      await title.filter({ hasText: '자막' }).waitFor();
     }
     await page.getByRole('combobox', { name: 'defaultSubtitleLang', exact: true }).waitFor();
     assert.ok(page.url().endsWith('#subtitles'));
@@ -71,11 +73,11 @@ try {
     await page.goto(`${base}settings/tabs?edit=home`);
     await page.getByRole('dialog').waitFor();
     await page.getByRole('button', { name: '닫기', exact: true }).click();
-    assert.equal(await (width >= 900 ? menu.locator('[aria-current="page"]') : category).textContent(), '홈 화면');
+    assert.equal(await title.textContent(), '홈 화면');
     await page.goto(`${base}settings#updates`);
     await page.getByRole('heading', { name: '시스템 정보', exact: true }).waitFor();
     await page.locator('#updates').waitFor();
-    assert.equal(await (width >= 900 ? menu.locator('[aria-current="page"]') : category).textContent(), '정보');
+    assert.equal(await title.textContent(), '정보');
     await page.goto(`${base}settings#subtitle-advanced`);
     await page.getByRole('region', { name: '자막 고급설정', exact: true }).waitFor();
     await page.emulateMedia({ reducedMotion: 'reduce' });

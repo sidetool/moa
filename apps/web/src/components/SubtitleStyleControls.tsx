@@ -1,5 +1,6 @@
 import type { Settings } from '@moa/shared';
 import { useQueryClient } from '@tanstack/react-query';
+import { RotateCcw } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { keys } from '../api/queries';
 import { cx } from '../lib/format';
@@ -97,7 +98,7 @@ function Range({ label, value, min, max, step, unit, empty, disabled, onSlide, o
         <input type="number" inputMode="decimal" aria-label={label} min={min} max={max} step="any" value={draft} placeholder={empty} disabled={disabled}
           onChange={event => setDraft(event.target.value)} onBlur={commit}
           onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); else if (event.key === 'Escape') { setDraft(text); event.currentTarget.blur(); } }} />
-        {(value !== null || draft !== '') && <span>{unit}</span>}
+        <span>{value !== null || draft !== '' ? unit : ''}</span>
       </label>
     </div>
   );
@@ -136,17 +137,19 @@ export function SubtitleStyleControls({ settings, save, variant = 'page' }: { se
     if (immediate) flush(); else timer.current = window.setTimeout(flush, 400);
   };
   const changed = (key: keyof SubtitleLook) => look[key] !== DEFAULT[key];
-  const reset = (key: keyof SubtitleLook) => changed(key) && <button type="button" className="sub-style-reset" onClick={() => change({ [key]: DEFAULT[key] }, true)}>기본</button>;
   const anyChanged = (Object.keys(DEFAULT) as Array<keyof SubtitleLook>).some(changed);
   const preset = PRESETS.find(([, , scale]) => scale === look.scale);
   const boxed = look.background !== 'none';
 
+  // The reset sits beside the label so the controls keep the full width.
   const row = (key: keyof SubtitleLook, label: string, control: React.ReactNode, hint?: string) => (
     <div className={cx('sub-style-row', `is-${key}`)}>
-      <span className="sub-style-label">{label}</span>
-      <div className="sub-style-control">{control}</div>
-      <span className="sub-style-reset-slot">{reset(key)}</span>
-      {hint && <small className="sub-style-hint">{hint}</small>}
+      <span className="sub-style-label">
+        {label}
+        <button type="button" className="sub-style-reset" aria-label={`${label} 기본값으로`} title="기본값으로" tabIndex={changed(key) ? 0 : -1} aria-hidden={!changed(key)}
+          onClick={() => change({ [key]: DEFAULT[key] }, true)}><RotateCcw size={13} /></button>
+      </span>
+      <div className="sub-style-control">{control}{hint && <small className="sub-style-hint">{hint}</small>}</div>
     </div>
   );
 

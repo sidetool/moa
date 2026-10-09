@@ -518,31 +518,31 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 .sub-style-reset-all:hover { background: rgba(0, 0, 0, .75); }
 .sub-style-reset-all.is-inline { position: static; justify-self: start; background: rgba(255, 255, 255, .08); backdrop-filter: none; }
 .sub-style-reset-all.is-inline:hover { background: rgba(255, 255, 255, .14); }
-.sub-style-rows { display: grid; gap: 14px; }
-.sub-style-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 46px; align-items: center; gap: 6px 14px; }
-.sub-style-row.is-scale { align-items: start; }
-.sub-style-row.is-scale > .sub-style-label, .sub-style-row.is-scale > .sub-style-reset-slot { display: flex; align-items: center; min-height: 24px; }
-.sub-style-label { color: var(--text-2); font-size: .9rem; font-weight: 650; }
+/* One grid for every row, so the label column is as wide as the longest label and controls line up. */
+.sub-style-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 14px 16px; }
+.sub-style-row { display: contents; }
+.sub-style-label { display: flex; align-items: center; gap: 4px; align-self: start; min-height: 34px; color: var(--text-2); font-size: .9rem; font-weight: 650; white-space: nowrap; }
+.sub-style-row.is-background > .sub-style-label { min-height: 40px; }
 .sub-style-control { display: grid; gap: 10px; min-width: 0; }
-.sub-style-reset-slot { display: flex; justify-content: flex-end; }
-.sub-style-reset { height: 28px; padding: 0 10px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: var(--text-2); font-size: .78rem; font-weight: 650; }
-.sub-style-reset:hover { background: rgba(255, 255, 255, .14); color: #fff; }
-.sub-style-hint { grid-column: 2 / -1; margin-top: -4px; color: var(--text-3); font-size: .8rem; }
-.sub-style-range { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sub-style-reset { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--text-3); transition: background-color .12s, color .12s, opacity .12s; }
+.sub-style-reset:hover { background: rgba(255, 255, 255, .1); color: #fff; }
+.sub-style-reset[aria-hidden=true] { opacity: 0; pointer-events: none; }
+.sub-style-hint { margin-top: -4px; color: var(--text-3); font-size: .8rem; }
+.sub-style-range { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 34px; }
 .sub-style-range input { flex: 1; min-width: 0; height: 24px; margin: 0; -webkit-appearance: none; appearance: none; background: linear-gradient(90deg, var(--range-fill) var(--fill), rgba(255, 255, 255, .18) var(--fill)) center / 100% 4px no-repeat; border-radius: 2px; cursor: pointer; }
 .sub-style-range input::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .5); transition: transform .12s; }
 .sub-style-range input::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .5); }
 .sub-style-range input:active::-webkit-slider-thumb { transform: scale(1.15); }
 .sub-style-range input:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 .sub-style-range input:disabled { opacity: .35; cursor: default; }
-.sub-style-value { display: flex; align-items: center; justify-content: flex-end; gap: 2px; width: 74px; height: 34px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--radius-s); background: rgba(255, 255, 255, .06); cursor: text; transition: border-color .12s, background-color .12s; }
+.sub-style-value { display: flex; align-items: center; flex: none; width: 76px; height: 34px; padding: 0 6px 0 8px; border: 1px solid transparent; border-radius: var(--radius-s); background: rgba(255, 255, 255, .06); cursor: text; transition: border-color .12s, background-color .12s; }
 .sub-style-value:hover { background: rgba(255, 255, 255, .1); }
 .sub-style-value:focus-within { border-color: var(--range-fill); background: rgba(255, 255, 255, .1); }
 .sub-style-value.is-disabled { opacity: .35; cursor: default; }
-.sub-style-value input { width: 100%; min-width: 0; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: .88rem; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; outline: 0; -moz-appearance: textfield; }
+.sub-style-value input { flex: 1; width: 0; min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: .9rem; font-weight: 650; font-variant-numeric: tabular-nums; text-align: right; outline: 0; -moz-appearance: textfield; }
 .sub-style-value input::-webkit-inner-spin-button, .sub-style-value input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-.sub-style-value input::placeholder { color: var(--text-2); opacity: 1; }
-.sub-style-value span { flex: none; color: var(--text-3); font-size: .78rem; }
+.sub-style-value input::placeholder { color: var(--text-2); font-weight: 600; opacity: 1; }
+.sub-style-value span { flex: none; width: 20px; padding-left: 3px; color: var(--text-3); font-size: .76rem; }
 .sub-style-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .sub-style-presets button { height: 28px; padding: 0 11px; border: 1px solid var(--hairline-strong); border-radius: 999px; color: var(--text-2); font-size: .8rem; font-weight: 600; transition: background-color .12s, color .12s, border-color .12s; }
 .sub-style-presets button:hover { border-color: var(--text-3); color: #fff; }
@@ -552,10 +552,9 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 
 @media (max-width: 480px) {
   .sub-style.is-page { padding: 14px; }
-  .sub-style-row, .sub-style-row.is-scale { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
-  .sub-style-row > .sub-style-reset-slot { grid-area: 1 / 2; }
-  .sub-style-row > .sub-style-control, .sub-style-hint { grid-column: 1 / -1; }
-  .sub-style-row > .sub-style-reset-slot, .sub-style-row.is-scale > .sub-style-reset-slot { min-height: 28px; }
-  .sub-style-hint { margin-top: -2px; }
+  .sub-style.is-page .sub-style-rows { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .sub-style.is-page .sub-style-label { min-height: 28px; margin-top: 10px; }
+  .sub-style.is-page .sub-style-row:first-child > .sub-style-label { margin-top: 0; }
   .sub-style .seg button { padding: 0 4px; font-size: .84rem; }
+}
 }

@@ -23,7 +23,7 @@ export function NetworkSettings() {
   return <section className="settings-group" id="network">
     <h2>소스 연결</h2>
     <div className="settings-card">
-      {query.isPending ? <Skeleton className="folder-sk" /> : query.isError ? <p className="settings-error" role="alert">연결 설정을 불러오지 못했어요. <button className="text-btn" onClick={() => void query.refetch()}>다시 시도</button></p> :
+      {query.isPending ? <Skeleton className="folder-sk" /> : query.isError ? <div className="setting"><div><b>연결 설정을 불러오지 못했어요.</b></div><Button onClick={() => void query.refetch()}>다시 시도</Button></div> :
         <form className="network-form" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
           <div><b>기본 프록시</b><small>HTTP·HTTPS·SOCKS5 지원. 비워 두면 직접 연결합니다. 모든 프로필에 적용돼요.</small></div>
           <input aria-label="기본 프록시 주소" type="text" spellCheck={false} placeholder="직접 연결 (예: socks5://서버주소:1080)" value={address} onChange={e => edit(e.target.value)} />

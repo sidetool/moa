@@ -77,7 +77,7 @@ export function UpdateSettings() {
         {release && data.connected && data.state === 'rolling-back' && <div className="setting"><div><b>문제가 생겨 이전 버전으로 되돌리는 중이에요</b><small>저장된 데이터는 그대로 두고 이전 버전을 다시 실행해요.</small></div></div>}
         {release && data.state === 'rolled-back' && <p className="settings-hint translation-message" role="status">새 버전에 문제가 있어 이전 버전으로 되돌렸어요.</p>}
         {release && data.state === 'recovery-required' && error !== 'update-recovery-required' && <p className="settings-error translation-message" role="alert">{updateErrors['update-recovery-required']}</p>}
-        <div className="setting"><div><b>{data.checkedAt ? `최근 확인 · ${when(data.checkedAt)}` : '새 버전을 확인합니다'}</b><small>{release
+        <div className="setting"><div><b>{data.checkedAt ? `최근 확인 · ${when(data.checkedAt)}` : '새 버전 확인'}</b><small>{release
           ? '6시간마다 확인해요. 설치는 직접 할 때만 해요.'
           : data.state === 'restart-required' ? '빌드를 마쳤어요. 호스트에서 MOA 서버를 재시작해 주세요.' : data.ahead ? `현재 브랜치에 원격보다 앞선 커밋이 ${data.ahead}개 있어요.` : '업데이트 중에는 재생과 접속이 잠시 끊길 수 있어요.'}</small></div><Button disabled={!data.connected || busy} onClick={() => action.mutate('check')}>업데이트 확인</Button></div>
         {data.connected && data.state === 'available' && <div className="setting"><div>
