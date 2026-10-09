@@ -4,7 +4,7 @@ import { SubtitleLibrarySettings } from '../components/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
 import { NavigationSettings } from "../components/NavigationSettings";
 import { devicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
-import { ChevronLeft, FlaskConical, Languages, LayoutGrid, MonitorSmartphone, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
+import { ChevronLeft, FlaskConical, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -174,21 +174,23 @@ export function SettingsPage() {
   const { pathname, hash } = useLocation();
   // Grouped by where a choice applies: the profile, this device only, or the whole server.
   const categories: Array<{ value: string; label: string; group: string; icon: React.ReactNode; scope: string }> = [
-    { value: "playback", label: "재생", group: "프로필", icon: <Play size={18} />, scope: "이 프로필의 모든 기기에 적용돼요." },
+    { value: "playback", label: "재생", group: "프로필", icon: <Play size={18} />, scope: "‘이 기기에서만’ 항목은 이 브라우저에만, 나머지는 이 프로필의 모든 기기에 적용돼요." },
     { value: "subtitles", label: "자막", group: "프로필", icon: <Subtitles size={18} />, scope: "이 프로필의 모든 기기에 적용돼요. 싱크는 영상과 기기마다 따로 저장돼요." },
     { value: "tabs", label: "홈 화면", group: "프로필", icon: <LayoutGrid size={18} />, scope: "이 프로필의 모든 기기에 적용돼요." },
     ...(hasLoginGate ? [{ value: "account", label: "내 계정", group: "프로필", icon: <UserRound size={18} />, scope: "로그인한 계정에 적용돼요." }] : []),
-    { value: "device", label: "이 기기", group: "기기", icon: <MonitorSmartphone size={18} />, scope: "이 브라우저에만 저장돼요." },
-    { value: "experimental", label: "실험 기능", group: "기기", icon: <FlaskConical size={18} />, scope: "이 브라우저에만 저장돼요. 동작이 바뀌거나 없어질 수 있어요." },
+    { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "리모컨·키보드·터치로 다루는 방식이에요. 이 브라우저에만 저장돼요." },
+    { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "이 브라우저에만 저장돼요. 동작이 바뀌거나 없어질 수 있어요." },
     ...(admin ? [
-      { value: "library", label: "소스와 라이브러리", group: "관리자", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
-      { value: "plugins", label: "플러그인과 자막", group: "관리자", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
-      { value: "translation", label: "번역 서비스", group: "관리자", icon: <Languages size={18} />, scope: "모든 프로필의 AI 자막 번역에 쓰여요." },
-      { value: "network", label: "네트워크", group: "관리자", icon: <Network size={18} />, scope: "모든 프로필에 적용돼요." }
+      { value: "library", label: "소스와 라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
+      { value: "plugins", label: "플러그인", group: "서버 관리", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
+      { value: "translation", label: "번역 서비스", group: "서버 관리", icon: <Languages size={18} />, scope: "모든 프로필의 AI 자막 번역에 쓰여요." },
+      { value: "network", label: "네트워크", group: "서버 관리", icon: <Network size={18} />, scope: "모든 프로필에 적용돼요." }
     ] : []),
     { value: "about", label: "정보", group: "", icon: <Info size={18} />, scope: "버전, 업데이트와 크레딧" }
   ];
-  const requested = pathname === "/settings/tabs" ? "tabs" : hash === "#subtitle-advanced" ? "subtitles" : hash === "#updates" ? "about" : hash.slice(1);
+  // Older addresses keep working after categories were merged.
+  const aliases: Record<string, string> = { "subtitle-advanced": "subtitles", updates: "about", device: "controls" };
+  const requested = pathname === "/settings/tabs" ? "tabs" : aliases[hash.slice(1)] ?? hash.slice(1);
   // Narrow screens open on the category list; wide screens always show a category beside it.
   const chosen = categories.find(item => item.value === requested);
   const current = chosen ?? categories[0];
@@ -229,6 +231,7 @@ export function SettingsPage() {
       </header>
       {category === "account" && hasLoginGate && <AccountSection />}
       {category === "playback" && <section className="settings-group">
+        <h2>모든 기기</h2>
         <div className="settings-card">
           {row("다음 화 자동 재생", "에피소드가 끝나면 다음 화를 이어서 재생합니다.", <Toggle label="다음 화 자동 재생" checked={s.autoplayNext} onChange={value => void save({ autoplayNext: value })} />)}
           {s.autoplayNext && row("자동 재생 대기 시간", "다음 화 카드가 나온 뒤 재생까지 기다리는 시간", select("autoplayDelay", [[3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]]))}
@@ -237,6 +240,15 @@ export function SettingsPage() {
           {row("하드웨어 변환", "브라우저가 재생할 수 없는 영상을 서버 GPU로 변환합니다.", <Toggle label="하드웨어 변환" checked={s.hardwareTranscoding} onChange={value => void save({ hardwareTranscoding: value })} />)}
         </div>
       </section>}
+      {category === "playback" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
+        {row("재생 시 전체 화면", "작품을 누르면 바로 전체 화면으로 재생합니다. 끄면 재생 화면에서 직접 전환해요.", <Toggle label="재생 시 전체 화면" checked={device.fullscreenOnPlay} onChange={value => setPref("fullscreenOnPlay", value)} />)}
+        {row("오프닝·엔딩 자동 건너뛰기", "구간 정보가 있는 회차에서 오프닝과 엔딩을 알아서 넘깁니다. 되감으면 다시 볼 수 있어요.", <Toggle label="오프닝·엔딩 자동 건너뛰기" checked={device.autoSkip} onChange={value => setPref("autoSkip", value)} />)}
+        {row("화면 채우기", "영상을 화면 비율에 맞춰 꽉 채웁니다. 가장자리가 조금 잘릴 수 있어요.", <Toggle label="화면 채우기" checked={device.videoFill} onChange={value => setPref("videoFill", value)} />)}
+      </div></section>}
+      {category === "controls" && <section className="settings-group"><div className="settings-card">
+        {row("TV 리모컨 모드", "방향키로 이동하고 확인 버튼으로 선택합니다. 자동 모드는 TV 감지 또는 탐색 화면의 방향키 입력으로 켜집니다.", <Select className="setting-select" aria-label="TV 리모컨 모드" value={remote} onChange={value => { setRemote(value as RemotePreference); setRemotePreference(value as RemotePreference); }} options={[{ value: "auto", label: "자동" }, { value: "on", label: "항상 켜기" }, { value: "off", label: "끄기" }]} />)}
+        {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 J·L 키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />)}
+      </div></section>}
       {category === "subtitles" && <section className="settings-group">
         <h2>언어와 자동 찾기</h2>
         <div className="settings-card">
@@ -251,12 +263,8 @@ export function SettingsPage() {
         <div className="settings-card"><SubtitleStyleControls settings={s} save={patch => void save(patch)} /></div>
         <p className="settings-hint">싱크는 재생 화면의 자막 설정에서 조절해요.</p>
       </section>}
-      {category === "device" && <section className="settings-group"><div className="settings-card">
-        {row("재생 시 전체 화면", "작품을 누르면 바로 전체 화면으로 재생합니다. 끄면 재생 화면에서 직접 전환해요.", <Toggle label="재생 시 전체 화면" checked={device.fullscreenOnPlay} onChange={value => setPref("fullscreenOnPlay", value)} />)}
-        {row("오프닝·엔딩 자동 건너뛰기", "구간 정보가 있는 회차에서 오프닝과 엔딩을 알아서 넘깁니다. 되감으면 다시 볼 수 있어요.", <Toggle label="오프닝·엔딩 자동 건너뛰기" checked={device.autoSkip} onChange={value => setPref("autoSkip", value)} />)}
-        {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 J·L 키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />)}
-        {row("화면 채우기", "영상을 화면 비율에 맞춰 꽉 채웁니다. 가장자리가 조금 잘릴 수 있어요.", <Toggle label="화면 채우기" checked={device.videoFill} onChange={value => setPref("videoFill", value)} />)}
-        {row("TV 리모컨 모드", "방향키로 이동하고 확인 버튼으로 선택합니다. 자동 모드는 TV 감지 또는 탐색 화면의 방향키 입력으로 켜집니다.", <Select className="setting-select" aria-label="TV 리모컨 모드" value={remote} onChange={value => { setRemote(value as RemotePreference); setRemotePreference(value as RemotePreference); }} options={[{ value: "auto", label: "자동" }, { value: "on", label: "항상 켜기" }, { value: "off", label: "끄기" }]} />)}
+      {admin && category === "subtitles" && <section className="settings-group"><h2>보관함 · 관리자</h2><div className="settings-card">
+        {link("/subtitles", <FolderOpen size={20} />, "저장한 자막", "AI 번역·온라인·직접 가져온 자막 파일을 모든 프로필에서 관리")}
       </div></section>}
       {category === "experimental" && <section className="settings-group"><div className="settings-card">
         {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}
@@ -264,21 +272,20 @@ export function SettingsPage() {
       </div></section>}
       {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /></>}<section className="settings-group"><h2>크레딧</h2><div className="settings-card">{link("/about", <Info size={20} />, "정보/크레딧", "작품 정보 제공 및 오픈소스 라이선스")}</div></section></>}
       {category === "tabs" && <NavigationSettings />}
-      {admin && category === "plugins" && <section className="settings-group"><div className="settings-card">
-        {link("/plugins", <Puzzle size={20} />, "플러그인", "추가 기능 실행과 설치·업데이트")}
-        {link("/subtitles", <Subtitles size={20} />, "저장한 자막", "AI 번역·온라인·직접 가져온 자막 관리")}
-      </div></section>}
       {admin && category === "library" && <section className="settings-group">
         <div className="settings-card">
           {link("/sources", <Tv size={20} />, "영상 소스", "확장 저장소, 소스 설치·업데이트·설정")}
           {link("/library", <FolderOpen size={20} />, "로컬 라이브러리", "영상 폴더 추가와 스캔")}
           <TmdbSettings />
-          {link("/remote-access", <Globe size={20} />, "원격 접속", "집 밖에서도 MOA 열기 · 주소와 QR")}
         </div>
         <p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
       </section>}
+      {admin && category === "plugins" && <WebsitePlugins admin />}
       {admin && category === "translation" && <TranslationSettings />}
-      {admin && category === "network" && <NetworkSettings />}
+      {admin && category === "network" && <>
+        <section className="settings-group"><h2>원격 접속</h2><div className="settings-card">{link("/remote-access", <Globe size={20} />, "원격 접속", "집 밖에서도 MOA 열기 · 주소와 QR")}</div></section>
+        <NetworkSettings />
+      </>}
       </div>
       </div>
     </div>

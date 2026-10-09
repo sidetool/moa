@@ -50,7 +50,7 @@ try {
     const title = page.locator('.settings-panel-head h2');
     const menu = page.getByRole('navigation', { name: '설정 메뉴', exact: true });
     await menu.waitFor();
-    assert.equal(await page.locator('.settings-panel > .settings-group').count(), 1);
+    assert.equal(await page.locator('.settings-panel > .settings-group').count(), 2);
     assert.equal(await page.getByRole('combobox', { name: 'defaultSubtitleLang', exact: true }).count(), 0);
     // Wide screens show a category beside the menu; narrow screens open on the menu alone.
     assert.equal(await title.isVisible(), width >= 900);
