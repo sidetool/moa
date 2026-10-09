@@ -1,9 +1,13 @@
 import type { SubtitlePreference, SubtitleTrack } from '@moa/shared';
-import { api, currentProfileId } from '../lib/api';
+import { api, ApiError, currentProfileId } from '../lib/api';
 
 const choiceKey = (episodeId: string) => `moa.subtitleChoice:${JSON.stringify([currentProfileId(), episodeId])}`;
 const choices = new Map<string, SubtitlePreference | null>();
 const saves = new Map<string | null, Promise<void>>();
+const synced = new Set<string>();
+const syncKey = (key: string) => `moa.subtitleSynced:${key}`;
+const wasSynced = (key: string) => { try { return synced.has(key) || localStorage.getItem(syncKey(key)) === '1'; } catch { return synced.has(key); } };
+const markSynced = (key: string) => { synced.add(key); try { localStorage.setItem(syncKey(key), '1'); } catch {} };
 const revisions = new Map<string, number>();
 export async function loadSubtitlePreference(episodeId: string, signal: AbortSignal) {
   const profile = currentProfileId(), key = choiceKey(episodeId);
@@ -11,10 +15,28 @@ export async function loadSubtitlePreference(episodeId: string, signal: AbortSig
   if (signal.aborted || currentProfileId() !== profile) return undefined;
   const revision = revisions.get(key);
   try {
-    const result = await api<{ choice?: SubtitlePreference | null }>(`/episodes/${encodeURIComponent(episodeId)}/subtitles/preference`, { signal });
+    let result = await api<{ choice?: SubtitlePreference | null }>(`/episodes/${encodeURIComponent(episodeId)}/subtitles/preference`, { signal });
     if (signal.aborted || currentProfileId() !== profile) return undefined;
     if (revisions.get(key) !== revision) return subtitlePreference(episodeId);
     if (!result) return subtitlePreference(episodeId);
+    const legacy = subtitlePreference(episodeId);
+    if (result.choice === undefined && legacy !== undefined && !wasSynced(key)) {
+      // Serialize migration with manual saves; a later viewer action always wins.
+      const migrate = (saves.get(profile) ?? Promise.resolve()).catch(() => {}).then(async () => {
+        if (signal.aborted || currentProfileId() !== profile || revisions.get(key) !== revision) return;
+        try {
+          result = await api<{ choice?: SubtitlePreference | null }>(`/episodes/${encodeURIComponent(episodeId)}/subtitles/preference`, { method: 'PUT', body: { choice: legacy, migrate: true }, signal });
+        } catch (error) {
+          // Removed tracks and invalid old records should not be retried on every visit.
+          if (!(error instanceof ApiError) || ![400, 404].includes(error.status)) throw error;
+        }
+      });
+      saves.set(profile, migrate);
+      try { await migrate; } finally { if (saves.get(profile) === migrate) saves.delete(profile); }
+      if (signal.aborted || currentProfileId() !== profile) return undefined;
+      if (revisions.get(key) !== revision) return subtitlePreference(episodeId);
+    }
+    markSynced(key);
     choices.delete(key);
     if (result.choice !== undefined) choices.set(key, result.choice);
     try { if (result.choice === undefined) localStorage.removeItem(key); else localStorage.setItem(key, JSON.stringify(result.choice)); } catch {}
@@ -42,6 +64,7 @@ export function rememberSubtitle(episodeId: string, track: SubtitleTrack | null,
   const save = (saves.get(profile) ?? Promise.resolve()).catch(() => {}).then(async () => {
     if (currentProfileId() !== profile) return;
     await api(`/episodes/${encodeURIComponent(episodeId)}/subtitles/preference`, { method: 'PUT', body: { choice: value }, keepalive: true });
+    markSynced(key);
   });
   saves.set(profile, save);
   void save.finally(() => { if (saves.get(profile) === save) saves.delete(profile); }).catch(() => {});

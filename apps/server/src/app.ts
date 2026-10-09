@@ -397,10 +397,10 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   app.get('/api/episodes/:id/subtitles/uploads', { schema: { params: idParams() } }, async req => subtitleLibrary.tracks(params(req).id, profile(req), 'upload'));
   app.get('/api/episodes/:id/subtitles/preference', { schema: { params: idParams() } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.preference(params(req).id, profile(req))));
-  app.put('/api/episodes/:id/subtitles/preference', { schema: { params: idParams(), body: object({ choice: { anyOf: [{ type: 'null' }, object({
+  app.put('/api/episodes/:id/subtitles/preference', { schema: { params: idParams(), body: object({ migrate: { type: 'boolean' }, choice: { anyOf: [{ type: 'null' }, object({
     id: string, episodeId: string, label: { type: 'string', maxLength: 1000 }, lang: { type: 'string', maxLength: 32 },
     format: { type: 'string', enum: ['ass', 'vtt'] }, source: { type: 'string', enum: ['embedded', 'local', 'extension', 'upload', 'online', 'translation'] },
-  }, ['id', 'episodeId', 'label', 'format'])] } }, ['choice']) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.remember(params(req).id, profile(req), (req.body as { choice: import('@moa/shared').SubtitlePreference | null }).choice)));
+  }, ['id', 'episodeId', 'label', 'format'])] } }, ['choice']) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.remember(params(req).id, profile(req), (req.body as { choice: import('@moa/shared').SubtitlePreference | null }).choice, (req.body as { migrate?: boolean }).migrate)));
   app.get('/api/admin/subtitles', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.list()));
   const savedSubtitleParams = object({ kind: { type: 'string', enum: ['upload', 'translation', 'online'] }, id: string }, ['kind', 'id']);
   app.get('/api/admin/subtitles/:kind/:id/content', { schema: { params: savedSubtitleParams } }, async (req, reply) => {

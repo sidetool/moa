@@ -62,7 +62,13 @@ export class SubtitleLibrary {
     return title?.choice === 'null' ? { choice: null } : {};
   }
 
-  remember(episodeId: string, profileId: string, choice: SubtitlePreference | null) {
+  remember(episodeId: string, profileId: string, choice: SubtitlePreference | null, migrate = false) {
+    // Import an older browser's choice only while the server has no selection.
+    // This synchronous check also protects choices made on another device.
+    if (migrate) {
+      const saved = this.preference(episodeId, profileId);
+      if (saved.choice !== undefined) return saved;
+    }
     const { episodeIds } = this.related(episodeId, profileId);
     if (choice) {
       let origin = choice.episodeId;

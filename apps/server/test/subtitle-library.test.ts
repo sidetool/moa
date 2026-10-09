@@ -148,3 +148,27 @@ test('grouped episodes reuse saved tracks and profile subtitle choices across de
     assert.equal(server.db.get('SELECT count(*) AS n FROM subtitle_preferences')!.n, 0);
   } finally { await server.app.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('legacy choice migration fills missing choices without overwriting another device or grouped episode', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'moa-subtitle-migration-'));
+  const { app, db } = await buildApp({ dataDir: directory, mediaRoot: directory }, false);
+  try {
+    const id = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Viewer' } })).json().id;
+    const headers = { 'x-moa-profile': id };
+    db.run("INSERT INTO media VALUES('a',NULL,'A','anime','{}','2026'),('b',NULL,'B','anime','{}','2026')");
+    db.run("INSERT INTO episodes VALUES('a1','a',1,1,'1',600,NULL),('b1','b',1,1,'1',600,NULL)");
+    await app.inject({ method: 'PATCH', url: '/api/media/a/group', headers, payload: { action: 'merge', otherId: 'b' } });
+    const put = (episode: string, choice: unknown, migrate = true) => app.inject({ method: 'PUT', url: `/api/episodes/${episode}/subtitles/preference`, headers, payload: { choice, migrate } });
+    const choice = { id: 'embedded-1', episodeId: 'a1', label: 'English', lang: 'en', format: 'vtt', source: 'embedded' };
+    const first = await put('a1', choice);
+    assert.equal(first.statusCode, 200, first.body);
+    assert.deepEqual(first.json(), { choice });
+    assert.deepEqual((await put('b1', null)).json(), { choice });
+    assert.equal(db.get('SELECT count(*) AS n FROM subtitle_preferences')!.n, 1);
+    assert.deepEqual((await put('a1', null, false)).json(), { choice: null });
+    assert.deepEqual((await put('b1', choice)).json(), { choice: null });
+    db.run('DELETE FROM subtitle_preferences');
+    assert.deepEqual((await put('a1', null)).json(), { choice: null });
+    assert.equal((await put('missing', null)).statusCode, 404);
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
