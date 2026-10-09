@@ -1,5 +1,5 @@
 import { Puzzle, Upload, X } from 'lucide-react';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useMatch, useNavigate } from 'react-router-dom';
 import type { WebsitePlugin, WebsitePluginPackage, WebsitePluginRuntime } from '@moa/shared';
@@ -210,10 +210,22 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
 
 export function PluginScripts({ player }: { player?: Player }) {
   const plugins = usePlugins();
+  const [opened, setOpened] = useState<{ id: string; profile: string | null } | null>(null);
+  useEffect(() => {
+    if (player) return;
+    const open = (event: Event) => {
+      const { pluginId, actionId } = (event as CustomEvent).detail;
+      const plugin = plugins.data?.find(item => item.id === pluginId && item.enabled && item.kind === 'html' && item.placements.some(place => place === 'app' || place === 'settings'));
+      if (plugin && actionId === undefined) setOpened({ id: plugin.id, profile: currentProfileId() });
+    };
+    window.addEventListener('moa:plugin-action', open);
+    return () => window.removeEventListener('moa:plugin-action', open);
+  }, [plugins.data, player]);
+  const tool = opened?.profile === currentProfileId() ? plugins.data?.find(item => item.id === opened?.id && item.enabled && item.kind === 'html') : undefined;
   const location = useLocation();
   const home = useMatch('/tabs/:tabId')?.params.tabId === 'home' || location.pathname === '/';
   const detail = Boolean(useMatch('/title/:id'));
-  return <>{plugins.data?.filter(plugin => plugin.enabled && plugin.kind === 'script' && (player ? plugin.placements.includes('player') : !(home && plugin.placements.includes('home') || detail && plugin.placements.includes('detail')) && plugin.placements.some(place => place === 'app' || place === 'settings'))).map(plugin => <PluginWindow key={`${plugin.id}:${plugin.revision}:${currentProfileId()}:${player?.episodeId || ''}`} plugin={plugin} player={player} />)}</>;
+  return <>{plugins.data?.filter(plugin => plugin.enabled && plugin.kind === 'script' && (player ? plugin.placements.includes('player') : !(home && plugin.placements.includes('home') || detail && plugin.placements.includes('detail')) && plugin.placements.some(place => place === 'app' || place === 'settings'))).map(plugin => <PluginWindow key={`${plugin.id}:${plugin.revision}:${currentProfileId()}:${player?.episodeId || ''}`} plugin={plugin} player={player} />)}{tool && <PluginWindow key={`${tool.id}:${tool.revision}:${opened?.profile}`} plugin={tool} onClose={() => setOpened(null)} />}</>;
 }
 
 export function HomePlugins() {
@@ -227,7 +239,10 @@ export function InlinePlugins({ placement }: { placement: 'home' | 'detail' }) {
 
 export function PluginShortcuts({ onSelect }: { onSelect: () => void }) {
   const plugins = usePlugins();
-  return <>{plugins.data?.filter(plugin => plugin.enabled && plugin.kind === 'script' && plugin.permissions.includes('ui') && plugin.placements.some(place => place === 'app' || place === 'settings')).map(plugin => <button key={plugin.id} className="menu-item" role="menuitem" onClick={() => { act(plugin.id); onSelect(); }}><Puzzle size={18} />{plugin.name}</button>)}</>;
+  return <>{plugins.data?.filter(plugin => plugin.enabled && plugin.placements.some(place => place === 'app' || place === 'settings')).map(plugin => <Fragment key={plugin.id}>
+    {(plugin.kind === 'html' || plugin.permissions.includes('ui')) && <button className="menu-item" role="menuitem" onClick={() => { act(plugin.id); onSelect(); }}><Puzzle size={18} />{plugin.name}</button>}
+    {plugin.kind === 'script' && plugin.actions?.map(action => <button key={action.id} className="menu-item" role="menuitem" onClick={() => { act(plugin.id, action.id); onSelect(); }}><Puzzle size={18} />{action.label}</button>)}
+  </Fragment>)}</>;
 }
 
 export function PluginTools(player: Player) {

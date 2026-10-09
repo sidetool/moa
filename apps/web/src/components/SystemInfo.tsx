@@ -19,6 +19,6 @@ export function SystemInfo() {
     ['실행 시간', `${Math.floor(data.uptimeSeconds / 3600)}시간 ${Math.floor(data.uptimeSeconds % 3600 / 60)}분`],
   ] : [];
   return <section className="settings-group"><h2>시스템 정보</h2><div className="settings-card">
-    {data ? rows.map(([label, value]) => <div className="setting" key={label}><div><b>{label}</b><small>{value}</small></div></div>) : result.isPending ? <Skeleton className="settings-sk" /> : <div className="setting"><p role="alert">시스템 정보를 불러오지 못했어요.</p><Button onClick={() => void result.refetch()}>다시 시도</Button></div>}
-  </div><p className="settings-hint">MOA가 실행되는 환경의 정보예요.</p></section>;
+    {data ? <dl className="system-info">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl> : result.isPending ? <Skeleton className="settings-sk" /> : <div className="setting"><div><b>시스템 정보를 불러오지 못했어요.</b></div><Button onClick={() => void result.refetch()}>다시 시도</Button></div>}
+  </div></section>;
 }

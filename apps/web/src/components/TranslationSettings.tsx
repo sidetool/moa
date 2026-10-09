@@ -109,7 +109,7 @@ export function TranslationSettings() {
             options={[{ value: 'gemini', label: 'Gemini 호환' }, { value: 'openai', label: 'OpenAI 호환' }]}
             onChange={value => { setDraft(''); save.mutate({ provider: value as TranslationConfig['provider'] }); }} />
         </div>
-        <div className="setting setting-stack">
+        <div className="setting setting-field">
           <div><b>API 주소</b><small>HTTPS API 또는 로컬·내부 네트워크의 HTTP API 기본 주소를 입력해 주세요. localhost는 MOA 서버를 가리켜요.</small></div>
           <form className="translation-model" onSubmit={event => { event.preventDefault(); if (endpoint !== null && endpoint.trim() !== c.baseUrl) { setDraft(''); save.mutate({ baseUrl: endpoint.trim() }); } }}>
             <input aria-label="번역 API 주소" type="url" value={endpoint ?? c.baseUrl} disabled={busy} required
@@ -159,7 +159,7 @@ export function TranslationSettings() {
             <Button type="button" disabled={!c.configured || busy} onClick={() => { setMessage(null); loadModels.mutate(); }}>{loadModels.isPending ? '확인 중…' : models ? '새로고침' : '모델 불러오기'}</Button>
           </div>
         </div>
-        <div className="setting">
+        <div className="setting setting-field">
           <div><b>모델 직접 입력</b><small>모델 목록을 제공하지 않는 호환 API에서도 설정할 수 있어요.</small></div>
           <form className="translation-model" onSubmit={event => { event.preventDefault(); if (customModel.trim()) save.mutate({ model: customModel.trim() }); }}>
             <input aria-label="번역 모델 ID" value={customModel} placeholder={c.model} maxLength={200} disabled={busy}
