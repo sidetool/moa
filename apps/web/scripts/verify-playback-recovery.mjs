@@ -27,7 +27,7 @@ try{
  await p.goto(base+'/watch/ep');await p.waitForFunction(()=>document.querySelector('video')?.currentTime>1);assert.deepEqual(calls.map(c=>c.streamId||'0'),['0','1'],'native media error falls back once');
  if(await p.locator('.player.is-idle').count())await p.locator('.player-surface').tap();await p.getByRole('button',{name:'자막 및 음성',exact:true}).click();await p.getByRole('button',{name:/자막 설정/}).click();await p.getByRole('spinbutton',{name:'자막 높이',exact:true}).fill('25');await p.getByRole('spinbutton',{name:'자막 높이',exact:true}).press('Tab');await p.waitForFunction(()=>document.querySelector('video').textTracks[0]?.cues?.[0].line < -1);
  await p.getByRole('spinbutton',{name:'자막 크기',exact:true}).fill('130');await p.getByRole('spinbutton',{name:'자막 크기',exact:true}).press('Tab');
- await p.getByRole('combobox',{name:'자막 배경',exact:true}).click();await p.getByRole('option',{name:'진하게',exact:true}).click();
+ await p.getByRole('radiogroup',{name:'자막 배경',exact:true}).getByRole('radio',{name:'진하게',exact:true}).click();
  await p.waitForFunction(()=>document.querySelector('.player.cue-bg-solid'));
  assert.equal(settings.subtitleScale,130);assert.equal(settings.subtitleHeight,25);
  await p.waitForTimeout(350);await p.screenshot({path:verificationPath('verification-recovery-subtitle-panel.png')});

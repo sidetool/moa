@@ -201,6 +201,11 @@
 .settings-nav a { padding: 11px 14px; border-radius: var(--radius-m); color: var(--text-3); transition: color .16s, background-color .16s; }
 .settings-nav a:hover { color: var(--text); background: var(--surface-1); }
 .settings-nav a[aria-current=page] { color: var(--text); background: var(--surface-2); font-weight: 700; }
+.settings-nav-group { margin: 14px 14px 2px; color: var(--text-3); font-size: .74rem; font-weight: 700; letter-spacing: .04em; opacity: .75; }
+.settings-nav-group:first-child { margin-top: 0; }
+.settings-nav hr { margin: 10px 14px; border: 0; border-top: 1px solid var(--hairline); }
+.settings-group > h2 small { margin-left: 8px; font-weight: 600; letter-spacing: 0; opacity: .8; }
+.settings-foot { margin: 10px 4px 0; }
 .settings-panel { min-width: 0; }
 .settings-category { display: none; width: 100%; margin-bottom: 24px; }
 .settings-category .dropdown-trigger { height: 48px; justify-content: space-between; }

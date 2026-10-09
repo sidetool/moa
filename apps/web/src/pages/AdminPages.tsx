@@ -6,7 +6,7 @@ import { NavigationSettings } from "../components/NavigationSettings";
 import { devicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
 import { Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
 import { NetworkSettings } from "../components/NetworkSettings";
@@ -173,12 +173,14 @@ export function SettingsPage() {
   const translation = useTranslationConfig().data;
   const { pathname, hash } = useLocation();
   const navigate = useNavigate();
+  // Grouped by where a choice applies: the profile, this device only, or the whole server.
   const categories = [
-    ["playback", "재생"], ["subtitles", "자막"], ["device", "이 기기"], ["tabs", "홈 화면"], ["experimental", "실험 기능"],
-    ...(hasLoginGate ? [["account", "내 계정"]] : []),
-    ...(admin ? [["library", "소스와 라이브러리"], ["plugins", "플러그인과 자막"], ["translation", "번역 서비스"], ["network", "네트워크"]] : []),
-    ["about", "정보"]
-  ].map(([value, label]) => ({ value, label }));
+    ["playback", "재생", "프로필"], ["subtitles", "자막", "프로필"], ["tabs", "홈 화면", "프로필"],
+    ...(hasLoginGate ? [["account", "내 계정", "프로필"]] : []),
+    ["device", "이 기기", "기기"], ["experimental", "실험 기능", "기기"],
+    ...(admin ? [["library", "소스와 라이브러리", "관리자"], ["plugins", "플러그인과 자막", "관리자"], ["translation", "번역 서비스", "관리자"], ["network", "네트워크", "관리자"]] : []),
+    ["about", "정보", ""]
+  ].map(([value, label, group]) => ({ value, label, group }));
   const requested = pathname === "/settings/tabs" ? "tabs" : hash === "#subtitle-advanced" ? "subtitles" : hash === "#updates" ? "about" : hash.slice(1);
   const category = categories.some(item => item.value === requested) ? requested : "playback";
   const categoryPath = (value: string) => value === "tabs" ? "/settings/tabs" : `/settings#${value}`;
@@ -200,7 +202,10 @@ export function SettingsPage() {
       <header className="page-head"><h1>설정</h1></header>
       <Select className="settings-category" aria-label="설정 카테고리" value={category} options={categories} onChange={value => void navigate(categoryPath(value), { replace: true })} />
       <div className="settings-layout">
-      <nav className="settings-nav" aria-label="설정 메뉴">{categories.map(item => <Link key={item.value} to={categoryPath(item.value)} replace aria-current={category === item.value ? "page" : undefined}>{item.label}</Link>)}</nav>
+      <nav className="settings-nav" aria-label="설정 메뉴">{categories.map((item, index) => <Fragment key={item.value}>
+        {item.group !== categories[index - 1]?.group && (item.group ? <span className="settings-nav-group">{item.group}</span> : <hr />)}
+        <Link to={categoryPath(item.value)} replace aria-current={category === item.value ? "page" : undefined}>{item.label}</Link>
+      </Fragment>)}</nav>
       <div className="settings-panel" key={category}>
       {category === "account" && hasLoginGate && <AccountSection />}
       {category === "playback" && <section className="settings-group">
@@ -219,10 +224,13 @@ export function SettingsPage() {
           {row("기본 자막 언어", "여러 자막이 있으면 이 언어를 먼저 고릅니다.", select("defaultSubtitleLang", [["ko", "한국어"], ["en", "영어"], ["ja", "일본어"], ["off", "끄기"]]))}
           {row("한국어 자막 자동 찾기", "애니에 한국어 자막이 없으면 애니시아·자막 블로그에서 찾아 적용합니다.", <Toggle label="한국어 자막 자동 찾기" checked={s.autoFetchSubtitles} onChange={value => void save({ autoFetchSubtitles: value })} />)}
           {translation && <TranslationModeRow mode={translationModeOf(s)} available={translation.configured && translation.enabled} korean={s.defaultSubtitleLang === "ko"} onChange={translationMode => void save({ translationMode })} />}
-          <SubtitleStyleControls settings={s} save={patch => void save(patch)} />
-          <p className="settings-hint">자막 모양은 프로필에 저장되어 다른 영상과 기기에도 적용돼요. 싱크는 조절한 영상과 이 기기에만 저장돼요.</p>
           <SubtitleAdvancedSettings settings={s} admin={admin} save={patch => void save(patch)} />
         </div>
+      </section>}
+      {category === "subtitles" && <section className="settings-group">
+        <h2>자막 모양<small>이 프로필의 모든 영상과 기기에 적용</small></h2>
+        <div className="settings-card"><SubtitleStyleControls settings={s} save={patch => void save(patch)} /></div>
+        <p className="settings-hint settings-foot">싱크는 재생 화면의 자막 설정에서 조절하고, 그 영상과 이 기기에만 저장돼요.</p>
       </section>}
       {category === "device" && <section className="settings-group"><h2>이 기기</h2><div className="settings-card">
         {row("재생 시 전체 화면", "작품을 누르면 바로 전체 화면으로 재생합니다. 끄면 재생 화면에서 직접 전환해요.", <Toggle label="재생 시 전체 화면" checked={device.fullscreenOnPlay} onChange={value => setPref("fullscreenOnPlay", value)} />)}

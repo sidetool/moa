@@ -1,34 +1,179 @@
 import type { Settings } from '@moa/shared';
-import { useEffect, useState } from 'react';
-import { Select } from './ui';
+import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { keys } from '../api/queries';
+import { cx } from '../lib/format';
 
-function SubtitleNumber({ id, value, min, max, step, save }: { id: string; value: number | null; min: number; max: number; step: number; save: (value: number) => void }) {
-  const [draft, setDraft] = useState(value === null ? '' : String(value));
-  useEffect(() => { setDraft(value === null ? '' : String(value)); }, [value]);
-  return <input id={id} type="number" inputMode="decimal" min={min} max={max} step={step} value={draft} placeholder="기본" onChange={event => setDraft(event.target.value)} onBlur={event => {
-    if (draft !== '' && event.target.validity.valid) save(Number(draft));
-    else setDraft(value === null ? '' : String(value));
-  }} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} />;
-}
+type Background = NonNullable<Settings['subtitleBackground']>;
+type Size = Settings['subtitleSize'];
+export interface SubtitleLook { scale: number; background: Background; outline: number | null; shadow: number | null; height: number; padding: number }
 
-export function SubtitleStyleControls({ settings, save }: { settings: Settings; save: (patch: Partial<Settings>) => void }) {
-  const number = (key: 'subtitleScale' | 'subtitleShadow' | 'subtitleOutline' | 'subtitleHeight' | 'subtitlePadding', label: string, value: number | null, min: number, max: number, step: number, unit: string, reset: number | null) => (
-    <div className="subtitle-style-field" key={key}>
-      <label htmlFor={key}>{label}</label>
-      <div className="subtitle-style-number">
-        <SubtitleNumber id={key} value={value} min={min} max={max} step={step} save={next => save({ [key]: next })} />
-        <span>{unit}</span>
-        <button type="button" className="text-btn" onClick={() => save({ [key]: reset })}>기본</button>
+const PRESETS: Array<[Size, string, number]> = [['small', '작게', 80], ['medium', '보통', 100], ['large', '크게', 130], ['xlarge', '더 크게', 165]];
+const BACKGROUNDS: Array<[Background, string]> = [['original', '기본'], ['none', '없음'], ['soft', '옅게'], ['solid', '진하게']];
+const DEFAULT: SubtitleLook = { scale: 100, background: 'original', outline: null, shadow: null, height: 0, padding: 6 };
+// Matches the player's VTT overlay font sizes when no explicit scale is saved.
+const PRESET_FACTOR: Record<Size, number> = { small: .034, medium: .046, large: .058, xlarge: .074 };
+
+const lookOf = (s: Settings): SubtitleLook => ({
+  scale: s.subtitleScale ?? PRESETS.find(([size]) => size === s.subtitleSize)?.[2] ?? 100,
+  background: s.subtitleBackground ?? 'original',
+  outline: s.subtitleOutline ?? null,
+  shadow: s.subtitleShadow ?? null,
+  height: s.subtitleHeight ?? 0,
+  padding: s.subtitlePadding ?? 6
+});
+const patchOf = (look: Partial<SubtitleLook>): Partial<Settings> => {
+  const patch: Partial<Settings> = {};
+  if ('scale' in look) {
+    patch.subtitleScale = look.scale;
+    // Keep the coarse size in step so clients that only read it stay close.
+    patch.subtitleSize = PRESETS.reduce((best, item) => Math.abs(item[2] - look.scale!) < Math.abs(best[2] - look.scale!) ? item : best)[0];
+  }
+  if ('background' in look) patch.subtitleBackground = look.background;
+  if ('outline' in look) patch.subtitleOutline = look.outline;
+  if ('shadow' in look) patch.subtitleShadow = look.shadow;
+  if ('height' in look) patch.subtitleHeight = look.height;
+  if ('padding' in look) patch.subtitlePadding = look.padding;
+  return patch;
+};
+
+// Fullscreen video size on this device, so pixel outlines and padding keep their real proportion.
+const stageWidth = () => Math.min(1920, Math.max(640, Math.max(screen.width, screen.height) || 1280));
+
+/**
+ * A still frame rendered with the player overlay's rules on a fullscreen-sized stage, scaled to fit.
+ * The scene runs from bright to dark so outline and background contrast show at a glance.
+ */
+export function SubtitlePreview({ look, size }: { look: SubtitleLook; size?: Size }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0);
+  const [width] = useState(stageWidth);
+  const height = width * 9 / 16;
+  useLayoutEffect(() => {
+    const element = frame.current;
+    if (!element) return;
+    const measure = () => setScale(element.clientWidth / width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [width]);
+  const fontSize = height * (size && look.scale === PRESETS.find(([value]) => value === size)?.[2] ? PRESET_FACTOR[size] : .046 * look.scale / 100);
+  const text: React.CSSProperties = {
+    padding: `${look.padding / 2}px ${look.padding}px`,
+    background: look.background === 'solid' ? '#000' : look.background === 'none' ? 'none' : 'rgba(0, 0, 0, .5)',
+    textShadow: look.shadow !== null ? (look.shadow ? `0 ${look.shadow}px ${look.shadow * 1.5}px #000` : 'none') : look.background === 'none' ? '0 1px 3px #000' : 'none',
+    WebkitTextStroke: look.outline ? `${look.outline}px #000` : undefined
+  };
+  return (
+    <div className="subtitle-preview" ref={frame} aria-hidden="true">
+      <div className="subtitle-preview-stage" style={{ width, height, transform: `scale(${scale})`, visibility: scale ? undefined : 'hidden' }}>
+        <div className="subtitle-preview-cue" style={{ bottom: `calc(${look.height}% + ${Math.round(height / 30)}px)`, fontSize }}>
+          <span style={text}>오늘은 여기까지 하자.{'\n'}내일 다시 만나러 올게.</span>
+        </div>
       </div>
     </div>
   );
-  return <div className="subtitle-style-controls">
-    {number('subtitleScale', '자막 크기', settings.subtitleScale ?? ({ small: 80, medium: 100, large: 130, xlarge: 165 }[settings.subtitleSize ?? 'medium']), 50, 250, 1, '%', null)}
-    <div className="subtitle-style-field"><span>배경</span><Select aria-label="자막 배경" value={settings.subtitleBackground ?? 'original'} options={[{ value: 'original', label: '기본' }, { value: 'none', label: '없음' }, { value: 'soft', label: '옅게' }, { value: 'solid', label: '진하게' }]} onChange={value => save({ subtitleBackground: value as Settings['subtitleBackground'] })} /></div>
-    {number('subtitleOutline', '자막 윤곽선', settings.subtitleOutline ?? null, 0, 6, .1, 'px', null)}
-    {number('subtitleShadow', '자막 그림자', settings.subtitleShadow ?? null, 0, 10, .1, 'px', null)}
-    {number('subtitleHeight', '자막 높이', settings.subtitleHeight ?? 0, 0, 40, 1, '%', 0)}
-    {number('subtitlePadding', '자막 배경 여백', settings.subtitlePadding ?? 6, 0, 20, 1, 'px', 6)}
-    <small className="settings-hint">기본값은 자막 원본 모양을 유지해요. ASS 자막에서 배경을 켜면 그림자 대신 배경 상자가 적용돼요.</small>
-  </div>;
+}
+
+/** Slider for quick changes, with the value beside it editable for an exact number. */
+function Range({ label, value, min, max, step, unit, empty, disabled, onSlide, onCommit }: { label: string; value: number | null; min: number; max: number; step: number; unit: string; empty?: string; disabled?: boolean; onSlide: (value: number) => void; onCommit: (value: number) => void }) {
+  const text = value === null ? '' : String(value);
+  const [draft, setDraft] = useState(text);
+  useEffect(() => { setDraft(text); }, [text]);
+  const commit = () => {
+    const next = Number(draft.replace(',', '.'));
+    if (draft.trim() === '' || !Number.isFinite(next)) { setDraft(text); return; }
+    const clamped = Math.min(max, Math.max(min, Math.round(next * 10) / 10));
+    setDraft(String(clamped));
+    if (clamped !== value) onCommit(clamped);
+  };
+  const position = value ?? min;
+  return (
+    <div className="sub-style-range">
+      <input type="range" aria-label={label} min={min} max={max} step={step} value={position} disabled={disabled}
+        style={{ '--fill': `${(position - min) / (max - min) * 100}%` } as React.CSSProperties} onChange={event => onSlide(Number(event.target.value))} />
+      <label className={cx('sub-style-value', disabled && 'is-disabled')}>
+        <input type="number" inputMode="decimal" aria-label={label} min={min} max={max} step="any" value={draft} placeholder={empty} disabled={disabled}
+          onChange={event => setDraft(event.target.value)} onBlur={commit}
+          onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); else if (event.key === 'Escape') { setDraft(text); event.currentTarget.blur(); } }} />
+        {(value !== null || draft !== '') && <span>{unit}</span>}
+      </label>
+    </div>
+  );
+}
+
+/**
+ * Subtitle appearance, with a preview on the settings page. Changes show at once (also in a playing
+ * video through the settings cache) and are saved to the profile shortly after the last adjustment.
+ */
+export function SubtitleStyleControls({ settings, save, variant = 'page' }: { settings: Settings; save: (patch: Partial<Settings>) => void; variant?: 'page' | 'player' }) {
+  const client = useQueryClient();
+  const [look, setLook] = useState(() => lookOf(settings));
+  const pending = useRef<Partial<SubtitleLook>>({});
+  const timer = useRef<number | undefined>(undefined);
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const flush = () => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    if (!Object.keys(pending.current).length) return;
+    const patch = patchOf(pending.current);
+    pending.current = {};
+    saveRef.current(patch);
+  };
+  useEffect(() => () => flush(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Follow saved settings (another device, a reset) unless the user is still adjusting.
+  const saved = lookOf(settings);
+  const savedKey = JSON.stringify(saved);
+  useEffect(() => { if (timer.current === undefined) setLook(saved); }, [savedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const change = (next: Partial<SubtitleLook>, immediate = false) => {
+    setLook(old => ({ ...old, ...next }));
+    client.setQueryData<Settings>(keys.settings, old => old ? { ...old, ...patchOf(next) } : old);
+    pending.current = { ...pending.current, ...next };
+    window.clearTimeout(timer.current);
+    if (immediate) flush(); else timer.current = window.setTimeout(flush, 400);
+  };
+  const changed = (key: keyof SubtitleLook) => look[key] !== DEFAULT[key];
+  const reset = (key: keyof SubtitleLook) => changed(key) && <button type="button" className="sub-style-reset" onClick={() => change({ [key]: DEFAULT[key] }, true)}>기본</button>;
+  const anyChanged = (Object.keys(DEFAULT) as Array<keyof SubtitleLook>).some(changed);
+  const preset = PRESETS.find(([, , scale]) => scale === look.scale);
+  const boxed = look.background !== 'none';
+
+  const row = (key: keyof SubtitleLook, label: string, control: React.ReactNode, hint?: string) => (
+    <div className={cx('sub-style-row', `is-${key}`)}>
+      <span className="sub-style-label">{label}</span>
+      <div className="sub-style-control">{control}</div>
+      <span className="sub-style-reset-slot">{reset(key)}</span>
+      {hint && <small className="sub-style-hint">{hint}</small>}
+    </div>
+  );
+
+  return (
+    <div className={cx('sub-style', `is-${variant}`)}>
+      {/* In the player the video itself shows each change. */}
+      {variant === 'page' && <div className="sub-style-preview">
+        <SubtitlePreview look={look} size={settings.subtitleScale == null ? settings.subtitleSize : undefined} />
+        {anyChanged && <button type="button" className="sub-style-reset-all" onClick={() => change(DEFAULT, true)}>모두 기본값</button>}
+      </div>}
+      <div className="sub-style-rows">
+        {row('scale', '크기', <>
+          <Range label="자막 크기" value={look.scale} min={50} max={250} step={1} unit="%" onSlide={scale => change({ scale })} onCommit={scale => change({ scale }, true)} />
+          <div className="sub-style-presets" role="group" aria-label="자막 크기 빠른 선택">
+            {PRESETS.map(([size, label, scale]) => <button key={size} type="button" className={cx(preset?.[0] === size && 'is-active')} aria-pressed={preset?.[0] === size} onClick={() => change({ scale }, true)}>{label}</button>)}
+          </div>
+        </>)}
+        {row('background', '배경', <div className="seg" role="radiogroup" aria-label="자막 배경">
+          {BACKGROUNDS.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={look.background === value} className={cx(look.background === value && 'is-active')} onClick={() => change({ background: value }, true)}>{label}</button>)}
+        </div>)}
+        {row('padding', '배경 여백', <Range label="자막 배경 여백" value={look.padding} min={0} max={20} step={1} unit="px" disabled={!boxed} onSlide={padding => change({ padding })} onCommit={padding => change({ padding }, true)} />, boxed ? undefined : '배경을 켜면 조절할 수 있어요.')}
+        {row('outline', '윤곽선', <Range label="자막 윤곽선" value={look.outline} min={0} max={6} step={.1} unit="px" empty="원본" onSlide={outline => change({ outline })} onCommit={outline => change({ outline }, true)} />)}
+        {row('shadow', '그림자', <Range label="자막 그림자" value={look.shadow} min={0} max={10} step={.1} unit="px" empty="원본" onSlide={shadow => change({ shadow })} onCommit={shadow => change({ shadow }, true)} />)}
+        {row('height', '위치', <Range label="자막 높이" value={look.height} min={0} max={40} step={1} unit="%" onSlide={height => change({ height })} onCommit={height => change({ height }, true)} />)}
+      </div>
+      {variant === 'player' && anyChanged && <button type="button" className="sub-style-reset-all is-inline" onClick={() => change(DEFAULT, true)}>모양 모두 기본값</button>}
+      <small className="sub-style-note">‘원본’은 자막 파일의 모양을 그대로 써요. ASS 자막은 글꼴·위치가 파일을 따르고, 배경을 켜면 그림자 대신 배경 상자가 적용돼요.</small>
+    </div>
+  );
 }

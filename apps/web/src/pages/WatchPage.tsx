@@ -1387,15 +1387,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             <footer className="panel-foot">
               <button className="panel-link" onClick={() => setSubsView("style")}>
                 <SlidersHorizontal size={18} /><span>자막 설정</span>
-                <small>{[{ small: "작게", medium: "보통", large: "크게", xlarge: "더 크게" }[subSize], subOffset ? `싱크 ${subOffset > 0 ? "+" : ""}${subOffset.toFixed(1)}초` : null].filter(Boolean).join(" · ")}</small>
+                <small>{[subScale ? `${subScale}%` : { small: "작게", medium: "보통", large: "크게", xlarge: "더 크게" }[subSize], subOffset ? `싱크 ${subOffset > 0 ? "+" : ""}${subOffset.toFixed(1)}초` : null].filter(Boolean).join(" · ")}</small>
                 <ChevronRight size={18} />
               </button>
             </footer>
           )}
           {panel === "subs" && subsView === "style" && (
             <div className="panel-body panel-form">
-              {settings && <SubtitleStyleControls settings={settings} save={patch => void saveSettings(patch).catch(() => setNotice('자막 설정을 저장하지 못했어요. 다시 시도해 주세요.'))} />}
-              <div className="pf-row">
+              <div className="pf-block">
                 <span className="pf-label">싱크</span>
                 <div className="sync-row">
                   <button className="seg-btn" aria-label="-0.5" onClick={() => nudgeSubs(-0.5)}>−0.5</button>
@@ -1404,8 +1403,12 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                   <button className="seg-btn" aria-label="+0.1" onClick={() => nudgeSubs(0.1)}>+0.1</button>
                   <button className="seg-btn" aria-label="+0.5" onClick={() => nudgeSubs(0.5)}>+0.5</button>
                 </div>
+                <p className="panel-note">자막이 늦게 나오면 −, 빨리 나오면 +. 이 영상과 기기에만 저장돼요.</p>
               </div>
-              <p className="panel-note">자막이 늦게 나오면 −, 빨리 나오면 +. 싱크는 이 영상과 기기에만 저장돼요. 자막 모양은 프로필에 저장되어 다른 영상과 기기에도 적용돼요. 영상에 입혀진 자막은 바뀌지 않습니다.</p>
+              <div className="pf-block">
+                <span className="pf-label">모양 · 프로필의 모든 영상에 적용</span>
+                {settings && <SubtitleStyleControls variant="player" settings={settings} save={patch => void saveSettings(patch).catch(() => setNotice('자막 설정을 저장하지 못했어요. 다시 시도해 주세요.'))} />}
+              </div>
             </div>
           )}
           {panel === "subs" && subsView === "translate" && (
