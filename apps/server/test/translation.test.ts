@@ -28,6 +28,36 @@ const success = (lines: any[]) =>
   });
 const fake: typeof fetch = async (_url, init) =>
   success(JSON.parse(JSON.parse(String(init?.body)).contents[0].parts[0].text).lines);
+
+test('live translation selection persists before completion and stays bound to its profile', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-live-choice-'));
+  let release = () => {}, calls = 0;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const env = await buildApp({ dataDir: dir, mediaRoot: dir }, false, { tmdb: { token: '', key: '' }, translationFetch: async (url, init) => { if (++calls > 1) await gate; return fake(url, init); } });
+  try {
+    const owner = (await env.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Owner' } })).json().id;
+    const other = (await env.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Other' } })).json().id;
+    env.db.run("INSERT INTO media VALUES('m',NULL,'Live translation','movie','{}','2026')");
+    env.db.run("INSERT INTO episodes VALUES('e','m',1,1,'Episode',600,NULL)");
+    env.translations.configure({ apiKey: secret, enabled: true, batchSize: 10, requestIntervalMs: 0 });
+    const content = 'WEBVTT\n\n' + Array.from({ length: 20 }, (_, n) => `00:00:${String(n * 2).padStart(2, '0')}.000 --> 00:00:${String(n * 2 + 1).padStart(2, '0')}.000\nLine ${n}\n`).join('\n');
+    let job = env.translations.start('e', owner, { content, format: 'vtt', sourceLabel: 'English' });
+    for (let n = 0; n < 100 && !job.track; n++) { await new Promise(resolve => setTimeout(resolve, 5)); job = env.translations.get(job.id, owner); }
+    assert.ok(job.track);
+    assert.equal(job.partial, true);
+    assert.equal(env.db.get('SELECT count(*) AS n FROM translated_subtitles')!.n, 0);
+    const { id, source, label, lang, format } = job.track;
+    const choice = { id, source, label, lang, format, episodeId: 'e' };
+    const save = (profile: string) => env.app.inject({ method: 'PUT', url: '/api/episodes/e/subtitles/preference', headers: { 'x-moa-profile': profile }, payload: { choice } });
+    assert.equal((await save(other)).statusCode, 404);
+    const saved = await save(owner);
+    assert.equal(saved.statusCode, 200, saved.body);
+    release();
+    assert.equal((await wait(env.translations, job.id, owner)).state, 'completed');
+    assert.deepEqual((await env.app.inject({ url: '/api/episodes/e/subtitles/preference', headers: { 'x-moa-profile': owner } })).json(), { choice });
+  } finally { release(); await env.app.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 async function wait(service: Translations, id: string, profile = 'p') {
   for (let n = 0; n < 200; n++) {
     const job = service.get(id, profile);

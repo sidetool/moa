@@ -81,7 +81,7 @@ const router = createBrowserRouter([
       { path: "/sources", element: <RequireAdmin><SourcesPage /></RequireAdmin> },
       { path: "/sources/:id", element: <SourceBrowsePage /> },
       { path: "/library", element: <RequireAdmin><LibraryPage /></RequireAdmin> },
-      { path: "/plugins", element: <PluginsPage /> },
+      { path: "/plugins", element: <RequireAdmin><PluginsPage /></RequireAdmin> },
       { path: "/subtitles", element: <RequireAdmin><SubtitlesPage /></RequireAdmin> },
       { path: "/remote-access", element: <RequireAdmin><RemoteAccessPage /></RequireAdmin> },
       { path: "/accounts", element: <AccountsPage /> },

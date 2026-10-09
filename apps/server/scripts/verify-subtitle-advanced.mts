@@ -21,7 +21,7 @@ env.db.run('INSERT INTO files VALUES(?,?,?,?,?,?,?)','e',media+'/test.mp4',info.
 delete process.env.VITE_MOCK;
 const root=fileURLToPath(new URL('../../web', import.meta.url));
 const vite=await createServer({root,configFile:root+'/vite.config.ts',cacheDir:dir+'/vite-cache',logLevel:'error',server:{host:'127.0.0.1',port:0,proxy:{'/api':address}}});await vite.listen();
-const browser=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']}),results:any[]=[],errors:string[]=[];
+const browser=await chromium.launch({executablePath:process.env.MOA_BROWSER_EXECUTABLE,args:['--autoplay-policy=no-user-gesture-required']}),results:any[]=[],errors:string[]=[];
 const cases:any[]=[
  {name:'unknown-protected',label:'사이트 자막',skip:true,priority:'site',expect:'none',online:0},
  {name:'unknown-jimaku-protected',label:'사이트 자막',skip:true,priority:'jimaku',expect:'none',online:0},
@@ -75,7 +75,7 @@ const profile=(await env.app.inject({method:'POST',url:'/api/profiles',payload:{
 const settingsPage=await browser.newPage({viewport:{width:390,height:844}});
 settingsPage.on('pageerror',(error:any)=>errors.push(error.message));
 await settingsPage.addInitScript((id:string)=>localStorage.setItem('moa.profile',id),profile.id);
-await settingsPage.goto(vite.resolvedUrls!.local[0]+'settings');
+await settingsPage.goto(vite.resolvedUrls!.local[0]+'settings#subtitles');
 const advanced=settingsPage.getByRole('button',{name:/자막 고급설정/});await advanced.waitFor();
 assert.equal(await advanced.getAttribute('aria-expanded'),'false');
 assert.equal(await settingsPage.getByLabel('번역 요청 간격(초)',{exact:true}).count(),0);
@@ -86,7 +86,7 @@ await interval.press('Tab');assert.equal((await spacingSaved).status(),200);
 await settingsPage.getByRole('status').filter({hasText:'요청 간격을 1.5초로 저장했어요.'}).waitFor();
 assert.equal(env.translations.config().requestIntervalMs,1500);
 const retriesSaved=settingsPage.waitForResponse((r:any)=>r.request().method()==='PATCH'&&r.url().endsWith('/admin/translation/config'));
-await settingsPage.getByLabel('실패 시 다시 시도',{exact:true}).selectOption('4');assert.equal((await retriesSaved).status(),200);
+await settingsPage.getByRole('combobox',{name:'실패 시 다시 시도',exact:true}).click();await settingsPage.getByRole('option',{name:'4회',exact:true}).click();assert.equal((await retriesSaved).status(),200);
 assert.equal(env.translations.config().retryCount,4);
 const prioritySaved=settingsPage.waitForResponse((r:any)=>r.request().method()==='PATCH'&&r.url().endsWith('/api/settings'));
 await settingsPage.getByRole('radio',{name:'Jimaku 먼저',exact:true}).click();assert.equal((await prioritySaved).status(),200);

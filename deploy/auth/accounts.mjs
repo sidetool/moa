@@ -3,7 +3,8 @@ import { promisify } from 'node:util';
 const derive = promisify(scrypt);
 export const passwordHash = async (password, salt) => (await derive(password, Buffer.from(salt, 'hex'), 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 })).toString('hex');
 export const passwordValid = value => typeof value === 'string' && value.length >= 8 && value.length <= 1024;
-export const accountView = row => ({ id: row.id, username: row.username, role: row.role });
+export const permissions = ['video.watch', 'subtitles.add', 'subtitles.translate'];
+export const accountView = row => ({ id: row.id, username: row.username, role: row.role, permissions: row.role === 'admin' ? [...permissions] : JSON.parse(row.permissions) });
 export function fail(status, message) { throw Object.assign(new Error(message), { status }); }
 export function transaction(db, fn) {
   db.exec('BEGIN IMMEDIATE');
@@ -22,6 +23,7 @@ export function migrateAccounts(db, credentials, now) {
       uses INTEGER NOT NULL DEFAULT 0, expires_at INTEGER, revoked INTEGER NOT NULL DEFAULT 0,
       created_by TEXT NOT NULL, created_at INTEGER NOT NULL);`);
   transaction(db, () => {
+    if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'permissions')) db.exec(`ALTER TABLE accounts ADD COLUMN permissions TEXT NOT NULL DEFAULT '${JSON.stringify(permissions)}'`);
     if (!db.prepare("SELECT 1 FROM auth_migrations WHERE id='accounts-v1'").get()) {
       for (const user of credentials.users ?? []) db.prepare('INSERT INTO accounts(id,username,salt,hash,role,created_at) VALUES(?,?,?,?,?,?)')
         .run(randomUUID(), user.username, user.salt, user.hash, 'admin', now());
@@ -131,12 +133,14 @@ export function accountsService(db, origin, now) {
       const currentActor = get(actor.id);
       if (!currentActor || currentActor.disabled || currentActor.role !== 'admin') fail(403, 'admin-required');
       const role = Object.hasOwn(body, 'role') ? body.role : user.role, disabled = Object.hasOwn(body, 'disabled') ? body.disabled : Boolean(user.disabled);
-      if (method === 'PATCH' && (!Object.keys(body).length || Object.keys(body).some(k => !['role','disabled'].includes(k)) || !['admin','member'].includes(role) || typeof disabled !== 'boolean')) fail(400, 'invalid-request');
+      if (method === 'PATCH' && (!Object.keys(body).length || Object.keys(body).some(k => !['role','disabled','permissions'].includes(k)) || !['admin','member'].includes(role) || typeof disabled !== 'boolean')) fail(400, 'invalid-request');
+      const allowed = Object.hasOwn(body, 'permissions') ? body.permissions : JSON.parse(user.permissions);
+      if (!Array.isArray(allowed) || allowed.some(value => !permissions.includes(value)) || new Set(allowed).size !== allowed.length) fail(400, 'invalid-request');
       if (user.id === actor.id && (method === 'DELETE' || disabled)) fail(409, 'self-protected');
       if (user.role === 'admin' && !user.disabled && (method === 'DELETE' || role !== 'admin' || disabled) && db.prepare("SELECT count(*) AS n FROM accounts WHERE role='admin' AND disabled=0").get().n <= 1) fail(409, 'last-admin');
       if (method === 'DELETE') db.prepare('DELETE FROM accounts WHERE id=?').run(user.id);
       else {
-        db.prepare('UPDATE accounts SET role=?,disabled=? WHERE id=?').run(role, Number(disabled), user.id);
+        db.prepare('UPDATE accounts SET role=?,disabled=?,permissions=? WHERE id=?').run(role, Number(disabled), JSON.stringify(allowed), user.id);
         if (disabled || role !== user.role) invalidate(user.id);
       }
       return null;

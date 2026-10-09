@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { openState, setupCode } from './state.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { migrateAccounts, accountsService, fail, transaction } from './accounts.mjs';
+import { migrateAccounts, accountsService, accountView, fail, transaction } from './accounts.mjs';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +38,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
   const needsSetup = () => !database.prepare('SELECT 1 FROM accounts LIMIT 1').get();
   const accounts = accountsService(database, publicUrl.origin, now);
   database.prepare('DELETE FROM sessions WHERE expires <= ?').run(now());
-  const findSession = database.prepare(`SELECT s.*,a.id,a.username,a.role,a.salt,a.hash FROM sessions s JOIN accounts a ON a.id=s.account_id
+  const findSession = database.prepare(`SELECT s.*,a.id,a.username,a.role,a.salt,a.hash,a.permissions FROM sessions s JOIN accounts a ON a.id=s.account_id
     WHERE token_hash=? AND expires>? AND a.disabled=0`);
   const rates = new Map();
   let verifying = 0;
@@ -168,7 +168,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
       if (url.pathname === `${PREFIX}check` && req.method === 'GET') {
         const current = session(req);
         if (!current) return send(res, 401);
-        const headers = { 'X-Moa-Account': current.id, 'X-Moa-Role': current.role, 'X-Moa-Username': encodeURIComponent(current.username) };
+        const headers = { 'X-Moa-Account': current.id, 'X-Moa-Role': current.role, 'X-Moa-Permissions': accountView(current).permissions.join(','), 'X-Moa-Username': encodeURIComponent(current.username) };
         if (current.remember && now() - current.refreshed >= DAY) {
           database.prepare('UPDATE sessions SET expires = ?, refreshed = ? WHERE token_hash = ?').run(now() + 365 * DAY, now(), current.token_hash);
           headers['Set-Cookie'] = cookie(cookieName('session'), cookieValue(req, 'session'), 365 * 86400);

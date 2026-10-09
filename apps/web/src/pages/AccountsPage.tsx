@@ -2,14 +2,15 @@ import { Check, ChevronRight, Copy, KeyRound, Link2, Plus, Share2, ShieldCheck, 
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AccountSummary, Invite } from "@moa/shared";
+import { ACCOUNT_PERMISSIONS, type AccountSummary, type AccountPermission, type Invite } from "@moa/shared";
 import { useMe } from "../api/queries";
-import { Button, EmptyState, IconButton, Skeleton } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, Skeleton } from "../components/ui";
 import { ApiError, api, authApi } from "../lib/api";
 import { cx } from "../lib/format";
 
 const INVITES = ["auth-invites"] as const;
 const ACCOUNTS = ["auth-accounts"] as const;
+const PERMISSION_LABELS: Record<AccountPermission, string> = { "video.watch": "영상 보기", "subtitles.add": "자막 추가", "subtitles.translate": "자막 번역" };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
 const ago = (iso: string | null) => {
@@ -135,8 +136,9 @@ function AccountRow({ account, me }: { account: AccountSummary; me: string }) {
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [confirmRole, setConfirmRole] = useState(false);
   const [temp, setTemp] = useState("");
-  const refresh = () => void client.invalidateQueries({ queryKey: ACCOUNTS });
+  const refresh = () => client.invalidateQueries({ queryKey: ACCOUNTS });
   const patch = useMutation({ mutationFn: (body: Record<string, unknown>) => authApi(`/accounts/${encodeURIComponent(account.id)}`, { method: "PATCH", body }), onSuccess: refresh });
   const reset = useMutation({ mutationFn: () => authApi<{ temporaryPassword: string }>(`/accounts/${encodeURIComponent(account.id)}/reset-password`, { method: "POST" }), onSuccess: r => setTemp(r.temporaryPassword) });
   const remove = useMutation({
@@ -160,7 +162,10 @@ function AccountRow({ account, me }: { account: AccountSummary; me: string }) {
         <p className="invite-code">{temp}</p>
         <CopyButton text={temp} label="복사" />
       </div> : <>
-        <Button disabled={patch.isPending} onClick={() => patch.mutate({ role: account.role === "admin" ? "member" : "admin" })}>{account.role === "admin" ? "관리자 해제" : "관리자로 지정"}</Button>
+        <Button disabled={patch.isPending} onClick={() => { patch.reset(); setConfirmRole(true); }}>{account.role === "admin" ? "관리자 해제" : "관리자로 지정"}</Button>
+        {account.role === "member" && <div className="choice-row" role="group" aria-label={`${account.username} 권한`}>
+          {ACCOUNT_PERMISSIONS.map(permission => <label key={permission} className="chip"><input type="checkbox" checked={account.permissions.includes(permission)} disabled={patch.isPending} onChange={event => patch.mutate({ permissions: event.target.checked ? [...account.permissions, permission] : account.permissions.filter(value => value !== permission) })} />{PERMISSION_LABELS[permission]}</label>)}
+        </div>}
         {!self && <Button disabled={patch.isPending} onClick={() => patch.mutate({ disabled: !account.disabled })}>{account.disabled ? "다시 사용" : "사용 중지"}</Button>}
         {!self && <Button icon={<KeyRound size={16} />} disabled={reset.isPending} onClick={() => reset.mutate()}>비밀번호 초기화</Button>}
         {!self && (confirm
@@ -169,6 +174,10 @@ function AccountRow({ account, me }: { account: AccountSummary; me: string }) {
       </>}
       {error && <p className="settings-error" role="alert">{errorText(error)}</p>}
     </div>}
+    {confirmRole && <ConfirmDialog title={account.role === "admin" ? "관리자 해제" : "관리자로 지정"} confirmLabel={account.role === "admin" ? "해제" : "지정"} busy={patch.isPending} onClose={() => setConfirmRole(false)} onConfirm={() => patch.mutate({ role: account.role === "admin" ? "member" : "admin" }, { onSuccess: () => setConfirmRole(false) })}>
+      <p>{account.role === "admin" ? `${account.username} 님의 관리자 권한을 해제할까요?` : `${account.username} 님을 관리자로 지정할까요? 계정, 플러그인과 서버 설정을 변경할 수 있어요.`}</p>
+      {patch.error && <p className="settings-error" role="alert">{errorText(patch.error)}</p>}
+    </ConfirmDialog>}
   </li>;
 }
 

@@ -14,7 +14,7 @@ test('account boundaries, legacy claim, avatars, profile limits and admin routes
   const { app, db, playback, remotePlayback, online } = await buildApp({ dataDir: dir, mediaRoot, webDir: path.join(dir, 'web'), requireAccount: true }, false,
     { aniSkip: { async lookup() { return { match: null, intervals: [], markers: null }; } } });
   const admin = { 'x-moa-account': 'admin-id', 'x-moa-role': 'admin', 'x-moa-username': encodeURIComponent('관리자') };
-  const member = { 'x-moa-account': 'member-id', 'x-moa-role': 'member', 'x-moa-username': 'member' };
+  const member = { 'x-moa-account': 'member-id', 'x-moa-role': 'member', 'x-moa-username': 'member', 'x-moa-permissions': 'video.watch,subtitles.add,subtitles.translate' };
   const second = { 'x-moa-account': 'second-id', 'x-moa-role': 'admin' };
   try {
     assert.equal((await app.inject('/api/profiles')).statusCode, 401);
@@ -24,13 +24,23 @@ test('account boundaries, legacy claim, avatars, profile limits and admin routes
     assert.equal((await app.inject({ method: 'POST', url: '/%61pi/library/scan', headers: member })).statusCode, 403);
     assert.deepEqual((await app.inject({ url: '/api/profiles', headers: member })).json(), []);
     assert.equal(db.get("SELECT account_id FROM profiles WHERE id='legacy'")!.account_id, null);
-    assert.deepEqual((await app.inject({ url: '/api/me', headers: admin })).json(), { id: 'admin-id', username: '관리자', role: 'admin' });
+    assert.deepEqual((await app.inject({ url: '/api/me', headers: admin })).json(), { id: 'admin-id', username: '관리자', role: 'admin', permissions: ['video.watch', 'subtitles.add', 'subtitles.translate'] });
     assert.equal((await app.inject({ url: '/api/profiles', headers: admin })).json()[0].id, 'legacy');
     assert.deepEqual((await app.inject({ url: '/api/profiles', headers: second })).json(), []);
     const create = (avatar: string | null) => app.inject({ method: 'POST', url: '/api/profiles', headers: member, payload: { name: 'Member', avatar } });
     for (const avatar of ['av-001', 'Cat-1', '../cat-1', 'cat', 'cat-1<script>']) assert.equal((await create(avatar)).statusCode, 400);
     const p = (await create('cat-1')).json(); assert.equal(p.avatar, 'cat-1');
     const h = { ...member, 'x-moa-profile': p.id };
+    const restricted = { ...h, 'x-moa-permissions': '' };
+    assert.deepEqual((await app.inject({ url: '/api/me', headers: restricted })).json().permissions, []);
+    assert.equal((await app.inject({ url: '/api/me', headers: { ...h, 'x-moa-permissions': 'admin' } })).statusCode, 401);
+    for (const [permission, url] of [['video.watch', '/api/playback'], ['subtitles.add', '/api/subtitles/import'], ['subtitles.add', '/api/episodes/e/subtitles/online'], ['subtitles.translate', '/api/episodes/e/subtitles/translate'], ['subtitles.translate', '/api/episodes/e/subtitles/jimaku/translate'], ['subtitles.translate', '/api/translations/job/priority']]) {
+      const denied = await app.inject({ method: 'POST', url, headers: restricted, payload: {} });
+      assert.equal(denied.statusCode, 403, url); assert.equal(denied.json().error, 'permission-denied');
+      assert.notEqual((await app.inject({ method: 'POST', url, headers: { ...h, 'x-moa-permissions': permission }, payload: {} })).statusCode, 403, url);
+    }
+    assert.equal((await app.inject({ url: '/api/settings', headers: restricted })).statusCode, 200);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/%70layback', headers: restricted, payload: {} })).statusCode, 403);
     assert.equal((await app.inject({ method: 'PATCH', url: `/api/profiles/${p.id}`, headers: member, payload: { avatar: 'robot-2' } })).json().avatar, 'robot-2');
     assert.equal((await app.inject({ method: 'PATCH', url: `/api/profiles/${p.id}`, headers: member, payload: { avatar: null } })).json().avatar, null);
     assert.equal((await app.inject({ method: 'PATCH', url: `/api/profiles/${p.id}`, headers: member, payload: { avatar: 'bad' } })).statusCode, 400);
@@ -67,6 +77,9 @@ test('account boundaries, legacy claim, avatars, profile limits and admin routes
     assert.equal((await app.inject({ method: 'PATCH', url: '/api/media/m/group', headers: h, payload: { action: 'separate' } })).statusCode, 200);
     const session = (await app.inject({ method: 'POST', url: '/api/playback', headers: h, payload: { episodeId: 'e', capabilities: { h264: true, hevc: false, av1: false } } })).json();
     assert.ok(session.sessionId);
+    for (const method of ['GET', 'HEAD'] as const) assert.equal((await app.inject({ method, url: session.url, headers: restricted })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: `/api/playback/${session.sessionId}/heartbeat`, headers: restricted })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: `/api/playback/${session.sessionId}/cast`, headers: restricted, payload: {} })).statusCode, 403);
     assert.equal((await app.inject({ url: session.url, headers: member })).statusCode, 200);
     assert.equal((await app.inject({ url: session.url, headers: admin })).statusCode, 403);
     assert.equal((await app.inject({ url: session.url.replace('/api/', '/%61pi/'), headers: admin })).statusCode, 403);

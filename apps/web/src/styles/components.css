@@ -378,10 +378,12 @@
 .dropdown { display: inline-flex; min-width: 0; max-width: 100%; vertical-align: middle; }
 .dropdown-trigger { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-width: 0; height: 40px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-2); color: var(--text); font-weight: 600; text-align: left; }
 .dropdown-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dropdown-trigger > svg { color: var(--text-3); }
+.dropdown-trigger > svg { color: var(--text-3); transition: transform .16s var(--ease); }
+.dropdown-trigger[aria-expanded=true] > svg { transform: rotate(180deg); }
 .dropdown-trigger:hover:not(:disabled), .dropdown-trigger[aria-expanded=true] { border-color: var(--text-3); }
 .dropdown-trigger:disabled { opacity: .5; }
 .dropdown-menu { position: fixed; inset: auto; margin: 0; padding: 5px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-m); background: var(--surface-2); color: var(--text); box-shadow: var(--shadow-pop); overflow: auto; overscroll-behavior: contain; }
+.dropdown-menu:popover-open { animation: pop .16s var(--ease); transform-origin: top center; }
 .dropdown-option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 9px 10px; border-radius: var(--radius-s); font-size: .9rem; font-weight: 500; text-align: left; }
 .dropdown-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .dropdown-option.is-active { background: var(--surface-3); }
@@ -399,7 +401,12 @@
 .plugin-dialog h2 { font-size: 1.1rem; }
 .plugin-dialog > p { padding: 16px; }
 .plugin-dialog iframe { display: block; width: 100%; height: min(500px, 65dvh); border: 0; }
+.home-plugin { margin: clamp(22px, 3vw, 38px) var(--gutter); }
+.home-plugin iframe { display: block; width: 100%; height: var(--plugin-height, 320px); border: 0; }
+.home-plugin > p { padding: 12px 0; color: var(--text-3); }
 .plugin-row { flex-wrap: wrap; }
+.plugin-dropzone { border: 1px dashed var(--hairline-strong); border-radius: var(--radius-l); transition: border-color .16s, background-color .16s; }
+.plugin-dropzone.is-dragging { border-color: var(--accent-strong); background: var(--surface-2); }
 .plugin-row > div:first-child { flex: 1 1 220px; }
 .plugin-actions, .plugin-row > .plugin-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .plugin-preview, .plugin-empty { padding: 18px 22px; overflow-wrap: anywhere; }
@@ -491,3 +498,13 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 .plugin-notice { position: fixed; z-index: 120; left: 50%; bottom: max(80px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 32px); padding: 12px 16px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-m); background: var(--surface-2); color: var(--text); box-shadow: 0 8px 32px #0005; overflow-wrap: anywhere; }
 .plugin-notice b { flex-shrink: 0; max-width: 40%; font-size: .8rem; }
 .plugin-notice span { min-width: 0; }
+
+.subtitle-style-controls { display: grid; gap: 16px; padding: 20px; }
+.subtitle-style-field { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.subtitle-style-field > label, .subtitle-style-field > span { font-size: .88rem; color: var(--text-2); }
+.subtitle-style-number { display: flex; align-items: center; gap: 8px; }
+.subtitle-style-number input { width: 76px; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: inherit; text-align: right; font: inherit; font-variant-numeric: tabular-nums; }
+.subtitle-style-number > span { width: 22px; color: var(--text-3); font-size: .8rem; }
+.subtitle-style-number .text-btn { font-size: .8rem; }
+.player .subtitle-style-controls { padding: 0; }
+@media (max-width: 420px) { .subtitle-style-controls { padding: 16px; } .subtitle-style-field { gap: 8px; } .subtitle-style-number { gap: 5px; } }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { install } from './install-release.mjs';
+import { install, startUpdater } from './install-release.mjs';
 import { BUNDLE_FILES } from './release-bundle.mjs';
 import { SERVICES } from './release.mjs';
 
@@ -24,7 +24,7 @@ test('fresh release installation pins components, fetches the gateway, preserves
     return '';
   };
   const feed = { async releases(){return[{tag_name:'v1.0.0'}];},async manifest(){return{manifest};},async bundle(){return{format:1,files};} };
-  await install(['install','--cwd',cwd,'--project','moa-fixture','--version','v1.0.0','--key',key],{feed,run});
+  assert.deepEqual(await install(['install','--cwd',cwd,'--project','moa-fixture','--version','v1.0.0','--key',key],{feed,run}), { started: true, error: null });
   const current=JSON.parse(await readFile(path.join(cwd,'.moa-release/current.json'),'utf8'));
   const resolved=JSON.parse(await readFile(current.compose,'utf8'));
   assert.deepEqual(current.services,['moa','moa-auth']);
@@ -53,4 +53,21 @@ test('real Compose JSON preserves nginx variables through installation serializa
   const second=execFileSync('docker',args,{input:first,encoding:'utf8'});
   assert.deepEqual(JSON.parse(second).services.gateway.environment,JSON.parse(first).services.gateway.environment);
   assert.equal(JSON.parse(first).services.gateway.environment.IP,'$$remote_addr');
+});
+
+
+test('updater startup verifies activity, preserves other services and reports unavailable managers', async () => {
+  const unit = '/fixture/moa-updater.service';
+  const commands = [];
+  assert.deepEqual(await startUpdater(unit, async (command, args) => { commands.push([command, ...args]); return ''; }), { started: true, error: null });
+  assert.deepEqual(commands, [
+    ['systemctl', '--user', 'show', 'moa-updater.service', '--property=FragmentPath', '--value'],
+    ['systemctl', '--user', 'enable', '--now', unit],
+    ['systemctl', '--user', 'is-active', '--quiet', 'moa-updater.service']
+  ]);
+  const conflict = [];
+  assert.deepEqual(await startUpdater(unit, async (...args) => { conflict.push(args); return '/another/moa-updater.service'; }), { started: false, error: 'update-service-conflict' });
+  assert.equal(conflict.length, 1);
+  assert.deepEqual(await startUpdater(unit, async () => { throw new Error('no manager'); }), { started: false, error: 'updater-unavailable' });
+  assert.deepEqual(await startUpdater(unit, async (_command, args) => { if (args.includes('is-active')) throw new Error('inactive'); return ''; }), { started: false, error: 'updater-unavailable' });
 });

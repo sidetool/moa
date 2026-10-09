@@ -13,4 +13,7 @@ test('gateway catches dynamic hosts and forwards normalized scheme on auth subre
   }
   assert.match(config, /auth_request \/__moa\/check;/);
   assert.match(config, /proxy_set_header X-Moa-Account \$moa_account;/);
+  assert.match(config, /auth_request_set \$moa_permissions \$upstream_http_x_moa_permissions;/);
+  assert.match(config, /proxy_set_header X-Moa-Permissions \$moa_permissions;/);
+  assert.match(config, /proxy_set_header X-Moa-Permissions "";/);
 });

@@ -1,4 +1,5 @@
 import { TitleSources } from '../components/TitleSources';
+import { InlinePlugins } from '../components/WebsitePlugins';
 import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -249,6 +250,7 @@ export function TitlePage() {
       </section>
 
       <div className="title-body">
+        <InlinePlugins key={`plugins:${m.id}`} placement="detail" />
         <TitleSources key={m.id} id={m.id} title={m.title}/>
         {!isMovie && <Episodes media={m} />}
         {!!m.people?.length && <PeopleRow people={m.people} />}

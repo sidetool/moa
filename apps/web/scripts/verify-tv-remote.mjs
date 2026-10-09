@@ -157,9 +157,9 @@ try {
     await p.getByRole('button',{name:'테스트',exact:true}).waitFor();
     await p.keyboard.press('ArrowRight');await p.keyboard.press('Enter');await p.waitForURL(base+'/');
     assert.equal(await p.evaluate(()=>document.documentElement.hasAttribute('data-tv')),true);
-    await p.goto(base+'/settings');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).waitFor();
+    await p.goto(base+'/settings#device');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).waitFor();
     await p.getByRole('combobox',{name:'TV 리모컨 모드'}).click();await p.getByRole('option',{name:'항상 켜기',exact:true}).click();
-    await p.getByRole('button',{name:'홈 편집',exact:true}).focus();await p.keyboard.press('Enter');
+    await p.goto(base+'/settings/tabs');await p.getByRole('button',{name:'홈 편집',exact:true}).focus();await p.keyboard.press('Enter');
     const dialog=p.getByRole('dialog',{name:'홈 탭 편집'});await dialog.waitFor();
     await p.waitForFunction(()=>document.activeElement?.closest('[role="dialog"]'));
     for(const key of ['ArrowDown','ArrowDown','ArrowRight','ArrowLeft']) {
@@ -168,7 +168,7 @@ try {
     await p.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Unidentified',keyCode:461,bubbles:true})));
     await p.waitForFunction(()=>!document.querySelector('[role="dialog"]'));
     await p.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='홈 편집');
-    await p.getByRole('combobox',{name:'TV 리모컨 모드'}).click();await p.getByRole('option',{name:'끄기',exact:true}).click();await p.reload();
+    await p.goto(base+'/settings#device');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).click();await p.getByRole('option',{name:'끄기',exact:true}).click();await p.reload();
     await p.getByRole('combobox',{name:'TV 리모컨 모드'}).waitFor();
     assert.equal(await p.getByRole('combobox',{name:'TV 리모컨 모드'}).textContent(),'끄기');
     assert.equal(await p.evaluate(()=>document.documentElement.hasAttribute('data-tv')),false);

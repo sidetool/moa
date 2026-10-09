@@ -9,6 +9,16 @@ import { atomic, privateDirectory } from './update-files.mjs';
 const exec = promisify(execFile);
 const jsonLines = text => text.trim().startsWith('[') ? JSON.parse(text) : text.trim().split('\n').filter(Boolean).map(JSON.parse);
 
+export async function startUpdater(unitPath, run) {
+  try {
+    const existing = (await run('systemctl', ['--user', 'show', path.basename(unitPath), '--property=FragmentPath', '--value'], 10000)).trim();
+    if (existing && path.resolve(existing) !== path.resolve(unitPath)) return { started: false, error: 'update-service-conflict' };
+    await run('systemctl', ['--user', 'enable', '--now', unitPath], 30000);
+    await run('systemctl', ['--user', 'is-active', '--quiet', path.basename(unitPath)], 10000);
+    return { started: true, error: null };
+  } catch { return { started: false, error: 'updater-unavailable' }; }
+}
+
 export async function install(args = process.argv.slice(2), dependencies = {}) {
   const [action, ...flags] = args;
   if (action !== 'install' || flags.length % 2) fail('update-invalid-options');
@@ -81,11 +91,12 @@ export async function install(args = process.argv.slice(2), dependencies = {}) {
   await atomic(path.join(root, 'installation.json'), { format: 1, repository: 'sidetool/moa', project, platform });
   await atomic(path.join(root, 'current.json'), { version: m.version, schemaEpoch: m.schemaEpoch, services, compose, runtime });
   await atomic(path.join(root, 'policy.json'), DEFAULT_POLICY);
-  // Unit is reviewable; registration is an explicit documented one-time command.
   const quote = value => '"' + value.replaceAll('%', '%%').replaceAll('\\', '\\\\').replaceAll('"', '\\"') + '"';
   const unit = `[Unit]\nDescription=MOA release updater\nAfter=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=${quote(cwd)}\nExecStart=${quote(process.execPath)} ${quote(path.join(root, 'launcher.mjs'))} --cwd ${quote(cwd)}\nRestart=on-failure\nRestartSec=10\nUMask=0007\n\n[Install]\nWantedBy=default.target\n`;
   await writeFile(path.join(cwd, 'moa-updater.service'), unit, { mode: 0o600 });
-  process.stdout.write('Release installed. Register moa-updater.service as documented in docs/UPDATES.md to enable update checks.\n');
+  const updater = await startUpdater(path.join(cwd, 'moa-updater.service'), run);
+  process.stdout.write(updater.started ? 'Release installed. Update service started; updates are available in Settings > About.\n' : `Release installed. Update service could not start (${updater.error}); release checks are available, but installation from the app is unavailable.\n`);
+  return updater;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) install().catch(error => {
   process.stderr.write(`${/^update-[a-z-]+$/.test(error.message) ? error.message : 'update-install-failed'}\n`); process.exitCode = 1;

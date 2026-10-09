@@ -154,7 +154,7 @@ export function MePage() {
         {link("/my-list", <Bookmark size={20} />, "내 목록")}
         {admin && link("/sources", <FolderOpen size={20} />, "영상 소스")}
         {admin && link("/library", <FolderOpen size={20} />, "라이브러리 관리")}
-        {link("/plugins", <Puzzle size={20} />, "플러그인")}
+        {admin && link("/plugins", <Puzzle size={20} />, "플러그인")}
         {admin && link("/subtitles", <Subtitles size={20} />, "저장한 자막")}
         {admin && hasLoginGate && link("/accounts", <Users size={20} />, "계정과 초대")}
         {link("/settings", <SettingsIcon size={20} />, "설정")}

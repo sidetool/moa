@@ -7,7 +7,7 @@ import { ArrowLeft, ChevronRight, Plus, Radio, RefreshCw, Search, Settings2, Tra
 import type { BrowseSelection, MediaCard, MediaType, Page, SourcePreference, SourceRemovalImpact, SourceRemovalResult, VideoSource } from '@moa/shared';
 import { api, ApiError, sized } from '../lib/api';
 import { useMe } from '../api/queries';
-import { Button, ButtonLink, EmptyState, IconButton, Select, Skeleton, Spinner } from '../components/ui';
+import { Button, ButtonLink, EmptyState, IconButton, ScrollLoader, Select, Skeleton, Spinner } from '../components/ui';
 import { LandscapeCard, PosterCard } from '../components/Cards';
 import { Row, RowSkeleton } from '../components/Row';
 import { cx } from '../lib/format';
@@ -56,7 +56,7 @@ export function SourceBrowsePage() {
     {rawFilters && !selection && <p role="alert">저장된 필터 주소를 읽을 수 없습니다. <button className="text-btn" onClick={() => { const next=new URLSearchParams(params); next.delete('filters'); setParams(next, { replace: true }); }}>조건 초기화</button></p>}
     <details className="browse-filters"><summary>필터와 정렬{selection?.filters?.length ? ' · 적용 중' : ''}</summary>{schema.data ? <><SourceFilters schema={schema.data} value={draft} onChange={setDraft}/><Button variant="primary" onClick={() => { const next=new URLSearchParams(params); if(draft) next.set('filters',JSON.stringify(draft)); else next.delete('filters'); setParams(next, { replace: true }); }}>조건 적용</Button></> : <p>{schema.isPending ? '불러오는 중…' : '필터를 불러오지 못했습니다.'}</p>}</details>
     {term && <p className="source-muted">“{term}” 검색 결과 · {items.length}개{query.hasNextPage ? " 이상" : ""}</p>}
-    {sources.isSuccess && !source?.enabled ? <EmptyState title={admin ? "소스를 켜 주세요" : "지금은 쓸 수 없는 소스예요"} body={admin ? undefined : "관리자가 이 소스를 끄거나 지웠어요."} action={admin ? <ButtonLink to="/sources">소스 관리</ButtonLink> : undefined} /> : query.isPending ? <RowSkeleton /> : <><div className={cx("grid", source?.live && "live-grid")}>{items.map(card => source?.live ? <LandscapeCard card={card} key={card.id}/> : <PosterCard card={card} key={card.id}/>)}</div>{query.isError && <EmptyState title="목록을 불러오지 못했습니다" body={rawFilters ? "확장 업데이트로 조건이 달라졌을 수 있습니다. 필터를 초기화하거나 다시 선택해 주세요." : message} action={<Button onClick={() => void query.refetch()}>다시 시도</Button>} />}{!items.length && !query.isError && <EmptyState title="표시할 작품이 없습니다"/>}{query.hasNextPage && <div className="source-more"><Button disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? '불러오는 중…' : '더 보기'}</Button></div>}</>}
+    {sources.isSuccess && !source?.enabled ? <EmptyState title={admin ? "소스를 켜 주세요" : "지금은 쓸 수 없는 소스예요"} body={admin ? undefined : "관리자가 이 소스를 끄거나 지웠어요."} action={admin ? <ButtonLink to="/sources">소스 관리</ButtonLink> : undefined} /> : query.isPending ? <RowSkeleton /> : <><div className={cx("grid", source?.live && "live-grid")}>{items.map(card => source?.live ? <LandscapeCard card={card} key={card.id}/> : <PosterCard card={card} key={card.id}/>)}</div>{query.isError && <EmptyState title="목록을 불러오지 못했습니다" body={rawFilters ? "확장 업데이트로 조건이 달라졌을 수 있습니다. 필터를 초기화하거나 다시 선택해 주세요." : message} action={<Button onClick={() => void (query.isFetchNextPageError ? query.fetchNextPage() : query.refetch())}>다시 시도</Button>} />}{!items.length && !query.isError && <EmptyState title="표시할 작품이 없습니다"/>}<ScrollLoader hasMore={query.hasNextPage} loading={query.isFetching} failed={query.isError} onLoad={query.fetchNextPage} /></>}
   </div>;
 }
 /** Mirrors the server's host preference keys; everything else belongs to the extension. */
@@ -103,7 +103,7 @@ function SourceIcon({ source }: { source: VideoSource }) {
   </span>;
 }
 
-function SourceEntry({ source, duplicateName = false }: { source: VideoSource; duplicateName?: boolean }) {
+function SourceEntry({ source, duplicateName = false, selected, onSelect }: { source: VideoSource; duplicateName?: boolean; selected: boolean; onSelect: (checked: boolean) => void }) {
   const client = useQueryClient();
   const [settings,setSettings] = useState(false);
   const [removing,setRemoving] = useState(false);
@@ -111,7 +111,7 @@ function SourceEntry({ source, duplicateName = false }: { source: VideoSource; d
   const maintenance=useMutation({mutationFn:(action:'check'|'rollback')=>api<VideoSource>(`${path(source.id)}/${action}`,{method:'POST'}),onSuccess:async()=>{await client.invalidateQueries({queryKey:['sources']});await client.invalidateQueries({queryKey:['source-filters',source.id]});await client.invalidateQueries({queryKey:['source-browse',source.id]});await client.invalidateQueries({queryKey:['tab-source',source.id]});}});
   const healthText:Record<string,string>={'timeout':'응답 시간 초과','access-denied':'접근 제한 또는 인증 확인 필요','connection-failed':'네트워크·프록시 연결 실패','unsupported':'지원되지 않는 확장 기능','source-error':'소스 응답 오류','preparation-required':'APK를 다시 준비해야 합니다'};
   const update = source.installed && source.installedVersion !== source.version;
-  return <article className="source-entry"><div className="source-entry-main"><SourceIcon source={source}/><div className="source-description"><h2>{source.name}{source.lang && (duplicateName || !['ko', 'kor'].includes(source.lang.toLowerCase())) && <span className="source-lang" title={`언어: ${source.lang}`}>{langLabel(source.lang)}</span>}</h2><p>{source.live ? '실시간 방송' : source.type === 'anime' ? '애니메이션' : '영화 · 시리즈'}<span> · {source.installedVersion || source.version}{source.kind==='aniyomi-apk'?' · APK':''}</span></p><small className="source-origin" title={source.repository}>{source.repository}</small></div><div className="source-actions">
+  return <article className="source-entry"><div className="source-entry-main">{source.installed && <input className="selection-checkbox" type="checkbox" aria-label={`${source.name} 선택`} checked={selected} onChange={event => onSelect(event.target.checked)} />}<SourceIcon source={source}/><div className="source-description"><h2>{source.name}{source.lang && (duplicateName || !['ko', 'kor'].includes(source.lang.toLowerCase())) && <span className="source-lang" title={`언어: ${source.lang}`}>{langLabel(source.lang)}</span>}</h2><p>{source.live ? '실시간 방송' : source.type === 'anime' ? '애니메이션' : '영화 · 시리즈'}<span> · {source.installedVersion || source.version}{source.kind==='aniyomi-apk'?' · APK':''}</span></p><small className="source-origin" title={source.repository}>{source.repository}</small></div><div className="source-actions">
     {source.enabled && <ButtonLink to={path(source.id)} icon={<ChevronRight size={16}/>}>둘러보기</ButtonLink>}
     {(!source.installed || update) && <Button disabled={operation.isPending} variant={source.installed ? 'secondary' : 'primary'} onClick={() => operation.mutate({ install: true })}>{operation.isPending ? '설치 중…' : update ? '업데이트' : '설치'}</Button>}
     {source.installed && <><Button disabled={operation.isPending} aria-pressed={source.enabled} onClick={() => operation.mutate({ body: { enabled: !source.enabled } })}>{source.enabled ? '끄기' : '켜기'}</Button>{source.enabled && <button className="icon-btn" aria-label={`${source.name} 설정`} aria-expanded={settings} onClick={() => setSettings(v => !v)}><Settings2 size={20}/></button>}<button className="icon-btn source-remove" aria-label={`${source.name} 삭제`} title="삭제" onClick={() => setRemoving(true)}><Trash2 size={19}/></button></>}
@@ -134,11 +134,14 @@ export function SourcesPage() {
   const duplicates = new Set(list.map(s => sameName(s.name)).filter((name, i, all) => all.indexOf(name) !== i));
   const [filter,setFilter] = useState<SourceFilter>('all');
   const [q,setQ] = useState('');
-  const [bulk,setBulk] = useState(false);
+  const [bulk,setBulk] = useState<VideoSource[] | null>(null);
+  const [selected,setSelected] = useState<string[]>([]);
   const counts = { all: list.length, on: list.filter(s => s.enabled).length, off: list.filter(s => s.installed && !s.enabled).length, available: list.filter(s => !s.installed).length };
   const term = q.trim().toLowerCase();
   const shown = list.filter(s => FILTERS[filter].test(s) && (!term || s.name.toLowerCase().includes(term) || s.repository.toLowerCase().includes(term)));
   const off = list.filter(s => s.installed && !s.enabled);
+  const selectable = shown.filter(source => source.installed);
+  const selectedSources = selectable.filter(source => selected.includes(source.id));
 
   return <div className="page-pad narrow"><header className="page-head"><p className="page-kicker">MOA에 연결하기</p><h1>영상 소스</h1><p className="source-muted">원하는 소스를 설치하면 홈과 검색에서 함께 볼 수 있습니다.</p></header>
     <form className="source-repository" onSubmit={e => { e.preventDefault(); refresh.mutate({url,kind}); }}><label className="field"><span>형식</span><Select aria-label="확장 저장소 형식" value={kind} onChange={value=>setKind(value as typeof kind)} options={[{value:'mangayomi-js',label:'Mangayomi'},{value:'aniyomi-apk',label:'Aniyomi APK'}]} /></label><label className="field"><span>확장 저장소</span><input type="url" required value={url} onChange={e => setUrl(e.target.value)} aria-label="확장 저장소 주소" placeholder="https://example.com/index.min.json"/></label><Button type="submit" icon={list.length ? <RefreshCw size={18}/> : <Plus size={18}/>} disabled={refresh.isPending}>{refresh.isPending ? '확인 중…' : '저장소 추가'}</Button></form>
@@ -146,13 +149,14 @@ export function SourcesPage() {
     <div className="repository-list">{repos.data?.map(repo=><article className="repository-entry" key={repo.url}><a href={repo.url} target="_blank" rel="noreferrer">{repo.url}</a><small>{repo.checkedAt?`최근 확인 ${new Date(repo.checkedAt).toLocaleString('ko-KR')}`:'아직 갱신하지 않음'}</small><div className="source-actions"><Button disabled={refresh.isPending} onClick={()=>refresh.mutate({url:repo.url,kind:repo.kind})}>목록·업데이트 확인</Button><Button disabled={removeRepo.isPending} onClick={()=>removeRepo.mutate(repo.url)}>등록 해제</Button></div>{repo.error && <p role="alert">{repo.error}</p>}</article>)}</div><p className="source-muted">저장소 등록을 해제해도 이미 설치한 소스와 시청 기록은 유지됩니다.</p>{removeRepo.isError && <p role="alert">저장소 등록을 해제하지 못했습니다.</p>}
     {sources.isPending && <Skeleton className="folder-sk"/>}{sources.isError && <EmptyState title="소스 목록을 불러오지 못했습니다" action={<Button onClick={() => void sources.refetch()}>다시 시도</Button>}/>}
     {list.length > 0 && <div className="source-filterbar">
-      <div className="choice-row" role="tablist" aria-label="소스 상태">{(Object.keys(FILTERS) as SourceFilter[]).map(key => <button key={key} role="tab" aria-selected={filter === key} className={cx('chip', filter === key && 'is-active')} onClick={() => setFilter(key)}>{FILTERS[key].label}<small>{counts[key]}</small></button>)}</div>
-      <label className="source-find"><Search size={16} aria-hidden="true"/><input value={q} placeholder="소스 이름 검색" aria-label="소스 이름 검색" onChange={e => setQ(e.target.value)}/>{q && <button type="button" aria-label="지우기" onClick={() => setQ('')}><X size={14}/></button>}</label>
+      <div className="choice-row" role="tablist" aria-label="소스 상태">{(Object.keys(FILTERS) as SourceFilter[]).map(key => <button key={key} role="tab" aria-selected={filter === key} className={cx('chip', filter === key && 'is-active')} onClick={() => { setFilter(key); setSelected([]); }}>{FILTERS[key].label}<small>{counts[key]}</small></button>)}</div>
+      <label className="source-find"><Search size={16} aria-hidden="true"/><input value={q} placeholder="소스 이름 검색" aria-label="소스 이름 검색" onChange={e => { setQ(e.target.value); setSelected([]); }}/>{q && <button type="button" aria-label="지우기" onClick={() => { setQ(''); setSelected([]); }}><X size={14}/></button>}</label>
     </div>}
-    {filter === 'off' && off.length > 0 && <div className="source-bulk"><span>꺼진 소스 <b>{off.length}개</b>를 한 번에 정리할 수 있어요.</span><Button variant="ghost" className="btn-danger" icon={<Trash2 size={16}/>} onClick={() => setBulk(true)}>모두 삭제</Button></div>}
-    {shown.map(source => <SourceEntry key={source.id} source={source} duplicateName={duplicates.has(sameName(source.name))}/>)}
+    {filter === 'off' && off.length > 0 && <div className="source-bulk"><span>꺼진 소스 <b>{off.length}개</b>를 한 번에 정리할 수 있어요.</span><Button variant="ghost" className="btn-danger" icon={<Trash2 size={16}/>} onClick={() => setBulk(off)}>모두 삭제</Button></div>}
+    {!!selectable.length && <div className="list-selection"><label><input type="checkbox" aria-label="표시된 설치 소스 모두 선택" checked={selectedSources.length === selectable.length} ref={input => { if (input) input.indeterminate = selectedSources.length > 0 && selectedSources.length < selectable.length; }} onChange={event => setSelected(event.target.checked ? selectable.map(source => source.id) : [])} />전체 선택</label><span>{selectedSources.length}개 선택</span><Button disabled={!selectedSources.length} icon={<Trash2 size={16} />} onClick={() => setBulk(selectedSources)}>선택 삭제</Button></div>}
+    {shown.map(source => <SourceEntry key={source.id} source={source} duplicateName={duplicates.has(sameName(source.name))} selected={selected.includes(source.id)} onSelect={checked => setSelected(current => checked ? [...current, source.id] : current.filter(id => id !== source.id))}/>)}
     {sources.isSuccess && list.length > 0 && !shown.length && <EmptyState title={term ? `'${q.trim()}'에 맞는 소스가 없어요` : `${FILTERS[filter].label} 소스가 없어요`}/>}
-    {bulk && <RemoveSourcesSheet sources={off} onClose={() => setBulk(false)}/>}
+    {bulk && <RemoveSourcesSheet sources={bulk} onClose={() => setBulk(null)}/>}
   </div>;
 }
 
@@ -184,7 +188,7 @@ function RemoveSourcesSheet({ sources, onClose }: { sources: VideoSource[]; onCl
   ].filter(Boolean) as string[] : [];
   return <div className="sheet-backdrop" onClick={onClose}>
     <div className="sheet remove-sheet" role="alertdialog" aria-modal="true" aria-labelledby="remove-title" onClick={e => e.stopPropagation()}>
-      <header className="sheet-head"><h2 id="remove-title">{single ? `'${sources[0].name}' 삭제` : `꺼진 소스 ${sources.length}개 삭제`}</h2><IconButton label="닫기" onClick={onClose}><X size={20}/></IconButton></header>
+      <header className="sheet-head"><h2 id="remove-title">{single ? `'${sources[0].name}' 삭제` : `소스 ${sources.length}개 삭제`}</h2><IconButton label="닫기" onClick={onClose}><X size={20}/></IconButton></header>
       <div className="remove-body">
         {!single && <ul className="remove-names">{sources.slice(0, 8).map(s => <li key={s.id}>{s.name}</li>)}{sources.length > 8 && <li className="more">외 {sources.length - 8}개</li>}</ul>}
         {impact.isPending ? <p className="remove-loading"><Spinner size={16}/>함께 지워질 기록을 확인하는 중…</p>

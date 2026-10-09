@@ -147,7 +147,10 @@ try {
       const canvas = document.createElement('canvas'); canvas.width = img.width; canvas.height = img.height;
       const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0);
       const rgba = ctx.getImageData(0, 0, img.width, img.height).data;
-      const background = Array.from(ctx.getImageData(Math.floor(img.width/2),20,1,1).data);
+      const stage = document.querySelector('.stage').getBoundingClientRect(), rect = video.getBoundingClientRect();
+      const videoHeight = Math.min(rect.height, rect.width * video.videoHeight / video.videoWidth);
+      const y = Math.max(0, Math.min(img.height - 1, Math.floor((rect.top - stage.top + (rect.height - videoHeight) / 2 + videoHeight * .1) * img.height / stage.height)));
+      const background = Array.from(ctx.getImageData(Math.floor(img.width / 2), y, 1, 1).data);
       let white = 0, dark = 0, minY = img.height, maxY = -1;
       for (let i = 0; i < rgba.length; i += 4) {
         if (rgba[i] < background[0] * .75 && rgba[i + 1] < background[1] * .75 && rgba[i + 2] < background[2] * .75) dark++;
@@ -209,7 +212,7 @@ try {
   const largeAss=await sample('ass-large-soft',3.5,true);
   assert.ok(largeAss.maxY-largeAss.minY > baselineAss.maxY-baselineAss.minY, 'ASS font size must visibly increase');
   const styles=await page.evaluate(()=>controller.ass.renderer.getStyles());
-  assert.equal(styles.find(s=>s.Name==='Default').BorderStyle,3);
+  assert.equal(styles.find(s=>s.Name==='Default').BorderStyle,4);
   await page.evaluate(()=>controller.setAppearance({size:'xlarge',background:'soft'}));
   const xlargeAss=await sample('ass-xlarge-soft',3.5,true);
   assert.ok(xlargeAss.maxY-xlargeAss.minY > largeAss.maxY-largeAss.minY, 'extra large must be visibly larger than large');
@@ -254,6 +257,12 @@ try {
   });
   await show('vtt');
   const largeVtt = await sample('vtt-css-large', 2.5, true);
+  await page.evaluate(() => controller.setAppearance({ size: 'large', background: 'original', padding: 20 }));
+  await sample('vtt-original-padding', 2.5, true);
+  assert.equal(await page.locator('.subtitle-cue > span').first().evaluate(element => getComputedStyle(element).paddingLeft), '20px');
+  await page.evaluate(() => controller.setAppearance({ size: 'large', background: 'original' }));
+  assert.equal(await page.locator('.subtitle-overlay').count(), 0);
+
   let noBackground;
   for (const background of ['none', 'soft', 'solid']) {
     await page.evaluate(background => { document.querySelector('.stage').className = `stage player cue-large cue-bg-${background}`; return controller.setAppearance({size:'large',background}); }, background);

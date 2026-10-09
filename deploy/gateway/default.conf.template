@@ -24,6 +24,7 @@ server {
   auth_request /__moa/check;
   auth_request_set $moa_account $upstream_http_x_moa_account;
   auth_request_set $moa_role $upstream_http_x_moa_role;
+  auth_request_set $moa_permissions $upstream_http_x_moa_permissions;
   auth_request_set $moa_username $upstream_http_x_moa_username;
   auth_request_set $moa_cookie $upstream_http_set_cookie;
   add_header Set-Cookie $moa_cookie always;
@@ -36,6 +37,7 @@ server {
   proxy_buffering off;
   proxy_set_header X-Moa-Account "";
   proxy_set_header X-Moa-Role "";
+  proxy_set_header X-Moa-Permissions "";
   proxy_set_header X-Moa-Username "";
   proxy_set_header Host $http_host;
   proxy_set_header X-Forwarded-Proto $moa_proto;
@@ -82,6 +84,7 @@ server {
     proxy_http_version 1.1;
     proxy_set_header X-Moa-Account $moa_account;
     proxy_set_header X-Moa-Role $moa_role;
+    proxy_set_header X-Moa-Permissions $moa_permissions;
     proxy_set_header X-Moa-Username $moa_username;
     proxy_set_header Accept-Encoding "";
     proxy_set_header Host $http_host;

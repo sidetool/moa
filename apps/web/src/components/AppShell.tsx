@@ -113,7 +113,7 @@ function ProfileMenu({ profile }: { profile?: Profile }) {
           {item("/history", <History size={18} />, "시청 기록")}
           {admin && item("/sources", <FolderOpen size={18} />, "영상 소스")}
           {admin && item("/library", <FolderOpen size={18} />, "라이브러리 관리")}
-          {item("/plugins", <Puzzle size={18} />, "플러그인")}
+          {admin && item("/plugins", <Puzzle size={18} />, "플러그인")}
           <PluginShortcuts onSelect={() => setOpen(false)} />
           {admin && item("/subtitles", <Subtitles size={18} />, "저장한 자막")}
           {admin && hasLoginGate && item("/accounts", <Users size={18} />, "계정과 초대")}
@@ -168,7 +168,7 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="page">
+      <main className="page" key={location.pathname}>
         <Outlet />
       </main>
       <UpdateNotice />

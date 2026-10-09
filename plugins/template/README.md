@@ -56,6 +56,16 @@ To distribute one ZIP file:
 node build.mjs examples/page-notes
 ```
 
+## Catalog and inline detail example
+
+`examples/catalog-labels` uses API 2 to change catalog badges through `catalog.transform` and show an inline title panel. It receives sanitized catalog data and returns patches for existing titles, without changing the server database. Only `catalog.modify` and `ui` permissions are needed.
+
+```sh
+node build.mjs examples/catalog-labels
+```
+
+An optional `minMoaVersion` in the manifest declares the minimum MOA release. Packages requiring a newer API or release stay installed but do not execute; their management row shows the requirement and an update action. See the API documentation for hook limits and failure handling.
+
 ## HTML subtitle example
 
 `examples/subtitle-helper` provides a file picker and text input for importing subtitles. Build it with:

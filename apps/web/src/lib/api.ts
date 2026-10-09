@@ -1,4 +1,5 @@
 import { PROFILE_HEADER } from "@moa/shared";
+import { transformPluginCatalog } from './plugin-hooks';
 
 export const hasLoginGate = document.querySelector('meta[name="moa-auth"]')?.getAttribute("content") === "enabled";
 
@@ -58,7 +59,7 @@ async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T
     }
     throw new ApiError(response.status, data?.error ?? "http-error", data?.message);
   }
-  return data as T;
+  return (!auth && currentProfileId() === profile ? await transformPluginCatalog(path, data, profile) : data) as T;
 }
 
 // TMDB serves fixed widths; posters and backdrops have different ladders.

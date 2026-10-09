@@ -1,0 +1,10 @@
+{
+  "apiVersion": 1,
+  "id": "anime-schedule",
+  "name": "요일별 신작",
+  "version": "1.0.0",
+  "description": "홈에서 월요일부터 일요일까지 애니메이션 편성표를 확인하고 작품을 검색함.",
+  "placements": ["home"],
+  "permissions": ["app.navigate", "ui"],
+  "connect": ["https://api.anissia.net"]
+}

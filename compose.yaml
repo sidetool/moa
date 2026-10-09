@@ -6,6 +6,8 @@ services:
       context: .
       args:
         MOA_REVISION: ${MOA_REVISION:-unknown}
+        MOA_VERSION: ${MOA_VERSION:-unknown}
+        MOA_REPOSITORY: ${MOA_IMAGE_OWNER:-sidetool}/moa
     init: true
     environment:
       MOA_REQUIRE_ACCOUNT: "1"

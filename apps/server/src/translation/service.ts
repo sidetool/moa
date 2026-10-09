@@ -565,6 +565,7 @@ export class Translations {
       .all('SELECT cache_key FROM translated_subtitles WHERE episode_id=? ORDER BY created_at DESC LIMIT 8', episode)
       .map((row) => this.track(episode, row.cache_key, profile));
   }
+  trackEpisode(key: string, profile: string) { return [...this.assets.values()].find(asset => asset.key === key && asset.profile === profile)?.episode; }
   private track(episode: string, key: string, profile: string): SubtitleTrack {
     const row = this.db.get<Cache>('SELECT * FROM translation_cache WHERE key=? AND content IS NOT NULL', key);
     if (!row) throw new ApiFailure(404, 'translation-cache-expired');

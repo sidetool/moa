@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { buildApp } from '../src/app.js';
 
-const member = { 'x-moa-account': 'member', 'x-moa-role': 'member' };
+const member = { 'x-moa-account': 'member', 'x-moa-role': 'member', 'x-moa-permissions': 'video.watch,subtitles.add,subtitles.translate' };
 const cookie = (response: { headers: Record<string, unknown> }) => String(response.headers['set-cookie']).split(';')[0];
 
 test('profile PIN protects profile APIs, editing, asset owners and login sessions', async () => {
@@ -43,7 +43,7 @@ test('profile PIN protects profile APIs, editing, asset owners and login session
     }
     const unlock = (pin: string, headers = member) => app.inject({ method: 'POST', url: `/api/profiles/${p.id}/unlock`, headers, payload: { pin } });
     assert.equal((await unlock('9999')).json().error, 'profile-pin-invalid');
-    assert.equal((await unlock('0123', { 'x-moa-account': 'other', 'x-moa-role': 'member' })).statusCode, 404);
+    assert.equal((await unlock('0123', { 'x-moa-account': 'other', 'x-moa-role': 'member', 'x-moa-permissions': 'video.watch,subtitles.add,subtitles.translate' })).statusCode, 404);
     const unlocked = await unlock('0123'); assert.equal(unlocked.statusCode, 204);
     const first = { ...h, cookie: cookie(unlocked) };
     const changed = await app.inject({ method: 'PATCH', url: `/api/profiles/${p.id}`, headers: first, payload: { pin: '456789', name: 'Changed' } });

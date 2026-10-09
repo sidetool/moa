@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
+import type { SubtitleTrack } from '@moa/shared';
 
 test('saved uploads survive restart and preserve profile ownership; admins manage uploaded, AI and online subtitles', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'moa-subtitle-library-'));
@@ -74,5 +75,76 @@ test('saved uploads survive restart and preserve profile ownership; admins manag
     const again = (await server.app.inject({ method: 'POST', url: '/api/subtitles/import', headers, payload })).json()[0];
     await server.app.inject({ method: 'DELETE', url: `/api/profiles/${owner}` });
     assert.equal((await server.app.inject(again.url)).statusCode, 404);
+  } finally { await server.app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('grouped episodes reuse saved tracks and profile subtitle choices across devices and restarts', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'moa-subtitle-groups-'));
+  const services = { tmdb: { token: '', key: '' }, aniSkip: { async lookup() { return { match: null, intervals: [], markers: null }; } } };
+  let server = await buildApp({ dataDir: directory, mediaRoot: directory }, false, services);
+  const content = 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n공유 자막\n';
+  try {
+    const { app, db } = server;
+    const owner = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: '시청자' } })).json().id;
+    const other = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: '다른 시청자' } })).json().id;
+    const headers = { 'x-moa-profile': owner };
+    db.run("INSERT INTO media VALUES('a',NULL,'원본 작품','anime','{}','2026'),('b',NULL,'묶은 작품','anime','{}','2026'),('c',NULL,'별개 작품','anime','{}','2026')");
+    db.run("INSERT INTO episodes VALUES('a1','a',1,1,'1화',600,NULL),('b1','b',1,1,'1화',600,NULL),('b2','b',1,2,'2화',600,NULL),('b3','b',2,1,'시즌 2',600,NULL),('special','b',0,1,'특별편',600,NULL),('c1','c',1,1,'1화',600,NULL)");
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/media/a/group', headers, payload: { action: 'merge', otherId: 'b' } })).statusCode, 200);
+    const uploaded = (await app.inject({ method: 'POST', url: '/api/subtitles/import', headers, payload: { episodeId: 'a1', filename: 'saved.vtt', data: Buffer.from(content).toString('base64') } })).json()[0];
+    db.run("INSERT INTO translation_cache(key,format,chunks,content,touched,complete) VALUES('shared','vtt','[]',?,?,1)", content, Date.now());
+    db.run("INSERT INTO translated_subtitles(episode_id,cache_key,created_at) VALUES('a1','shared',?)", Date.now());
+    db.run("INSERT INTO online_subtitles VALUES('online','a1','제작자','https://example.com/sub','vtt',?,'hash','token',?)", content, Date.now());
+    const uploadList = (id: string, profile = owner) => server.app.inject({ url: `/api/episodes/${id}/subtitles/uploads`, headers: { 'x-moa-profile': profile } });
+    assert.equal((await uploadList('b1')).json()[0].id, uploaded.id);
+    for (const id of ['b2', 'b3', 'special', 'c1']) assert.deepEqual((await uploadList(id)).json(), []);
+    assert.deepEqual((await uploadList('b1', other)).json(), []);
+    const translated = (await app.inject({ url: '/api/episodes/b1/subtitles/translations', headers })).json()[0];
+    assert.equal(translated.id, 'translation-shared');
+    assert.equal((await app.inject({ url: translated.url, headers })).body, content);
+    assert.equal((await app.inject({ url: translated.url, headers: { 'x-moa-profile': other } })).statusCode, 403);
+    const file = path.join(directory, 'b1.mp4');
+    await writeFile(file, 'video');
+    db.run('INSERT INTO files VALUES(?,?,?,?,?,?,?)', 'b1', file, 5, Date.now(), '', JSON.stringify({ duration: 600, container: 'mp4', streams: [{ index: 0, codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080 }] }), '[]');
+    const playback = await app.inject({ method: 'POST', url: '/api/playback', headers, payload: { episodeId: 'b1', capabilities: { h264: true, hevc: false, av1: false } } });
+    assert.equal(playback.statusCode, 200, playback.body);
+    const tracks: SubtitleTrack[] = playback.json().subtitles;
+    assert.deepEqual(new Set(tracks.map(track => track.source)), new Set(['upload', 'translation', 'online']));
+    for (const track of tracks) assert.equal((await app.inject({ url: track.url, headers })).body, content);
+    assert.equal(db.get('SELECT count(*) AS n FROM uploaded_subtitles')!.n, 1);
+    assert.equal(db.get('SELECT count(*) AS n FROM online_subtitles')!.n, 1);
+    assert.equal(db.get('SELECT count(*) AS n FROM translated_subtitles')!.n, 1);
+    const get = (id: string, profile = owner) => server.app.inject({ url: `/api/episodes/${id}/subtitles/preference`, headers: { 'x-moa-profile': profile, 'user-agent': 'second-device' } });
+    const put = (id: string, choice: unknown, profile = owner) => server.app.inject({ method: 'PUT', url: `/api/episodes/${id}/subtitles/preference`, headers: { 'x-moa-profile': profile }, payload: { choice } });
+    assert.deepEqual((await get('b1')).json(), {});
+    const choice = { id: uploaded.id, source: 'upload', label: uploaded.label, format: uploaded.format, episodeId: 'b1' };
+    const remembered = await put('b1', choice);
+    assert.equal(remembered.statusCode, 200, remembered.body);
+    assert.deepEqual((await get('a1')).json(), { choice: { ...choice, episodeId: 'a1' } });
+    assert.deepEqual((await get('b1', other)).json(), {});
+    assert.equal((await put('b1', choice, other)).statusCode, 404);
+    assert.equal((await put('c1', choice)).statusCode, 404);
+    assert.equal((await put('b1', { ...choice, format: 'html' })).statusCode, 400);
+    assert.equal((await put('b1', { ...choice, url: 'https://example.com/private' })).statusCode, 400);
+    assert.equal((await put('b2', null)).statusCode, 200);
+    assert.deepEqual((await get('b3')).json(), { choice: null });
+    assert.deepEqual((await get('b1')).json(), remembered.json());
+    await app.close();
+    server = await buildApp({ dataDir: directory, mediaRoot: directory }, false, services);
+    assert.deepEqual((await get('b1')).json(), remembered.json());
+    assert.deepEqual((await get('b2')).json(), { choice: null });
+    assert.deepEqual((await get('b1', other)).json(), {});
+    assert.equal((await uploadList('b1')).json()[0].id, uploaded.id);
+    server.db.run("INSERT INTO source_entries(id,repository,entry,enabled) VALUES('source','fixture','{}',1)");
+    server.db.run("INSERT INTO media VALUES('remote',NULL,'묶은 작품 2기','anime','{}','2026')");
+    server.db.run("INSERT INTO source_media(media_id,source_id,url) VALUES('remote','source','https://example.com/show')");
+    server.db.run("INSERT INTO episodes VALUES('remote1','remote',1,1,'1화',600,NULL)");
+    assert.equal((await server.app.inject({ method: 'PATCH', url: '/api/media/b/group', headers, payload: { action: 'merge', otherId: 'remote' } })).statusCode, 200);
+    const seasonTwo = (await server.app.inject({ method: 'POST', url: '/api/subtitles/import', headers, payload: { episodeId: 'b3', filename: 'season-2.vtt', data: Buffer.from(content).toString('base64') } })).json()[0];
+    assert.deepEqual((await uploadList('remote1')).json().map((track: SubtitleTrack) => track.id), [seasonTwo.id]);
+    assert.equal((await server.app.inject({ method: 'PATCH', url: '/api/media/b/group', headers, payload: { action: 'separate' } })).statusCode, 200);
+    assert.deepEqual((await uploadList('b1')).json(), []);
+    await server.app.inject({ method: 'DELETE', url: `/api/profiles/${owner}` });
+    assert.equal(server.db.get('SELECT count(*) AS n FROM subtitle_preferences')!.n, 0);
   } finally { await server.app.close(); await rm(directory, { recursive: true, force: true }); }
 });

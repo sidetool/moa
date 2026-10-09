@@ -40,7 +40,7 @@ try {
     settings = defaultSettings();
     await routeApi(context);
     const base = server.resolvedUrls.local[0];
-    await page.goto(`${base}settings`);
+    await page.goto(`${base}settings/tabs`);
     const reset = page.locator('#tabs').getByRole('button', { name: '기본값', exact: true });
     await reset.click();
     const confirmation = page.getByRole('alertdialog', { name: '탭 초기화' });
@@ -63,6 +63,7 @@ try {
     await confirmation.getByRole('button', { name: '초기화', exact: true }).click();
     await confirmation.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.tab-list-foot')?.textContent?.includes('같은 프로필'));
+    await page.goto(`${base}settings`);
     const quality = page.getByRole('combobox', { name: 'preferredQuality', exact: true });
     await quality.click();
     assert.equal(await quality.getAttribute('aria-expanded'), 'true');
@@ -91,6 +92,7 @@ try {
     await quality.click();
     await page.getByRole('heading', { name: '설정', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').getAttribute('aria-expanded') === 'false');
+    await page.goto(`${base}settings#translation`);
     const model = page.getByRole('combobox', { name: '번역 모델', exact: true });
     await model.scrollIntoViewIfNeeded();
     await model.click();
@@ -100,6 +102,7 @@ try {
     await page.screenshot({ path: verificationPath(`dropdown-${width}.png`) });
     await model.press('Escape');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.goto(`${base}settings`);
     await page.evaluate(() => { localStorage.setItem('moa.remoteMode', 'on'); window.dispatchEvent(new Event('moa:remote-mode')); });
     await quality.scrollIntoViewIfNeeded();
     await quality.focus();
@@ -154,13 +157,13 @@ try {
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').value === '480');
     await until(() => settings.preferredQuality === '480');
     await quality.focus();
-    await quality.press('ArrowUp');
+    if (process.platform === 'darwin') await quality.selectOption('720'); else await quality.press('ArrowUp');
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').value !== '480');
     const changed = await quality.inputValue();
     await until(() => settings.preferredQuality === changed);
     await page.evaluate(() => { localStorage.setItem('moa.remoteMode', 'on'); window.dispatchEvent(new Event('moa:remote-mode')); });
     await quality.focus();
-    await quality.press('ArrowDown');
+    if (process.platform === 'darwin') await quality.selectOption('480'); else await quality.press('ArrowDown');
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').value === '480');
     assert.equal(await quality.evaluate(element => element === document.activeElement), true);
     assert.ok(page.url().endsWith('/settings'));

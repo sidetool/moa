@@ -1,7 +1,7 @@
 import { useTitleGrouping } from "../lib/device-prefs";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Account, HomeResponse, LibraryFolder, MediaCard, MediaDetail, MediaType, Page, Profile, ScanStatus, SearchGroup, Settings, HistoryEntry } from "@moa/shared";
-import { api } from "../lib/api";
+import { api, currentProfileId } from "../lib/api";
 
 export const keys = {
   me: ["me"] as const,
@@ -30,9 +30,9 @@ export const useHome = (type?: MediaType, providers?: string[], continueScope: "
 export const useMedia = (id: string) =>
   useQuery({ queryKey: keys.media(id), queryFn: ({ signal }) => api<MediaDetail>(`/media/${encodeURIComponent(id)}`, { signal }), enabled: id !== "" });
 
-export const useMediaList = (params: { type?: MediaType; provider?: string; genre?: string; sort?: string; page?: number }) => {
+export const useMediaList = (params: { type?: MediaType; provider?: string; genre?: string; sort?: string }) => {
   const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)]));
-  return useQuery({ queryKey: keys.list(params), queryFn: ({ signal }) => api<Page<MediaCard>>(`/media?${query}`, { signal }) });
+  return useInfiniteQuery({ queryKey: keys.list(params), initialPageParam: 1, queryFn: ({ pageParam, signal }) => api<Page<MediaCard>>(`/media?${query}&page=${pageParam}`, { signal }), getNextPageParam: last => last.hasNextPage ? last.page + 1 : undefined, retry: false });
 };
 
 export const useGenres = (type?: MediaType) =>
@@ -50,7 +50,43 @@ export const useHistory = () => useQuery({ queryKey: keys.history, queryFn: () =
 export const useFolders = () => useQuery({ queryKey: keys.folders, queryFn: () => api<LibraryFolder[]>("/library/folders") });
 export const useScanStatus = (poll: boolean) =>
   useQuery({ queryKey: keys.scan, queryFn: () => api<ScanStatus>("/library/status"), refetchInterval: poll ? 1500 : false });
-export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: () => api<Settings>("/settings") });
+export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: async ({ signal }) => {
+  const profile = currentProfileId(), settings = await api<Settings>('/settings', { signal });
+  if (!settings || settings.subtitleBackground !== undefined || settings.subtitleHeight !== undefined || settings.subtitleScale !== undefined || settings.subtitleOutline !== undefined || settings.subtitleShadow !== undefined || settings.subtitlePadding !== undefined) return settings;
+  try {
+    const old = JSON.parse(localStorage.getItem('moa.subtitleAppearance') || 'null'), height = localStorage.getItem('moa.subtitleHeight');
+    if (!old && height === null || currentProfileId() !== profile || signal.aborted) return settings;
+    const patch: Partial<Settings> = { subtitleBackground: 'original' };
+    if (old && ['small', 'medium', 'large', 'xlarge'].includes(old.size) && ['original', 'none', 'soft', 'solid'].includes(old.background)) {
+      patch.subtitleSize = old.size; patch.subtitleBackground = old.background;
+      patch.subtitleShadow = ({ none: 0, soft: 2, strong: 4 } as Record<string, number>)[old.shadow] ?? null;
+      patch.subtitleOutline = ({ none: 0, thin: 1, thick: 3 } as Record<string, number>)[old.outline] ?? null;
+    }
+    if (height !== null && Number.isFinite(Number(height))) patch.subtitleHeight = Math.max(0, Math.min(40, Number(height)));
+    return await api<Settings>('/settings', { method: 'PATCH', body: patch, signal });
+  } catch { return settings; }
+} });
+
+const settingsSaves = new Map<string | null, Promise<void>>();
+export function useSaveSettings() {
+  const client = useQueryClient();
+  return (patch: Partial<Settings>) => {
+    const profile = currentProfileId();
+    client.setQueryData<Settings>(keys.settings, old => old ? { ...old, ...patch } : old);
+    const save = (settingsSaves.get(profile) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      if (currentProfileId() !== profile) return;
+      const saved = await api<Settings>('/settings', { method: 'PATCH', body: patch, keepalive: true });
+      if (settingsSaves.get(profile) === save && currentProfileId() === profile) client.setQueryData(keys.settings, saved);
+    });
+    settingsSaves.set(profile, save);
+    void save.finally(() => {
+      if (settingsSaves.get(profile) !== save) return;
+      settingsSaves.delete(profile);
+      if (currentProfileId() === profile) void client.invalidateQueries({ queryKey: keys.settings });
+    }).catch(() => {});
+    return save;
+  };
+}
 
 /** Optimistic watchlist toggle; card and detail caches update immediately. */
 export function useWatchlistToggle() {

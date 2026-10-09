@@ -59,6 +59,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await context.addInitScript(id => { if (window !== top) return; localStorage.setItem('moa.profile', id); localStorage.setItem('moa.fullscreenOnPlay', '0'); localStorage.setItem('moa.remoteMode', 'off'); }, profile.id);
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (['warning', 'error'].includes(message.type()) && /Encountered two children with the same key|unique [\"']?key[\"']? prop/.test(message.text())) errors.push(message.text()); });
   page.on('dialog', dialog => { errors.push(`Unexpected browser dialog: ${dialog.type()}`); void dialog.dismiss(); });
   const base = web.resolvedUrls.local[0];
   await page.goto(base + 'plugins');
@@ -86,20 +87,20 @@ try {
   assert.equal(await child.evaluate(async () => { try { await moa.fetch('https://example.org/subtitle'); return false; } catch { return true; } }), true);
   assert.deepEqual(await child.evaluate(async () => {
     const results = [];
-    for (const call of [() => moa.storage.get(), () => moa.player.pause(), () => moa.notify('거부되어야 함'), () => moa.app.context(), () => moa.app.navigate('/history'), () => moa.ui.open()]) {
+    for (const call of [() => moa.storage.get(), () => moa.player.pause(), () => moa.notify('거부되어야 함'), () => moa.app.context(), () => moa.app.navigate('/history'), () => moa.ui.open(), () => moa.hooks.register('catalog.transform', () => [])]) {
       try { await call(); results.push(false); } catch { results.push(true); }
     }
     return results;
-  }), [true, true, true, true, true, true]);
+  }), [true, true, true, true, true, true, true]);
   let release, received;
   const gate = new Promise(resolve => { release = resolve; }), request = new Promise(resolve => { received = resolve; });
-  await page.route('**/api/plugins', async route => { received(); await gate; await route.continue(); });
+  await page.route('**/api/plugin-runtime', async route => { received(); await gate; await route.continue(); });
   const switched = child.evaluate(async () => { try { await moa.context(); return ''; } catch (error) { return error.message; } });
   await request;
   await page.evaluate(() => localStorage.setItem('moa.profile', 'changed-profile'));
   release(); assert.match(await switched, /프로필이 변경/);
   await page.evaluate(id => localStorage.setItem('moa.profile', id), profile.id);
-  await page.unroute('**/api/plugins');
+  await page.unroute('**/api/plugin-runtime');
   await env.app.inject({ method: 'POST', url: '/api/admin/plugins', payload: { ...manifest, version: '1.0.1', html } });
   assert.match(await child.evaluate(async () => { try { await moa.context(); return ''; } catch (error) { return error.message; } }), /업데이트/);
   await page.getByRole('button', { name: '플러그인 닫기' }).click();
@@ -257,6 +258,54 @@ try {
   assert.equal(await notesFrame.getByLabel('Note', { exact: true }).inputValue(), '');
   await notesFrame.locator('body').evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.screenshot({ path: verificationPath('plugin-page-notes-390.png'), animations: 'disabled' });
+  await page.getByRole('button', { name: '플러그인 닫기' }).click();
+  env.db.run('UPDATE media SET metadata=? WHERE id=?', JSON.stringify({ genres: ['Drama'] }), 'm');
+  await page.goto(base + 'plugins');
+  execFileSync(process.execPath, [path.join(templateRoot, 'build.mjs'), 'examples/catalog-labels']);
+  await input.setInputFiles(path.join(templateRoot, 'dist/catalog-labels.zip'));
+  await page.getByRole('button', { name: '설치·업데이트', exact: true }).click();
+  await page.locator('.plugin-row').filter({ hasText: 'Catalog labels' }).waitFor();
+  await page.goto(base + 'search?q=Plugin%20fixture');
+  await page.locator('.card-badge').getByText('Drama', { exact: true }).waitFor();
+  assert.equal(env.db.get('SELECT title FROM media WHERE id=?', 'm').title, 'Plugin fixture');
+  await page.locator('a.poster-card').filter({ hasText: 'Plugin fixture' }).click();
+  await page.waitForURL('**/title/m');
+  const inline = page.locator('.home-plugin iframe[title="Catalog labels"]');
+  await inline.waitFor();
+  assert.equal(await page.locator('iframe[title="Catalog labels"]').count(), 1);
+  await page.frameLocator('.home-plugin iframe[title="Catalog labels"]').getByRole('heading', { name: 'Genre labels' }).waitFor();
+  const hookFrame = await (await inline.elementHandle()).contentFrame();
+  await hookFrame.evaluate(() => moa.hooks.register('catalog.transform', ({ items }) => items.map(item => ({ id: item.id, title: 'Hooked title' }))));
+  const transformed = await page.evaluate(async () => (await import('/src/lib/api.ts')).api('/media/m'));
+  assert.equal(transformed.title, 'Hooked title');
+  await page.screenshot({ path: verificationPath('plugin-detail-hooks-390.png'), animations: 'disabled' });
+  await env.app.inject({ method: 'PATCH', url: '/api/admin/plugins/catalog-labels', payload: { enabled: false } });
+  assert.equal((await page.evaluate(async () => (await import('/src/lib/api.ts')).api('/media/m'))).title, 'Plugin fixture');
+  await env.app.inject({ method: 'PATCH', url: '/api/admin/plugins/catalog-labels', payload: { enabled: true } });
+  await env.app.inject({ method: 'POST', url: '/api/admin/plugins', payload: { ...script, id: 'future-plugin', name: 'Future plugin', apiVersion: 3, minMoaVersion: '999.0.0' } });
+  await page.goto(base + 'plugins');
+  const futureRow = page.locator('.plugin-row').filter({ hasText: 'Future plugin' });
+  await futureRow.getByText('최소 지원: MOA 999.0.0 · 플러그인 API 3', { exact: true }).waitFor();
+  assert.equal(await futureRow.getByRole('link', { name: 'MOA 업데이트' }).getAttribute('href'), '/settings#updates');
+  assert.equal(await page.locator('iframe[title="Future plugin"]').count(), 0);
+  await page.getByRole('checkbox', { name: '플러그인 전체 선택' }).check();
+  await page.getByRole('button', { name: '선택 중지', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.plugin-row [role=switch]')].every(element => element.getAttribute('aria-checked') === 'false'));
+  await page.getByRole('checkbox', { name: '플러그인 전체 선택' }).check();
+  await page.getByRole('button', { name: '선택 사용', exact: true }).click();
+  await page.waitForFunction(() => [...document.querySelectorAll('.plugin-row [role=switch]')].every(element => element.getAttribute('aria-checked') === 'true'));
+  await page.getByRole('checkbox', { name: '플러그인 전체 선택' }).check();
+  await page.getByRole('button', { name: '선택 삭제', exact: true }).click();
+  await page.getByRole('alertdialog', { name: '플러그인 삭제' }).getByRole('button', { name: '취소', exact: true }).click();
+  await page.route('**/api/admin/plugins/catalog-labels', route => route.request().method() === 'DELETE' ? route.fulfill({ status: 500, json: { error: 'fixture-failure' } }) : route.continue());
+  await page.getByRole('button', { name: '선택 삭제', exact: true }).click();
+  await page.getByRole('alertdialog', { name: '플러그인 삭제' }).getByRole('button', { name: '삭제', exact: true }).click();
+  await page.getByRole('alertdialog').getByRole('alert').getByText('2개 처리됨 · Catalog labels 처리 실패. 선택된 항목만 다시 시도해 주세요.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('checkbox', { name: 'Catalog labels 선택', exact: true }).isChecked(), true);
+  assert.equal(env.db.get('SELECT count(*) AS n FROM website_plugins').n, 1);
+  await page.unroute('**/api/admin/plugins/catalog-labels');
+  await page.getByRole('alertdialog', { name: '플러그인 삭제' }).getByRole('button', { name: '삭제', exact: true }).click();
+  await page.getByText('설치된 플러그인이 없습니다.', { exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: true, checks: ['ZIP, folder and bundled install', 'missing source and invalid package feedback', 'web deletion modal', 'script UI state persistence', 'page context and route events', 'local navigation and external URL rejection', 'profile menu tool shortcut', 'page-notes template', 'subtitle chapter link playback', 'permissions', 'sandbox', 'settings context', 'enable persistence', 'mobile layout', 'automatic JS ready', 'action and profile storage', 'player control', 'timeupdate', 'cross-tab profile event isolation', 'player context', 'subtitle storage', 'delete cascade'] }));
+  console.log(JSON.stringify({ passed: true, checks: ['ZIP, folder and bundled install', 'missing source and invalid package feedback', 'web deletion modal', 'script UI state persistence', 'page context and route events', 'local navigation and external URL rejection', 'profile menu tool shortcut', 'page-notes template', 'subtitle chapter link playback', 'permissions', 'sandbox', 'settings context', 'enable persistence', 'mobile layout', 'automatic JS ready', 'action and profile storage', 'player control', 'timeupdate', 'cross-tab profile event isolation', 'player context', 'subtitle storage', 'delete cascade', 'catalog patch dispatch and revocation', 'inline title panel', 'unsupported version update action', 'bulk enable disable delete and partial retry'] }));
 } finally { await browser.close(); await web.close(); await env.app.close(); await rm(directory, { recursive: true, force: true }); }

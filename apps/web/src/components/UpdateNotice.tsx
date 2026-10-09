@@ -37,13 +37,13 @@ export function UpdateNotice() {
       {done && <IconButton label="닫기" onClick={() => { setStarted(false); install.reset(); }}><X size={18} /></IconButton>}
     </div>;
   }
-  if (!pref.enabled || snoozed || !data.connected || data.state !== 'available') return null;
+  if (!pref.enabled || snoozed || !(data.connected && data.state === 'available' || data.discovery?.updateAvailable)) return null;
   const label = newVersionLabel(data);
 
   return <>
     <div className="update-notice" role="status" aria-label="업데이트 알림">
       <p>{label ? <><b>MOA {label}</b> 업데이트가 있어요</> : '새 업데이트가 있어요'}</p>
-      <Button variant="primary" onClick={() => { install.reset(); setConfirm(true); }}>설치</Button>
+      {data.connected ? <Button variant="primary" onClick={() => { install.reset(); setConfirm(true); }}>설치</Button> : <Link className="btn btn-primary btn-m" to="/settings#updates">릴리스 보기</Link>}
       <Button variant="ghost" onClick={() => pref.setEnabled(false)}>다시 보지 않음</Button>
       <IconButton label="닫기" onClick={() => { pref.snooze(); setNow(Date.now()); }}><X size={18} /></IconButton>
     </div>

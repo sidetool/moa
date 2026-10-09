@@ -40,6 +40,9 @@ export const updateErrors: Record<string, string> = {
   'update-rate-limited': '업데이트 서버의 요청 제한에 도달했어요. 나중에 다시 확인해 주세요.',
   'update-app-busy': '재생이나 다른 작업이 진행 중이에요. 끝난 뒤 다시 시도해 주세요.',
   'update-space-required': '백업과 업데이트에 필요한 디스크 공간을 확보해 주세요.',
+  'update-check-failed': 'GitHub 릴리스를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.',
+  'update-response-limit': '릴리스 응답이 너무 커서 확인을 중단했어요.',
+  'update-feed-truncated': '릴리스 목록이 너무 많아 최신 버전을 확정하지 못했어요. GitHub 릴리스 페이지를 확인해 주세요.',
   'update-no-releases': '선택한 채널에 공개된 릴리스가 아직 없어요.',
   'update-rolled-back': '이전 버전으로 복구했어요. 업데이트 기록을 확인해 주세요.',
   'update-recovery-required': '자동 복구를 마치지 못했어요. 설치 안내의 복구 방법을 확인해 주세요.',
@@ -51,7 +54,7 @@ export const errorCode = (error: unknown) => error instanceof ApiError ? error.c
 export const version = (value: string) => value === 'unknown' ? '사용자 빌드' : /^\d/.test(value) ? `v${value}` : value;
 export const revision = (value: string) => value === 'unknown' ? '알 수 없음' : value.replace(/^sha256:/, '').slice(0, 12);
 /** Release builds have readable versions; git/docker builds only expose commits, which say nothing to a reader. */
-export const newVersionLabel = (status: UpdateStatus) => status.mode === 'release' && status.latest ? version(status.latest) : null;
+export const newVersionLabel = (status: UpdateStatus) => status.discovery?.updateAvailable && status.discovery.releases[0] ? version(status.discovery.latestVersion || status.discovery.releases[0].version) : status.mode === 'release' && status.latest ? version(status.latest) : null;
 export const installNote = (status?: UpdateStatus) => status?.mode === 'git'
   ? '자동 재시작을 설정하지 않았다면 설치 후 호스트에서 서버를 재시작해 주세요.'
   : '서버를 재시작하는 동안 영상 재생이 잠시 중단될 수 있어요.';

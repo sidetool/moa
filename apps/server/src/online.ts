@@ -104,11 +104,15 @@ export class OnlineSubtitles {
     const row = this.db.get('SELECT * FROM online_subtitles WHERE episode_id=? AND creator_name=? AND content_hash=?', episodeId, c.creatorName, digest)!;
     // Applying a subtitle may precede video playback. Give it an asset-only
     // session with the same profile binding and 30-minute idle expiry as playback.
-    const token = randomUUID();
-    this.assets.set(token, { episodeId, subtitleId: row.id, profileId, touched: Date.now() });
-    return this.track(row, `/api/playback/${token}/subtitles/${row.id}.${row.format}`);
+    return this.savedTrack(row, profileId);
   }
   saved(episodeId: string) { return this.db.all('SELECT * FROM online_subtitles WHERE episode_id=? ORDER BY created_at DESC,id', episodeId); }
+  tracks(episodeId: string, profileId: string) { return this.saved(episodeId).map(row => this.savedTrack(row, profileId)); }
+  private savedTrack(row: Record<string, any>, profileId: string) {
+    const token = randomUUID();
+    this.assets.set(token, { episodeId: row.episode_id, subtitleId: row.id, profileId, touched: Date.now() });
+    return this.track(row, `/api/playback/${token}/subtitles/${row.id}.${row.format}`);
+  }
   content(episodeId: string, subtitleId: string, token?: string, profileId?: string) {
     const row = this.db.get('SELECT * FROM online_subtitles WHERE id=? AND episode_id=?', subtitleId, episodeId);
     if (!row || !profileId && token !== row.token) throw new ApiFailure(404, 'subtitle-not-found');

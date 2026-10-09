@@ -10,8 +10,8 @@ process.env.VITE_MOCK = '0';
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), logLevel: 'error', server: { port: 0, open: false } });
 await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
-let session = 0, resolved = 0, reordered = false, resolveGate;
-const lookups = [], errors = [];
+let session = 0, resolved = 0, reordered = false, resolveGate, preferenceGate;
+const lookups = [], errors = [], preferences = new Map(), profileSettings = new Map();
 const upload = () => ({ id: 'upload-stable', source: 'upload', label: '선택한 파일.srt', format: 'vtt', url: `/fixture/upload-${++resolved}.vtt` });
 const translated = () => ({ id: 'translation-stable', source: 'translation', label: '한국어 · AI 번역', lang: 'ko', format: 'vtt', url: `/fixture/translation-${++resolved}.vtt` });
 try {
@@ -19,18 +19,29 @@ try {
   page.setDefaultTimeout(15000);
   page.on('pageerror', error => errors.push(String(error)));
   await page.addInitScript(() => { if (!localStorage.getItem('moa.profile')) localStorage.setItem('moa.profile', 'first'); localStorage.setItem('moa.fullscreenOnPlay', '0'); });
-  await page.route('**/fixture/video.mp4', route => {
+  const videoFixture = route => {
     const range = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/);
     const start = Number(range?.[1] || 0), end = Math.min(video.length - 1, range?.[2] ? Number(range[2]) : video.length - 1);
     return route.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4', body: video.subarray(start, end + 1), headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${video.length}` } : {}) } });
-  });
-  await page.route('**/fixture/*.vtt', route => route.fulfill({ contentType: 'text/vtt', body: `WEBVTT\n\n00:00:00.000 --> 00:10:00.000\n${new URL(route.request().url()).pathname}\n` }));
-  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+  };
+  const subtitleFixture = route => route.fulfill({ contentType: 'text/vtt', body: `WEBVTT\n\n00:00:00.000 --> 00:10:00.000\n${new URL(route.request().url()).pathname}\n` });
+  const apiFixture = async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname;
     const json = body => route.fulfill({ json: body });
-    if (pathname === '/api/settings') return json({ defaultSubtitleLang: 'ja', subtitleSize: 'medium', autoFetchSubtitles: false, autoplayNext: false, translationMode: 'manual' });
+    if (pathname.endsWith('/subtitles/preference')) {
+      const key = request.headers()['x-moa-profile'] + pathname;
+      if (request.method() === 'PUT') preferences.set(key, request.postDataJSON().choice);
+      const result = preferences.has(key) ? {choice:preferences.get(key)} : {};
+      if (request.method() === 'GET') await preferenceGate;
+      return json(result);
+    }
+    if (pathname === '/api/settings') {
+      const profile = request.headers()['x-moa-profile'];
+      if (request.method() === 'PATCH') profileSettings.set(profile, { ...profileSettings.get(profile), ...request.postDataJSON() });
+      return json({ defaultSubtitleLang: 'ja', subtitleSize: 'medium', autoFetchSubtitles: false, autoplayNext: false, translationMode: 'manual', ...profileSettings.get(profile) });
+    }
     if (pathname === '/api/me') return json({ role: 'admin' });
-    if (pathname === '/api/plugins' || pathname === '/api/sources') return json([]);
+    if (pathname === '/api/plugin-runtime' || pathname === '/api/plugins' || pathname === '/api/sources') return json([]);
     if (pathname === '/api/translation/config') return json({ configured: false, enabled: false });
     if (pathname.endsWith('/subtitles/uploads') || pathname.endsWith('/subtitles/translations')) {
       lookups.push(pathname);
@@ -42,13 +53,19 @@ try {
       const { episodeId } = request.postDataJSON();
       session++;
       const originals = [{ id: `extension-${reordered ? 1 : 0}`, source: 'extension', label: 'English', lang: 'en', format: 'vtt', url: `/fixture/english-${session}.vtt` }, { id: `extension-${reordered ? 0 : 1}`, source: 'extension', label: '日本語', lang: 'ja', format: 'vtt', url: `/fixture/japanese-${session}.vtt` }];
-      return json({ sessionId: `session-${session}`, episodeId, mediaId: episodeId === 'e1' ? 'm1' : 'm2', mediaTitle: '선택 기억 검증', mediaType: 'anime', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 600, startPosition: 0, subtitles: [...originals, ...(episodeId === 'e1' ? [upload(), translated()] : [])], audioTracks: [], streams: [{ id: 'a', label: '서버 A' }] });
+      return json({ sessionId: `session-${session}`, episodeId, mediaId: episodeId === 'e1' ? 'm1' : 'm2', mediaTitle: '선택 기억 검증', mediaType: 'anime', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 600, markers: {introStart:15,introEnd:85,creditsStart:490,creditsEnd:560,source:'aniskip'}, startPosition: 0, subtitles: [...originals, ...(episodeId === 'e1' ? [upload(), translated()] : [])], audioTracks: [], streams: [{ id: 'a', label: '서버 A' }] });
     }
     if (pathname.endsWith('/context')) return json({ mediaId: pathname.includes('/e1/') ? 'm1' : 'm2', season: 1, number: pathname.includes('/e3/') ? 2 : 1 });
     if (pathname.endsWith('/group')) return json({ members: [{ id: 'm1', provider: { name: '소스 A' } }, { id: 'm2', provider: { name: '소스 B' } }] });
     if (pathname.startsWith('/api/media/')) return json({ id: pathname.split('/').at(-1), title: '선택 기억 검증', type: 'anime', provider: { id: 'local', name: '로컬', kind: 'local' }, seasons: [{ number: 1, episodes: [{ id: 'e2', season: 1, number: 1, title: '같은 회차' }, { id: 'e3', season: 1, number: 2, title: '다른 회차' }] }] });
     return route.fulfill({ status: 204 });
-  });
+  };
+  const fixtures = async target => {
+    await target.route('**/fixture/video.mp4', videoFixture);
+    await target.route('**/fixture/*.vtt', subtitleFixture);
+    await target.route(url => url.pathname.startsWith('/api/'), apiFixture);
+  };
+  await fixtures(page);
   const base = server.resolvedUrls.local[0];
   const ready = async () => { await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2); await page.locator('video').evaluate(element => element.pause()); };
   const open = async () => { await page.mouse.move(100, 100); await page.getByRole('button', { name: '자막 및 음성', exact: true }).click(); };
@@ -95,7 +112,7 @@ try {
   await page.evaluate(async () => {
     localStorage.setItem('moa.profile', 'first');
     const { rememberSubtitle } = await import('/src/player/subtitle-preference.ts');
-    rememberSubtitle('e2', { id: 'upload-stable', source: 'upload', label: '선택한 파일.srt', format: 'vtt', url: '/expired' }, 'e1');
+    await rememberSubtitle('e2', { id: 'upload-stable', source: 'upload', label: '선택한 파일.srt', format: 'vtt', url: '/expired' }, 'e1');
   });
   let release;
   resolveGate = new Promise(resolve => { release = resolve; });
@@ -106,8 +123,76 @@ try {
   await page.waitForTimeout(100);
   assert.ok(lookups.filter(item => item.endsWith('/uploads')).length > before);
   await selected('English');
+  const other = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  other.on('pageerror', error => errors.push(String(error)));
+  await other.addInitScript(() => { localStorage.setItem('moa.profile', 'first'); localStorage.setItem('moa.fullscreenOnPlay', '0'); });
+  await fixtures(other);
+  await other.goto(`${base}watch/e2`);
+  await other.waitForFunction(() => document.querySelector('track')?.src.includes('english'));
+  assert.equal(await other.locator('.seek-marker').count(), 2);
+  assert.equal(await other.locator('.seek-intro').getAttribute('title'), '오프닝 0:15–1:25');
+  await other.mouse.move(100, 100);
+  await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
+  await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).fill('2.5');
+  await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).press('Tab');
+  await other.getByRole('spinbutton', { name: '자막 윤곽선', exact: true }).fill('1.2');
+  await other.getByRole('spinbutton', { name: '자막 윤곽선', exact: true }).press('Tab');
+  await other.getByRole('spinbutton', { name: '자막 크기', exact: true }).fill('');
+  await other.getByRole('spinbutton', { name: '자막 크기', exact: true }).pressSequentially('125');
+  await other.getByRole('spinbutton', { name: '자막 크기', exact: true }).press('Tab');
+  await other.getByRole('spinbutton', { name: '자막 높이', exact: true }).fill('12');
+  await other.getByRole('spinbutton', { name: '자막 높이', exact: true }).press('Tab');
+  await other.getByRole('spinbutton', { name: '자막 배경 여백', exact: true }).fill('8');
+  await other.getByRole('spinbutton', { name: '자막 배경 여백', exact: true }).press('Tab');
+  await other.waitForFunction(() => document.querySelector('.subtitle-overlay')?.getAttribute('data-shadow') === '2.5' && document.querySelector('.subtitle-overlay')?.getAttribute('data-outline') === '1.2');
+  await other.getByRole('button', { name: '+0.5', exact: true }).click();
+  await other.evaluate(async () => { const { setDevicePref } = await import('/src/lib/device-prefs.ts'); setDevicePref('seekStep', 30); });
+  await other.reload();
+  await other.waitForFunction(() => document.querySelector('track')?.src.includes('english'));
+  await other.mouse.move(100, 100);
+  await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
+  await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  assert.match(await other.locator('.sync-value').innerText(), /0.5/);
+  await page.reload(); await ready(); await open();
+  await page.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  assert.equal(await page.getByRole('spinbutton', { name: '자막 크기', exact: true }).inputValue(), '125');
+  assert.equal(await page.getByRole('spinbutton', { name: '자막 그림자', exact: true }).inputValue(), '2.5');
+  assert.equal(await page.getByRole('spinbutton', { name: '자막 윤곽선', exact: true }).inputValue(), '1.2');
+  assert.equal(await page.getByRole('spinbutton', { name: '자막 높이', exact: true }).inputValue(), '12');
+  assert.equal(await page.getByRole('spinbutton', { name: '자막 배경 여백', exact: true }).inputValue(), '8');
+  assert.match(await page.locator('.sync-value').innerText(), /0.0/);
+  assert.equal(await page.evaluate(async () => (await import('/src/lib/device-prefs.ts')).devicePrefs().seekStep), 10);
+  await other.goto(`${base}watch/e3`);
+  await other.waitForFunction(() => document.querySelector('video')?.readyState >= 2);
+  await other.mouse.move(100, 100);
+  await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
+  await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  assert.match(await other.locator('.sync-value').innerText(), /0.0/);
+  assert.equal(await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).inputValue(), '2.5');
+  await other.goto(`${base}watch/e2`);
+  await other.waitForFunction(() => document.querySelector('video')?.readyState >= 2);
+  await other.mouse.move(100, 100);
+  await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
+  await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await other.getByRole('button', { name: '자막 설정', exact: true }).click();
+  const offSaved = other.waitForResponse(response => response.url().endsWith('/subtitles/preference') && response.request().method() === 'PUT');
+  await other.getByRole('button', { name: '끄기', exact: true }).click();
+  await offSaved;
+  await page.reload(); await ready(); await open(); await selected('끄기');
+  await other.close();
+  let releasePreference;
+  preferenceGate = new Promise(resolve => { releasePreference = resolve; });
+  const preferenceStarted = page.waitForRequest(request => request.url().endsWith('/subtitles/preference') && request.method() === 'GET');
+  await page.reload(); await preferenceStarted; await ready(); await open();
+  const choiceSaved = page.waitForResponse(response => response.url().endsWith('/subtitles/preference') && response.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'English', exact: true }).click(); await choiceSaved;
+  const preferenceFinished = page.waitForResponse(response => response.url().endsWith('/subtitles/preference') && response.request().method() === 'GET');
+  releasePreference(); preferenceGate = undefined; await preferenceFinished;
+  await selected('English');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('moa.subtitleChoice:["first","e2"]')).label), 'English');
   const values = await page.evaluate(() => Object.entries(localStorage).filter(([key]) => key.startsWith('moa.subtitleChoice:')).map(([, value]) => JSON.parse(value)));
   assert.ok(values.every(value => !value || !('url' in value) && !('content' in value)));
   assert.deepEqual(errors, []);
-  console.log('Subtitle selection replay, fresh URL resolution, reordered tracks, off, profile/episode isolation, carried upload/translation and late-response checks passed.');
+  console.log('Subtitle selection replay, fresh URL resolution, reordered tracks, off, profile/episode isolation, carried upload/translation and late-response, cross-device selection/off, skip ranges and subtitle shadow/outline checks passed.');
 } finally { await browser.close(); await server.close(); }

@@ -211,6 +211,15 @@ test('accounts migration, atomic invites, authorization and per-account session 
     const winner = joined[0].status === 303 ? member : other, loser = winner === member ? other : member;
     const m = (await winner.api('me')).json();
     assert.equal(m.role, 'member');
+    assert.deepEqual(m.permissions, ['video.watch', 'subtitles.add', 'subtitles.translate']);
+    assert.equal((await winner.api(`accounts/${m.id}`, 'PATCH', { permissions: [] })).status, 403);
+    assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', { permissions: ['video.watch'] })).status, 204);
+    assert.deepEqual((await winner.api('me')).json().permissions, ['video.watch']);
+    assert.equal((await winner.request('/__moa/check')).headers['x-moa-permissions'], 'video.watch');
+    assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', { permissions: [] })).status, 204);
+    assert.deepEqual((await winner.api('me')).json().permissions, []);
+    assert.equal((await winner.request('/__moa/check')).headers['x-moa-permissions'], '');
+    assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', { permissions: ['video.watch', 'subtitles.add', 'subtitles.translate'] })).status, 204);
     assert.equal((await winner.request('/__moa/check')).headers['x-moa-account'], m.id);
     assert.equal((await admin.api('invites')).json()[0].uses, 1);
     assert.equal((await admin.api('invites')).json()[0].status, 'used-up');
@@ -220,7 +229,7 @@ test('accounts migration, atomic invites, authorization and per-account session 
     assert.equal((await admin.api(`accounts/${a.id}`, 'DELETE')).status, 409);
     const summary = (await admin.api('accounts')).json().find(x => x.id === m.id);
     assert.equal(summary.inviteLabel, 'friends'); assert.ok(summary.lastLoginAt); assert.equal(summary.hash, undefined);
-    for (const body of [{ role: null }, { disabled: null }, { role: 'owner' }, {}]) assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', body)).status, 400);
+    for (const body of [{ role: null }, { disabled: null }, { role: 'owner' }, { permissions: null }, { permissions: 'video.watch' }, { permissions: ['admin'] }, { permissions: ['video.watch', 'video.watch'] }, {}]) assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', body)).status, 400);
     assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', { disabled: true })).status, 204);
     assert.equal((await winner.api('me')).status, 401); assert.equal((await admin.api('me')).status, 200);
     assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', { disabled: false })).status, 204);

@@ -1,21 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { SavedSubtitle, SubtitleTrack } from '@moa/shared';
+import type { SavedSubtitle, SubtitlePreference, SubtitleTrack } from '@moa/shared';
 import type { Store } from './db.js';
 import type { Catalog } from './catalog.js';
 import type { Translations } from './translation/service.js';
 import type { OnlineSubtitles } from './online.js';
 import { importSubtitles } from './subtitle-upload.js';
 import { ApiFailure } from './util.js';
+import type { TitleGroups } from './title-groups.js';
+import { subtitleQuery } from './subtitle-query.js';
 
 interface Upload { id: string; episode_id: string; profile_id: string; filename: string; format: 'ass' | 'vtt'; content: string }
 
 export class SubtitleLibrary {
-  constructor(private db: Store, private catalog: Catalog, private translations: Translations, private online: OnlineSubtitles) {
+  constructor(private db: Store, private catalog: Catalog, private translations: Translations, private online: OnlineSubtitles, private groups: TitleGroups) {
     db.db.exec(`CREATE TABLE IF NOT EXISTS uploaded_subtitles(
       id TEXT PRIMARY KEY,episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
       profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,filename TEXT NOT NULL,
       format TEXT NOT NULL,content TEXT NOT NULL,content_hash TEXT NOT NULL,created_at INTEGER NOT NULL,
-      UNIQUE(episode_id,profile_id,content_hash));`);
+      UNIQUE(episode_id,profile_id,content_hash));
+      CREATE TABLE IF NOT EXISTS subtitle_preferences(
+      profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
+      choice TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(profile_id,episode_id));`);
   }
 
   private episode(episodeId: string, profileId: string) {
@@ -23,6 +29,55 @@ export class SubtitleLibrary {
     if (!episode) throw new ApiFailure(404, 'episode-not-found');
     if (!this.db.get('SELECT 1 FROM profiles WHERE id=?', profileId)) throw new ApiFailure(401, 'profile-required');
     this.catalog.kids.assert(episode.media_id, profileId);
+    return episode;
+  }
+
+  private related(episodeId: string, profileId: string) {
+    const episode = this.episode(episodeId, profileId), mapping = this.groups.mapping(profileId), group = mapping.get(episode.media_id);
+    const mediaIds = group ? [...mapping].filter(([, key]) => key === group).map(([id]) => id) : [episode.media_id as string];
+    if (mediaIds.length === 1) return { episodeIds: [episodeId], mediaIds };
+    const rows = this.db.all(`SELECT e.*,m.title AS original_title FROM episodes e JOIN media m ON m.id=e.media_id
+      WHERE e.media_id IN (${mediaIds.map(() => '?').join(',')})`, ...mediaIds);
+    const identity = (row: Record<string, any>) => { try { return subtitleQuery(this.db, row); } catch { return undefined; } };
+    const current = identity(rows.find(row => row.id === episodeId)!);
+    const episodeIds = rows.filter(row => {
+      if (row.id === episodeId) return true;
+      if (row.media_id === episode.media_id) return false;
+      const query = identity(row);
+      return current && query && !current.warnings.length && !query.warnings.length && query.season === current.season && query.episode === current.episode;
+    }).map(row => row.id as string);
+    return { episodeIds, mediaIds };
+  }
+
+  preference(episodeId: string, profileId: string): { choice?: SubtitlePreference | null } {
+    const { episodeIds, mediaIds } = this.related(episodeId, profileId);
+    const row = this.db.get(`SELECT choice FROM subtitle_preferences WHERE profile_id=? AND episode_id IN (${episodeIds.map(() => '?').join(',')})
+      ORDER BY updated_at DESC LIMIT 1`, profileId, ...episodeIds);
+    if (row) {
+      const choice = JSON.parse(row.choice) as SubtitlePreference | null;
+      if (choice === null || episodeIds.includes(choice.episodeId)) return { choice };
+    }
+    const title = this.db.get(`SELECT p.choice FROM subtitle_preferences p JOIN episodes e ON e.id=p.episode_id
+      WHERE p.profile_id=? AND e.media_id IN (${mediaIds.map(() => '?').join(',')}) ORDER BY p.updated_at DESC LIMIT 1`, profileId, ...mediaIds);
+    return title?.choice === 'null' ? { choice: null } : {};
+  }
+
+  remember(episodeId: string, profileId: string, choice: SubtitlePreference | null) {
+    const { episodeIds } = this.related(episodeId, profileId);
+    if (choice) {
+      let origin = choice.episodeId;
+      if (choice.source === 'upload') origin = this.db.get('SELECT episode_id FROM uploaded_subtitles WHERE id=? AND profile_id=?', choice.id.replace(/^upload-/, ''), profileId)?.episode_id;
+      else if (choice.source === 'online') origin = this.db.get('SELECT episode_id FROM online_subtitles WHERE id=?', choice.id)?.episode_id;
+      else if (choice.source === 'translation') {
+        const key = choice.id.replace(/^translation-/, '');
+        origin = this.db.get(`SELECT episode_id FROM translated_subtitles WHERE cache_key=? AND episode_id IN (${episodeIds.map(() => '?').join(',')}) LIMIT 1`, key, ...episodeIds)?.episode_id ?? this.translations.trackEpisode(key, profileId);
+      }
+      if (!episodeIds.includes(origin)) throw new ApiFailure(404, 'subtitle-not-found');
+      choice = { ...choice, episodeId: origin };
+    }
+    const updatedAt = Math.max(Date.now(), (this.db.get('SELECT MAX(updated_at) AS latest FROM subtitle_preferences WHERE profile_id=?', profileId)?.latest ?? 0) + 1);
+    this.db.run('INSERT OR REPLACE INTO subtitle_preferences VALUES(?,?,?,?)', profileId, episodeId, JSON.stringify(choice), updatedAt);
+    return { choice };
   }
 
   private track(row: Upload): SubtitleTrack {
@@ -43,9 +98,15 @@ export class SubtitleLibrary {
     return [...new Map(tracks.map(track => [track.id, track])).values()];
   }
 
-  uploads(episodeId: string, profileId: string) {
-    this.episode(episodeId, profileId);
-    return this.db.all<Upload>('SELECT id,filename,format FROM uploaded_subtitles WHERE episode_id=? AND profile_id=? ORDER BY created_at DESC,id', episodeId, profileId).map(row => this.track(row));
+  tracks(episodeId: string, profileId: string, source?: 'upload' | 'translation' | 'online') {
+    const { episodeIds } = this.related(episodeId, profileId), tracks: SubtitleTrack[] = [];
+    if (!source || source === 'upload') tracks.push(...this.db.all<Upload>(`SELECT id,filename,format FROM uploaded_subtitles
+      WHERE episode_id IN (${episodeIds.map(() => '?').join(',')}) AND profile_id=? ORDER BY created_at DESC,id`, ...episodeIds, profileId).map(row => this.track(row)));
+    for (const id of episodeIds) {
+      if (!source || source === 'translation') tracks.push(...this.translations.tracks(id, profileId));
+      if (!source || source === 'online') tracks.push(...this.online.tracks(id, profileId));
+    }
+    return [...new Map(tracks.map(track => [track.id, track])).values()];
   }
 
   assetProfile(sessionId: string) {

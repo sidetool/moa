@@ -87,6 +87,7 @@ jobs:
           build-args: |
             MOA_REVISION=${{ github.sha }}
             MOA_VERSION=${{ github.ref_name }}
+            MOA_REPOSITORY=${{ github.repository }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ github.ref_name }}

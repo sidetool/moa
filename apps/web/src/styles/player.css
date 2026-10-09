@@ -18,10 +18,16 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .player-video::cue { font-size: var(--subtitle-font-size, 16px); font-family: "Pretendard Variable", Pretendard, "Noto Sans CJK JP", sans-serif; font-weight: 600; background: rgba(0, 0, 0, .5); color: #fff; line-height: 1.35; }
 .subtitle-overlay { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; font: 600 var(--subtitle-font-size, 16px)/1.35 "Pretendard Variable", Pretendard, "Noto Sans CJK JP", sans-serif; color: #fff; }
 .subtitle-cue { position: absolute; white-space: pre-wrap; overflow-wrap: break-word; unicode-bidi: plaintext; }
-.subtitle-cue > span { padding: 0 .12em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.subtitle-cue > span { padding: .12em .3em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .subtitle-overlay[data-background=none] .subtitle-cue > span { text-shadow: 0 1px 3px #000; }
-.subtitle-overlay[data-background=soft] .subtitle-cue > span { background: rgba(0, 0, 0, .5); }
+.subtitle-overlay[data-background=soft] .subtitle-cue > span, .subtitle-overlay[data-background=original] .subtitle-cue > span { background: rgba(0, 0, 0, .5); }
 .subtitle-overlay[data-background=solid] .subtitle-cue > span { background: #000; }
+.subtitle-overlay[data-shadow=none] .subtitle-cue > span { text-shadow: none; }
+.subtitle-overlay[data-shadow=soft] .subtitle-cue > span { text-shadow: 1px 2px 3px #000; }
+.subtitle-overlay[data-shadow=strong] .subtitle-cue > span { text-shadow: 2px 3px 2px #000, 0 0 6px #000; }
+.subtitle-overlay[data-outline=none] .subtitle-cue > span { -webkit-text-stroke: 0; }
+.subtitle-overlay[data-outline=thin] .subtitle-cue > span { -webkit-text-stroke: 1px #000; paint-order: stroke fill; }
+.subtitle-overlay[data-outline=thick] .subtitle-cue > span { -webkit-text-stroke: 2px #000; paint-order: stroke fill; }
 .player.cue-small { --subtitle-font-size: max(12px, calc(var(--video-height, 100vh) * .034)); }
 .player.cue-medium { --subtitle-font-size: max(13px, calc(var(--video-height, 100vh) * .046)); }
 .player.cue-large { --subtitle-font-size: max(14px, calc(var(--video-height, 100vh) * .058)); }
@@ -60,7 +66,8 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .seek:hover .seek-rail, .seek:focus-visible .seek-rail { height: 6px; }
 .seek-rail i { position: absolute; top: 0; bottom: 0; left: 0; }
 .seek-buffer { background: rgba(255, 255, 255, .32); }
-.seek-marker { background: rgba(255, 255, 255, .18); }
+.seek-marker { background: #f8cd68; box-shadow: inset 1px 0 rgba(0, 0, 0, .4), inset -1px 0 rgba(0, 0, 0, .4); }
+.seek-credits { background: #68d5c5; }
 .seek-fill { background: var(--accent); }
 .seek-thumb { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(123, 97, 255, .25); transform: scale(0); transition: transform .15s; }
 .seek:hover .seek-thumb, .seek:active .seek-thumb, .seek:focus-visible .seek-thumb { transform: scale(1); }
@@ -189,6 +196,16 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
   animation: fade .3s;
 }
 .player-end b, .player-error b { font-size: 1.4rem; }
+.player-end { grid-template-columns: min(100%, 800px); overflow-y: auto; }
+.player-end-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 16px; max-width: 800px; }
+.player-end > p { max-width: 520px; color: var(--text-3); }
+.player-recommendation { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 16px; align-items: center; width: min(100%, 420px); margin-top: 24px; padding: 12px; background: var(--surface-1); border-radius: var(--radius-m); text-align: left; }
+.player-recommendation > span { display: grid; gap: 6px; min-width: 0; }
+.player-recommendation strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-recommendation small { color: var(--text-3); }
+.player-recommendation > span > span { display: flex; align-items: center; gap: 6px; font-size: .85rem; }
+@media (max-width: 600px) { .player-end-actions { display: grid; width: min(100%, 320px); } }
+@media (max-height: 560px) { .player-end { align-content: start; } }
 .player-error p { color: var(--text-3); }
 
 /* Panels: one solid sheet, large touch rows, a single accent for "selected". */

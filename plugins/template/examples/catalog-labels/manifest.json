@@ -1,0 +1,11 @@
+{
+  "apiVersion": 2,
+  "id": "catalog-labels",
+  "name": "Catalog labels",
+  "version": "1.0.0",
+  "description": "Show genre badges in the catalog and an inline title panel.",
+  "placements": ["app", "detail"],
+  "permissions": ["catalog.modify", "ui"],
+  "hooks": ["catalog.transform"],
+  "connect": []
+}

@@ -11,8 +11,8 @@ test('cast capabilities serve only their session, preserve Range and rewrite HLS
   await mkdir(mediaRoot);
   const { app, db, remotePlayback } = await buildApp({ dataDir: dir, mediaRoot, webDir: path.join(dir, 'web'), requireAccount: true }, false,
     { aniSkip: { async lookup() { return { match: null, intervals: [], markers: null }; } } });
-  const account = { 'x-moa-account': 'cast-owner', 'x-moa-role': 'member' };
-  const other = { 'x-moa-account': 'other', 'x-moa-role': 'member' };
+  const account = { 'x-moa-account': 'cast-owner', 'x-moa-role': 'member', 'x-moa-permissions': 'video.watch,subtitles.add,subtitles.translate' };
+  const other = { 'x-moa-account': 'other', 'x-moa-role': 'member', 'x-moa-permissions': 'video.watch,subtitles.add,subtitles.translate' };
   try {
     const profile = (await app.inject({ method: 'POST', url: '/api/profiles', headers: account, payload: { name: 'Cast' } })).json().id;
     const second = (await app.inject({ method: 'POST', url: '/api/profiles', headers: other, payload: { name: 'Other' } })).json().id;

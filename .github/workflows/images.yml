@@ -62,7 +62,9 @@ jobs:
           file: ${{ matrix.file }}
           platforms: ${{ matrix.platforms }}
           push: true
-          build-args: MOA_REVISION=${{ github.sha }}
+          build-args: |
+            MOA_REVISION=${{ github.sha }}
+            MOA_REPOSITORY=${{ github.repository }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: |

@@ -10,23 +10,21 @@ export interface DevicePrefs {
   seekStep: 5 | 10 | 15 | 30;
   /** Crop to fill the screen instead of letterboxing. */
   videoFill: boolean;
-  /** Keep the subtitle timing offset for the next episodes of the same title. */
-  rememberSubOffset: boolean;
   /** Experimental: the detail season menu gathers regular seasons from every source. */
   seasonSwitcher: boolean;
   /** Experimental: merge equivalent source cards in search and feeds. */
   titleGrouping: boolean;
 }
 
-const KEYS: Record<keyof DevicePrefs, string> = { fullscreenOnPlay: "moa.fullscreenOnPlay", autoSkip: "moa.autoSkip", seekStep: "moa.seekStep", videoFill: "moa.videoFill", rememberSubOffset: "moa.rememberSubOffset", seasonSwitcher: "moa.seasonSwitcher", titleGrouping: "moa.titleGrouping" };
-const DEFAULTS: DevicePrefs = { fullscreenOnPlay: true, autoSkip: false, seekStep: 10, videoFill: false, rememberSubOffset: false, seasonSwitcher: true, titleGrouping: true };
+const KEYS: Record<keyof DevicePrefs, string> = { fullscreenOnPlay: "moa.fullscreenOnPlay", autoSkip: "moa.autoSkip", seekStep: "moa.seekStep", videoFill: "moa.videoFill", seasonSwitcher: "moa.seasonSwitcher", titleGrouping: "moa.titleGrouping" };
+const DEFAULTS: DevicePrefs = { fullscreenOnPlay: true, autoSkip: false, seekStep: 10, videoFill: false, seasonSwitcher: true, titleGrouping: true };
 
 const read = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 
 export function devicePrefs(): DevicePrefs {
-  const flag = (k: "fullscreenOnPlay" | "autoSkip" | "videoFill" | "rememberSubOffset" | "seasonSwitcher" | "titleGrouping") => { const v = read(KEYS[k]); return v === null ? DEFAULTS[k] : v === "1"; };
+  const flag = (k: "fullscreenOnPlay" | "autoSkip" | "videoFill" | "seasonSwitcher" | "titleGrouping") => { const v = read(KEYS[k]); return v === null ? DEFAULTS[k] : v === "1"; };
   const step = Number(read(KEYS.seekStep));
-  return { fullscreenOnPlay: flag("fullscreenOnPlay"), autoSkip: flag("autoSkip"), videoFill: flag("videoFill"), rememberSubOffset: flag("rememberSubOffset"), seasonSwitcher: flag("seasonSwitcher"), titleGrouping: flag("titleGrouping"), seekStep: ([5, 10, 15, 30] as const).find(s => s === step) ?? DEFAULTS.seekStep };
+  return { fullscreenOnPlay: flag("fullscreenOnPlay"), autoSkip: flag("autoSkip"), videoFill: flag("videoFill"), seasonSwitcher: flag("seasonSwitcher"), titleGrouping: flag("titleGrouping"), seekStep: ([5, 10, 15, 30] as const).find(s => s === step) ?? DEFAULTS.seekStep };
 }
 
 export function setDevicePref<K extends keyof DevicePrefs>(key: K, value: DevicePrefs[K]) {

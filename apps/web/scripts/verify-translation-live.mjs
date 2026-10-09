@@ -71,7 +71,7 @@ const offer = page.locator('.translate-offer');
 let step = 'setup';
 try {
   /* ---------- setup: admin key, small batches so revisions are visible ---------- */
-  await page.goto(`${base}/settings`);
+  await page.goto(`${base}/settings#subtitles`);
   await api('/api/admin/translation/config', 'PATCH', { addKeys: ['AIza-live-key-0001'], enabled: true, batchSize: 25 });
   await settings({ autoFetchSubtitles: false, translationMode: 'manual', skipTranslationWithoutSubtitles: false });
 

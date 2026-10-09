@@ -65,7 +65,9 @@ RUN cd apps/server && node --input-type=module -e "import sharp from 'sharp'; aw
 # Metadata changes must not invalidate package installation or runtime checks.
 ARG MOA_REVISION=unknown
 ARG MOA_VERSION=unknown
+ARG MOA_REPOSITORY=sidetool/moa
 LABEL org.opencontainers.image.version=$MOA_VERSION
 LABEL org.opencontainers.image.revision=$MOA_REVISION
-ENV MOA_REVISION=$MOA_REVISION MOA_VERSION=$MOA_VERSION
+LABEL org.opencontainers.image.source=https://github.com/$MOA_REPOSITORY
+ENV MOA_REVISION=$MOA_REVISION MOA_VERSION=$MOA_VERSION MOA_REPOSITORY=$MOA_REPOSITORY
 CMD ["node", "apps/server/dist/index.js"]

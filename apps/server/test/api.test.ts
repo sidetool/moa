@@ -24,6 +24,16 @@ test('API profile isolation, contract shapes, range streaming and SPA routing', 
     await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { autoplayDelay: 9 } });
     assert.equal((await app.inject({ url: '/api/settings', headers: otherHeaders })).json().autoplayDelay, 5);
     assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { autoplayDelay: -1 } })).statusCode, 400);
+    const style = { subtitleScale: 125, subtitleBackground: 'soft', subtitleShadow: 2.5, subtitleOutline: 1.2, subtitleHeight: 12, subtitlePadding: 8 };
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: style })).statusCode, 200);
+    const savedStyle = (await app.inject({ url: '/api/settings', headers })).json();
+    for (const [key, value] of Object.entries(style)) assert.equal(savedStyle[key], value);
+    assert.equal((await app.inject({ url: '/api/settings', headers: otherHeaders })).json().subtitleShadow, undefined);
+    for (const invalid of [{ subtitleScale: 0 }, { subtitleShadow: 11 }, { subtitleOutline: -1 }, { subtitleHeight: 41 }, { subtitlePadding: 21 }, { subtitleBackground: 'red' }]) {
+      assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: invalid })).statusCode, 400);
+    }
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { subtitleShadow: null, subtitleOutline: 0 } })).statusCode, 200);
+    assert.equal((await app.inject({ url: '/api/settings', headers })).json().subtitleOutline, 0);
     const navigation = [{ id: 'home', name: '홈', sourceIds: ['remote-test'], includeLocal: false, sourceFilters: { 'remote-test': {revision:'test',filters:[{position:2,value:1},{position:3,value:false},{position:4,value:'123'},{position:5,value:{index:1,ascending:true}}]} } }, { id: 'local', name: '내 영상', sourceIds: [], includeLocal: true }];
     assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { navigation } })).statusCode, 200);
     assert.deepEqual((await app.inject({ url: '/api/settings', headers })).json().navigation, navigation);

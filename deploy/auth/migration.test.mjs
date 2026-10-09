@@ -40,6 +40,7 @@ test('pre-setup accounts-v1 HTTPS session survives state migration and repeated 
       const response = await fetch(origin + '/__moa/check', { headers });
       assert.equal(response.status, 204);
       assert.equal(response.headers.get('x-moa-role'), 'admin');
+      assert.equal(response.headers.get('x-moa-permissions'), 'video.watch,subtitles.add,subtitles.translate');
       assert.equal(response.headers.get('x-moa-account'), 'existing-admin');
       assert.equal((await fetch(origin + '/__moa/setup', { headers })).status, 404);
       assert.equal(db.prepare('SELECT expires FROM sessions WHERE token_hash=?').get(tokenHash).expires, expires);

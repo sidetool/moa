@@ -26,6 +26,7 @@ async function open(width, server) {
     if (path === '/api/me') return route.fulfill({ json: server.me });
     if (path === '/api/profiles') return route.fulfill({ json: [{ id: 'test', name: '테스트', color: 'blue' }] });
     if (path === '/api/settings') return route.fulfill({ json: settings });
+    if (path === '/api/admin/system') { server.systemGets = (server.systemGets || 0) + 1; return route.fulfill({ json: { os: 'Fixture Linux', kernel: '6.1.0', architecture: 'arm64', nodeVersion: '22.23.3', version: 'v1.0.0', revision: 'a'.repeat(40), deployment: 'docker', cpuCount: 4, memoryTotal: 8 * 1024 ** 3, memoryUsed: 2 * 1024 ** 3, uptimeSeconds: 7200 } }); }
     if (path === '/api/admin/updates') { server.gets++; return route.fulfill({ json: server.status }); }
     if (path.endsWith('/updates/check')) { server.status = { ...server.status, ...server.onCheck }; return route.fulfill({ status: 202, json: { ...server.status, state: 'checking' } }); }
     if (path.endsWith('/updates/apply')) { server.applies++; server.status = { ...server.status, state: server.status.mode === 'release' ? 'downloading' : 'updating' }; return route.fulfill({ status: 202, json: server.status }); }
@@ -46,7 +47,7 @@ try {
     const server = { me: admin(), gets: 0, applies: 0, patches: [], onCheck: { state: 'available', latest: 'b'.repeat(40), behind: 1 },
       status: { configured: true, connected: true, state: 'current', mode: 'docker', current: 'a'.repeat(40), latest: 'a'.repeat(40), branch: 'main', behind: 0, ahead: 0, checkedAt: Date.now(), error: null } };
     const { context, page } = await open(width, server);
-    await page.goto(`${base}settings`);
+    await page.goto(`${base}settings#updates`);
     const section = page.locator('#updates');
     await section.getByText('최신 상태', { exact: true }).waitFor();
     assert.equal(await section.getByRole('combobox', { name: '업데이트 채널' }).count(), 0);
@@ -71,6 +72,7 @@ try {
     await page.reload();
     await page.getByRole('heading', { name: '설정', exact: true }).waitFor();
     assert.equal(await section.count(), 0);
+    assert.equal(await page.getByRole('heading', { name: '시스템 정보', exact: true }).count(), 0);
     server.gets = 0;
     await page.goto(`${base}my-list`);
     await page.waitForTimeout(1000);
@@ -192,7 +194,7 @@ try {
     await page.waitForTimeout(800);
     assert.equal(await notice.count(), 0);
 
-    await page.goto(`${base}settings`);
+    await page.goto(`${base}settings#updates`);
     const toggle = page.locator('#updates').getByRole('switch', { name: '업데이트 알림' });
     assert.equal(await toggle.getAttribute('aria-checked'), 'false');
     await toggle.click();
@@ -204,6 +206,39 @@ try {
     server.status = { ...server.status, mode: 'docker', current: 'a'.repeat(40), latest: 'b'.repeat(40) };
     await page.reload();
     await notice.getByText('새 업데이트가 있어요').waitFor();
+    await context.close();
+  }
+  for (const width of [1280, 390]) {
+    const discovery = { repository: 'fixture/moa', currentVersion: 'v1.0.0', updateAvailable: true, checkedAt: Date.now(), error: null, releases: [{ version: 'v2.0.0', url: 'https://github.com/fixture/moa/releases/tag/v2.0.0', publishedAt: '2026-01-01T00:00:00Z' }] };
+    const server = { me: admin(), gets: 0, applies: 0, patches: [], onCheck: {}, status: { configured: false, connected: false, state: 'idle', mode: 'docker', current: 'a'.repeat(40), latest: null, branch: null, behind: 0, ahead: 0, checkedAt: null, error: null, discovery } };
+    const { context, page } = await open(width, server);
+    await page.goto(`${base}my-list`);
+    const notice = page.locator('.update-notice');
+    await notice.getByText('MOA v2.0.0').waitFor();
+    assert.equal(await notice.getByRole('button', { name: '설치', exact: true }).count(), 0);
+    await notice.getByRole('link', { name: '릴리스 보기' }).click();
+    const section = page.locator('#updates');
+    await section.getByText('새 릴리스 있음', { exact: true }).waitFor();
+    await page.getByRole('heading', { name: '시스템 정보', exact: true }).waitFor();
+    await page.getByText('Fixture Linux', { exact: true }).waitFor();
+    assert.equal(await section.getByRole('button', { name: '업데이트 확인', exact: true }).isEnabled(), true);
+    assert.equal(await section.getByRole('button', { name: '지금 업데이트', exact: true }).count(), 0);
+    assert.equal(await section.getByRole('link', { name: '릴리스 보기' }).getAttribute('href'), discovery.releases[0].url);
+    await section.getByRole('button', { name: '업데이트 확인', exact: true }).click();
+    await noOverflow(page);
+    await page.screenshot({ path: verificationPath(`updates-discovery-${width}.png`), fullPage: true });
+    server.status = { ...server.status, discovery: { ...discovery, currentVersion: null, updateAvailable: null } };
+    await page.reload();
+    await section.getByText('버전 비교 불가', { exact: true }).waitFor();
+    assert.equal(server.applies, 0);
+    server.me = { ...server.me, role: 'member' };
+    server.gets = 0; server.systemGets = 0;
+    await page.reload();
+    await page.getByRole('heading', { name: '설정', exact: true }).waitFor();
+    await page.waitForTimeout(300);
+    assert.equal(server.gets, 0);
+    assert.equal(server.systemGets, 0);
+    assert.equal(await page.getByRole('heading', { name: '시스템 정보', exact: true }).count(), 0);
     await context.close();
   }
   assert.deepEqual(errors, []);
