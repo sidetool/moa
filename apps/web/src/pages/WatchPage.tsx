@@ -133,7 +133,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [playing, setPlaying] = useState(false);
   const [waiting, setWaiting] = useState(true);
   const [time, setTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState<{ sessionId: string; seconds: number }>();
+  const duration = mediaDuration?.sessionId === session?.sessionId ? mediaDuration?.seconds ?? 0 : 0;
   const [buffered, setBuffered] = useState(0);
   const [volume, setVolume] = useState(() => Number(localStorage.getItem(VOLUME_KEY) ?? 1));
   const [muted, setMuted] = useState(false);
@@ -781,20 +782,32 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   }, [session?.mediaId, media.data?.alternatives]);
 
   /* ---------- next-up ---------- */
-  const [remoteMarkers, setRemoteMarkers] = useState<PlaybackSession['markers']>();
+  const [remoteMarkerState, setRemoteMarkerState] = useState<{ sessionId: string; markers: PlaybackSession['markers'] }>();
   const [skipStatus, setSkipStatus] = useState('idle');
-  const markerDuration = Math.round(total);
+  const markerSessionId = session?.sessionId;
+  // HLS metadata can refine duration after playback begins. Do not query using
+  // a catalogue estimate, or reuse the previous stream's decoded duration.
+  const markerDuration = Math.round(duration);
+  const remoteSkip = Boolean(session?.streams?.length && !live && session.mediaType === 'anime');
   useEffect(() => {
-    setRemoteMarkers(undefined); setSkipStatus('idle');
-    if (!session?.streams?.length || live || session.mediaType !== 'anime' || markerDuration < 60) return;
+    setSkipStatus('idle');
+    if (!remoteSkip || !markerSessionId || markerDuration < 60 || !Number.isFinite(markerDuration)) return;
     const controller = new AbortController();
     setSkipStatus('loading');
     void api<{markers:PlaybackSession['markers']|null;status:string}>(`/episodes/${encodeURIComponent(episodeId)}/markers?duration=${markerDuration}`,{signal:controller.signal}).then(result=>{
-      if (!controller.signal.aborted) { setRemoteMarkers(result.markers ?? undefined); setSkipStatus(result.status); }
+      if (controller.signal.aborted) return;
+      // AniSkip can return only OP or ED for a different episodeLength. A
+      // partial/failed refresh is not a deletion of this session's known range.
+      setRemoteMarkerState(previous => ({
+        sessionId: markerSessionId,
+        markers: result.markers ? { ...(previous?.sessionId === markerSessionId ? previous.markers : {}), ...result.markers }
+          : previous?.sessionId === markerSessionId ? previous.markers : undefined
+      }));
+      setSkipStatus(result.status);
     }).catch(()=>{if(!controller.signal.aborted)setSkipStatus('error');});
     return ()=>controller.abort();
-  },[session,episodeId,markerDuration,live]);
-  const markers = session?.markers ?? remoteMarkers;
+  },[remoteSkip,markerSessionId,episodeId,markerDuration]);
+  const markers = session?.markers ?? (remoteMarkerState?.sessionId === markerSessionId ? remoteMarkerState?.markers : undefined);
   const skipRanges = total > 0 ? [
     { label: '오프닝', kind: 'intro', start: markers?.introStart ?? 0, end: markers?.introEnd },
     { label: '엔딩', kind: 'credits', start: markers?.creditsStart, end: markers?.creditsEnd ?? total }
@@ -1124,7 +1137,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
         onCanPlay={() => setWaiting(false)}
-        onLoadedMetadata={event => { setDuration(event.currentTarget.duration); setLevels(engine.current?.levels() ?? []); }}
+        onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); }}
         onTimeUpdate={event => {
           const v = event.currentTarget;
           setTime(v.currentTime);
