@@ -511,9 +511,8 @@
 .trailer-play { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border-radius: 999px; background: #fff; color: #000; font-weight: 700; }
 .trailer-bar { display: flex; align-items: center; gap: 6px 16px; min-height: 52px; padding: 8px 12px 8px 18px; color: var(--text-3); font-size: .88rem; }
 .trailer-count { margin-right: auto; font-weight: 650; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.trailer-next, .trailer-link { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 10px; border-radius: var(--radius-s); color: var(--text-2); font-weight: 600; white-space: nowrap; }
-.trailer-next:hover, .trailer-link:hover { background: var(--surface-2); color: var(--text); }
-.trailer-overlay .trailer-link { padding: 0 16px; background: var(--surface-2); color: var(--text); }
+.trailer-next { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 10px; border-radius: var(--radius-s); color: var(--text-2); font-weight: 600; white-space: nowrap; }
+.trailer-next:hover { background: var(--surface-2); color: var(--text); }
 
 .metadata-sheet { width: min(600px, 100%); }
 .metadata-body { display: grid; gap: 12px; padding: 4px 22px 16px; overflow-y: auto; min-height: 0; }

@@ -29,7 +29,6 @@ export const youtubeEmbedUrl = (key: string) => {
   const params = new URLSearchParams({ autoplay: "1", rel: "0", playsinline: "1", enablejsapi: "1", origin: location.origin });
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(key)}?${params}`;
 };
-export const youtubeWatchUrl = (key: string) => `https://www.youtube.com/watch?v=${encodeURIComponent(key)}`;
 
 /** Per-video errors: this candidate can't play here, try the next one. 153 (missing referrer/identity),
  *  5 (HTML5 player) and anything unknown point at the environment, so they stop instead of burning candidates. */
