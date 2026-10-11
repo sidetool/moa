@@ -123,3 +123,22 @@ test('saved seeds honor confirmed matching, live exclusion and kids policy',asyn
   db.run("UPDATE tmdb_links SET status='ambiguous' WHERE media_id='ambiguous'");
   assert.deepEqual(keys(service,'kids'),['movie:11']);
 });
+
+test('recommendations return up to forty distinct items without increasing the seed/candidate budgets',async t=>{
+  const {service,title,detail}=await fixture(t);
+  for(let s=1;s<=5;s++){title(`seed-${s}`,s);detail(s,Array.from({length:18},(_,i)=>candidate(100+s*20+i)));}
+  const result=service.get('viewer');
+  assert.equal(result.items.length,40);assert.equal(new Set(result.items.map(r=>r.key)).size,40);
+});
+
+test('uncached lower-ranked seeds are warmed without bypassing the two-request concurrency bound',async t=>{
+  const {service,tmdb,title,detail}=await fixture(t);
+  const calls:string[]=[];const releases:Array<()=>void>=[];
+  for(let s=1;s<=8;s++){title(`seed-${s}`,s,'viewer',400,`2026-10-${String(11-s).padStart(2,'0')}T00:00:00.000Z`);if(s<=5)detail(s,[]);}
+  tmdb.ensureDetail=async id=>{calls.push(id);await new Promise<void>(resolve=>releases.push(resolve));};
+  service.get('viewer');assert.deepEqual(calls,['seed-6','seed-7']);
+  service.get('viewer');assert.equal(calls.length,2);
+  releases.splice(0).forEach(resolve=>resolve());await new Promise<void>(resolve=>setImmediate(resolve));
+  service.get('viewer');assert.deepEqual(calls,['seed-6','seed-7','seed-8']);
+  releases.splice(0).forEach(resolve=>resolve());await new Promise<void>(resolve=>setImmediate(resolve));
+});

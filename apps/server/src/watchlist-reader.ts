@@ -28,8 +28,9 @@ export class WatchlistReader {
   }
   list(profile: string, query: WatchlistQuery = {}): WatchlistPage {
     if(!query || typeof query!=='object' || Array.isArray(query) || Object.keys(query).some(k=>!['cursor','limit','since'].includes(k))) throw new ApiFailure(400,'invalid-watchlist-query');
-    const limit=query.limit??50, since=query.since??'1970-01-01T00:00:00.000Z';
-    if(!Number.isInteger(limit)||limit<1||limit>100||typeof since!=='string'||since.length>40||!Number.isFinite(Date.parse(since))) throw new ApiFailure(400,'invalid-watchlist-query');
+    const limit=query.limit??50, requestedSince=query.since??'1970-01-01T00:00:00.000Z';
+    if(!Number.isInteger(limit)||limit<1||limit>100||typeof requestedSince!=='string'||requestedSince.length>40||!Number.isFinite(Date.parse(requestedSince))) throw new ApiFailure(400,'invalid-watchlist-query');
+    const since=new Date(requestedSince).toISOString();
     // Includes policy/link changes as well as list changes; no cross-profile data in the token.
     const revision=hash(JSON.stringify([profile,this.db.get('SELECT revision FROM watchlist_revisions WHERE profile_id=?',profile)?.revision??0,this.kids.active(profile),this.db.get('SELECT MAX(checked_at) AS t FROM tmdb_links')?.t,this.db.get('SELECT MAX(fetched_at) AS t FROM tmdb_titles')?.t]));
     let after=['9999','\uffff'];

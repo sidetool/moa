@@ -80,9 +80,10 @@ test('in-memory kids API covers home, lists, genres, search, groups, similar, hi
     assert.equal((await get('/api/history')).total, 2);
     const home = await get('/api/home?providers=local,source');
     assert.deepEqual(ids(home.hero), expected);
-    const globalHome = await get('/api/home?providers=&continueScope=all');
+    const globalHome = await get('/api/home?providers=&continueScope=all&watchlistScope=all');
     assert.deepEqual(ids(globalHome.rows.find((r: any) => r.kind === 'continue').items), expected);
     assert.deepEqual(globalHome.hero, []);
+    assert.deepEqual(ids(globalHome.rows.find((r:any)=>r.kind==='watchlist').items),expected);
     assert.ok(home.rows.some((r: any) => r.kind === 'continue'));
     for (const row of home.rows) assert.ok(row.items.every((c: any) => expected.includes(c.id)));
     assert.deepEqual((await get('/api/media/safe')).similar.map((c: any) => c.id), [1]);

@@ -180,7 +180,8 @@ export interface HomeResponse {
   hero: MediaCard[];
   rows: Row[];
 }
-// GET /api/home?type=movie|series|anime (type optional) -> HomeResponse
+// GET /api/home?type=movie|series|anime&providers=&continueScope=tab|all&watchlistScope=tab|all -> HomeResponse
+// Scope defaults to tab; main Home requests all for personal rows. Type/profile/kids filters still apply.
 // GET /api/media?type=&genre=&provider=&sort=recent|title|year&page= -> Page<MediaCard>
 // GET /api/genres?type= -> string[]
 

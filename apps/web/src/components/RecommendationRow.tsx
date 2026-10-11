@@ -10,7 +10,7 @@ import { cx } from "../lib/format";
 
 type Hidden = "pending" | "hidden" | "failed";
 
-/** Home row of picks from this profile's history. Hidden entirely unless the server has real picks. */
+/** Home row of picks from this profile's history and watchlist. Hidden entirely unless the server has real picks. */
 export function RecommendationRow() {
   const settings = useSettings().data;
   const enabled = Boolean(settings) && settings?.recommendationsEnabled !== false;
@@ -32,7 +32,7 @@ export function RecommendationRow() {
 
   return (
     <RowShell id="recommendations" title="취향 기반 추천" layout="poster" className="row-recommend" count={items.length}
-      note={<span className="row-note" title="이 프로필의 시청 기록과 비슷한 작품이에요. 재생할 수 있는 소스가 있는지는 상세 화면에서 확인해요.">이 프로필 전용</span>}>
+      note={<span className="row-note" title="시청 기록과 내 목록을 바탕으로 고른 작품이에요. 재생할 수 있는 소스가 있는지는 상세 화면에서 확인해요.">이 프로필 전용</span>}>
       {items.map(item => hidden[item.key]
         ? <HiddenCard key={item.key} item={item} state={hidden[item.key]} onUndo={() => undo(item.key)} onRetry={() => dismiss(item.key)} />
         : <RecommendationCard key={item.key} item={item} onDismiss={() => dismiss(item.key)} />)}

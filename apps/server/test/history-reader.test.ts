@@ -37,6 +37,9 @@ test('history pages isolate profiles, use stable ties and expose only the read c
   assert.deepEqual(next.items.map(r => r.episodeId), ['a']); assert.equal(next.nextCursor, null);
   assert.deepEqual(first.items[0], { mediaId: 'c', episodeId: 'c', title: 'c', episodeTitle: 'Episode', season: 1, episode: 1, position: 400, duration: 1200, completed: false, updatedAt: '2026-10-10T12:00:00.000Z' });
   assert.deepEqual(reader.list('other').items.map(r => r.mediaId), ['foreign']);
+  assert.deepEqual(reader.list('viewer',{since:'2026-10-10T11:30:00-02:00'}).items,[],'UTC instant must be compared, not offset text');
+  const offset=reader.list('viewer',{limit:1,since:'2026-10-10T21:00:00+09:00'});
+  assert.equal(reader.list('viewer',{cursor:offset.nextCursor!,since:'2026-10-10T12:00:00Z'}).items.length,2);
 });
 
 test('kids history can cross a fully filtered page without leaking blocked or unknown titles', async t => {

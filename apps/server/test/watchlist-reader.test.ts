@@ -35,6 +35,9 @@ test('watchlist pages isolate profiles, preserve tied ordering and reveal only t
   const next=reader.list('viewer',{limit:2,cursor:first.nextCursor!});
   assert.deepEqual(next.items.map(r=>r.mediaId),['a']);assert.equal(next.nextCursor,null);
   assert.deepEqual(reader.list('other').items.map(r=>r.mediaId),['foreign']);
+  assert.deepEqual(reader.list('viewer',{since:'2026-10-10T23:30:00-02:00'}).items,[],'compare timestamps in UTC, not the input offset');
+  const offsetPage=reader.list('viewer',{limit:1,since:'2026-10-11T09:00:00+09:00'});
+  assert.equal(reader.list('viewer',{cursor:offsetPage.nextCursor!,since:'2026-10-11T00:00:00Z'}).items.length,2);
   assert.throws(()=>reader.list('other',{cursor:first.nextCursor!}),{error:'watchlist-changed'});
   for(const query of [{limit:101},{limit:0},{limit:1.5},{since:'invalid'},{cursor:'garbage'},{profile:'other'},[]])assert.throws(()=>reader.list('viewer',query as any),{statusCode:400});
 });

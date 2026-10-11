@@ -52,7 +52,7 @@ export class Recommendations {
     if (!selected.length) return { items: [], status: 'insufficient-history' };
     // A small background warmup never blocks the Home response. No independent recommendation cache:
     // changes to history, watchlist, links, dismissals and kids policy apply on the next request.
-    for (const s of selected.slice(0,5)) {
+    for (const s of selected) {
       const cached = this.db.get('SELECT fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?',s.kind,s.tmdb_id);
       if (cached && cached.fetched_at > this.clock()-7*86400_000) continue;
       if (this.warming.size >= 2 || this.warming.has(s.id) || (this.attempted.get(s.id) ?? 0) > this.clock()-3600_000) continue;
@@ -91,7 +91,7 @@ export class Recommendations {
       if(genre&&(genres.get(genre)||0)>=4){deferred.push(entry);continue;}
       if(genre)genres.set(genre,(genres.get(genre)||0)+1);diversified.push(entry);
     }
-    const items:RecommendationItem[]=[...diversified,...deferred].slice(0,20).map(([key,r])=>{
+    const items:RecommendationItem[]=[...diversified,...deferred].slice(0,40).map(([key,r])=>{
       const matches=this.db.all("SELECT m.id FROM media m JOIN tmdb_links l ON l.media_id=m.id AND l.status IN ('auto','manual') WHERE l.kind=? AND l.tmdb_id=? ORDER BY m.added_at DESC",r.item.kind,r.item.id);
       const match=this.kids.filter(matches,profile)[0];
       return {...r.item,key,reason:r.reason,href:match?`/title/${encodeURIComponent(match.id)}`:`/search?q=${encodeURIComponent(r.item.title)}`};

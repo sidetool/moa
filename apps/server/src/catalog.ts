@@ -62,10 +62,12 @@ export class Catalog {
   watchlist(profile: string): MediaCard[] {
     return this.kids.filter(this.db.all('SELECT m.* FROM media m JOIN watchlist w ON w.media_id=m.id WHERE w.profile_id=? ORDER BY w.added_at DESC', profile), profile).map(m => this.card(m, profile));
   }
-  home(profile: string, type?: MediaType, providers?: string[], continueScope: 'tab' | 'all' = 'tab'): HomeResponse {
+  home(profile: string, type?: MediaType, providers?: string[], continueScope: 'tab' | 'all' = 'tab', watchlistScope: 'tab' | 'all' = 'tab'): HomeResponse {
     const allowed = (c: MediaCard) => providers ? providers.includes(c.provider.id) : c.provider.kind !== "local";
     const allCards = this.cards(profile, type);
-    const cards = allCards.filter(allowed), watchlist = this.watchlist(profile).filter(c => (!type || c.type === type) && allowed(c));
+    const cards = allCards.filter(allowed);
+    // A saved title is personal state, independent of which sources populate the main Home tab.
+    const watchlist = this.watchlist(profile).filter(c => (!type || c.type === type) && (watchlistScope === 'all' || allowed(c)));
     // Home resume history belongs to the profile, independently of tab discovery sources.
     const resumeCards = new Map((continueScope === 'all' ? allCards : cards).map(c => [c.id, c]));
     const ongoing = this.db.all(`SELECT e.media_id,MAX(p.updated_at) AS updated FROM progress p JOIN episodes e ON e.id=p.episode_id WHERE p.profile_id=? AND (p.position>0 OR p.completed=1) GROUP BY e.media_id ORDER BY updated DESC`, profile)
