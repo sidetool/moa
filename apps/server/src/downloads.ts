@@ -30,7 +30,9 @@ export class Downloads {
       bytes INTEGER NOT NULL DEFAULT 0,total_bytes INTEGER,error TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS download_episode_live ON download_jobs(episode_id) WHERE state IN ('queued','resolving','downloading','finalizing','ready');
       CREATE TABLE IF NOT EXISTS download_assets(episode_id TEXT PRIMARY KEY REFERENCES episodes(id) ON DELETE RESTRICT,job_id TEXT NOT NULL UNIQUE REFERENCES download_jobs(id) ON DELETE RESTRICT,path TEXT NOT NULL,size INTEGER NOT NULL,probe TEXT NOT NULL,subtitles TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS download_jobs_state ON download_jobs(state);`);
+      CREATE INDEX IF NOT EXISTS download_jobs_state ON download_jobs(state);
+      CREATE INDEX IF NOT EXISTS download_jobs_page ON download_jobs(created_at DESC,id DESC);
+      CREATE INDEX IF NOT EXISTS download_jobs_media_page ON download_jobs(media_id,created_at DESC,id DESC);`);
   }
   get busy(){return Boolean(this.running);}
   quota(){return Number(this.db.get("SELECT value FROM admin_settings WHERE key='downloadQuota'")?.value)||0;}
@@ -69,7 +71,35 @@ export class Downloads {
     if(!r)throw new ApiFailure(404,'download-not-found');
     return {id:r.id,episodeId:r.episode_id,mediaId:r.media_id,title:r.title,episodeTitle:r.episode_title,state:r.state,bytes:r.bytes,totalBytes:r.total_bytes,error:r.error,quality:r.quality,createdAt:r.created_at,updatedAt:r.updated_at};
   }
-  async status():Promise<DownloadStatus>{let reason:string|null=null;try{await this.storage();if(this.cfg.downloadsEnabled===false)reason='download-disabled';else if(!this.quota())reason='download-quota-unconfigured';}catch(e){reason=e instanceof ApiFailure?e.error:'download-storage-unavailable';}return{configured:!reason,reason,quotaBytes:this.quota(),usedBytes:this.used(),jobs:this.db.all('SELECT id FROM download_jobs ORDER BY updated_at DESC LIMIT 200').map(r=>this.job(r.id))};}
+  async status(query:{cursor?:string;mediaId?:string}={}):Promise<DownloadStatus>{
+    const media=query.mediaId??null;
+    if(media!==null&&(typeof media!=='string'||!media||media.length>512))throw new ApiFailure(400,'download-query-invalid');
+    let boundary:{time:string;id:string}|undefined;
+    if(query.cursor!==undefined){
+      try{
+        if(typeof query.cursor!=='string'||query.cursor.length>2048)throw Error();
+        const cursor=JSON.parse(Buffer.from(query.cursor,'base64url').toString());
+        if(cursor.media!==media||typeof cursor.time!=='string'||cursor.time.length>64||typeof cursor.id!=='string'||cursor.id.length>128||!cursor.id)throw Error();
+        boundary=cursor;
+      }catch{throw new ApiFailure(400,'download-query-invalid');}
+    }
+    const where:string[]=[],args:string[]=[];
+    if(media){where.push('media_id=?');args.push(media);}
+    const filter=where.length?`WHERE ${where.join(' AND ')}`:'';
+    const totalJobs=this.db.get(`SELECT COUNT(*) AS n FROM download_jobs ${filter}`,...args)!.n as number;
+    if(boundary){where.push('(created_at<? OR (created_at=? AND id<?))');args.push(boundary.time,boundary.time,boundary.id);}
+    const rows=this.db.all(`SELECT id,created_at FROM download_jobs ${where.length?`WHERE ${where.join(' AND ')}`:''} ORDER BY created_at DESC,id DESC LIMIT 201`,...args);
+    const page=rows.slice(0,200),last=page.at(-1);
+    let reason:string|null=null;
+    try{await this.storage();if(this.cfg.downloadsEnabled===false)reason='download-disabled';else if(!this.quota())reason='download-quota-unconfigured';}
+    catch(e){reason=e instanceof ApiFailure?e.error:'download-storage-unavailable';}
+    // Materialize rows before any further asynchronous work so concurrent deletion cannot
+    // make an otherwise valid status response fail halfway through.
+    const jobs=page.filter(r=>this.db.get('SELECT 1 FROM download_jobs WHERE id=?',r.id)).map(r=>this.job(r.id));
+    return{configured:!reason,reason,quotaBytes:this.quota(),usedBytes:this.used(),jobs,totalJobs,
+      nextCursor:rows.length>200&&last?Buffer.from(JSON.stringify({media,time:last.created_at,id:last.id})).toString('base64url'):null};
+  }
+
   episode(episode:string,profile:string){const r=this.db.get('SELECT media_id FROM episodes WHERE id=?',episode);if(!r)throw new ApiFailure(404,'episode-not-found');this.kids.assert(r.media_id,profile);const j=this.db.get('SELECT id FROM download_jobs WHERE episode_id=? ORDER BY updated_at DESC LIMIT 1',episode);return{saved:Boolean(this.db.get('SELECT 1 FROM download_assets WHERE episode_id=?',episode)),...(j?{job:this.job(j.id)}:{})};}
   private assertRequest(episode:string,profile:string){
     if(this.closed||this.paused||!this.setup)throw new ApiFailure(503,'download-paused');

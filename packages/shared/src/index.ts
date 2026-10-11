@@ -541,6 +541,7 @@ export interface DownloadJob {
 export interface DownloadStatus {
   configured: boolean; reason: string | null; quotaBytes: number; usedBytes: number;
   jobs: DownloadJob[];
+  totalJobs?: number; nextCursor?: string | null;
 }
 export interface DownloadChoice { id: string; label: string }
 export interface EpisodeDownloadStatus {

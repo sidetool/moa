@@ -458,7 +458,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     }
     return reply.code(204).send();
   });
-  app.get('/api/admin/downloads',async (_req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.status()));
+  app.get('/api/admin/downloads',{schema:{querystring:object({cursor:{type:'string',maxLength:2048},mediaId:{type:'string',minLength:1,maxLength:512}})}},async (req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.status(query(req))));
   app.put('/api/admin/downloads/config',{schema:{body:object({quotaBytes:{type:'integer',minimum:1,maximum:1099511627776000}},['quotaBytes'])}},async req=>{downloads.configure((req.body as {quotaBytes:number}).quotaBytes);return downloads.status();});
   app.get('/api/admin/downloads/choices',{schema:{querystring:object({episodeId:string},['episodeId'])}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.choices(query(req).episodeId,profile(req))));
   app.post('/api/admin/downloads',{schema:{body:object({episodeId:string,selectionToken:string,choiceId:string},['episodeId','selectionToken','choiceId'])}},async req=>{const b=req.body as {episodeId:string;selectionToken:string;choiceId:string};return downloads.create(b.episodeId,profile(req),b.selectionToken,b.choiceId);});

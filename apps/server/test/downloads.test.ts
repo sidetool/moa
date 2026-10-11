@@ -278,3 +278,42 @@ test('disabled saving retains saved playback assets while denying new jobs', asy
   await assert.rejects(downloads.choices('ep','viewer'),{error:'download-disabled'});
   assert.ok(await downloads.asset('ep'));
 });
+
+test('saved list pages remain reachable across deletes and progress updates and can filter one title',async t=>{
+  const {db,downloads}=await fixture(t,async url=>({url,response:incoming('bytes')}));
+  db.transaction(()=>{
+    for(let i=0;i<205;i++){
+      const id=String(i).padStart(3,'0');
+      db.run("INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES(?,'ep','m','source','viewer','failed','720p','fixture','2026',?)",id,`2026-${id}`);
+    }
+    db.run("INSERT INTO media VALUES('second',NULL,'Same display title','movie','{}','2026')");
+    db.run("INSERT INTO episodes VALUES('second-ep','second',1,1,'Episode',1200,NULL)");
+    db.run("INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES('other','second-ep','second','source','viewer','failed','720p','fixture','2025','2025')");
+  });
+  const first=await downloads.status();assert.equal(first.jobs.length,200);assert.equal(first.totalJobs,206);assert.ok(first.nextCursor);
+  const boundary=first.jobs.at(-1)!;
+  await downloads.remove(boundary.id);
+  db.run("UPDATE download_jobs SET updated_at='2099' WHERE id='002'");
+  const next=await downloads.status({cursor:first.nextCursor!});
+  assert.equal(next.jobs.length,6);assert.equal(next.totalJobs,205);assert.equal(next.nextCursor,null);
+  assert.ok(next.jobs.every(j=>!first.jobs.some(p=>p.id===j.id)));
+  assert.equal(new Set([...first.jobs,...next.jobs].map(j=>j.id)).size,206);
+  const second=await downloads.status({mediaId:'second'});assert.deepEqual(second.jobs.map(j=>j.id),['other']);assert.equal(second.totalJobs,1);
+  await assert.rejects(downloads.status({mediaId:'second',cursor:first.nextCursor!}),{error:'download-query-invalid'});
+  await assert.rejects(downloads.status({cursor:'not a cursor'}),{error:'download-query-invalid'});
+});
+
+test('selected removals can succeed independently while a playing copy stays protected',async t=>{
+  const {db,cfg,downloads,playback}=await fixture(t,async url=>({url,response:incoming('bytes')}));
+  const playing=await saved(db,cfg.downloadRoot!);
+  db.run("INSERT INTO episodes VALUES('another','m',1,2,'Another',1200,NULL)");
+  const removable=await saved(db,cfg.downloadRoot!,'another');
+  playback.sessions.set('active',{response:{saved:true,episodeId:'ep'}} as never);
+  try{
+    const outcomes=[];
+    for(const id of [playing,removable])try{await downloads.remove(id);outcomes.push('removed');}catch(e){outcomes.push((e as {error:string}).error);}
+    assert.deepEqual(outcomes,['download-in-use','removed']);
+    assert.ok(db.get('SELECT 1 FROM download_assets WHERE job_id=?',playing));
+    assert.equal(db.get('SELECT 1 FROM download_jobs WHERE id=?',removable),undefined);
+  }finally{playback.sessions.delete('active');}
+});
