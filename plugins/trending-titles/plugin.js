@@ -99,11 +99,12 @@ async function drain() {
 /** Accept only the documented discovery contract; anything else is treated as a failed request. */
 function normalize(result) {
   if (!result || typeof result !== 'object' || !STATUSES.includes(result.status) || !Array.isArray(result.items)) throw new Error('Invalid discovery result');
+  if (result.provider !== 'tmdb') throw Object.assign(new Error('unsupported provider'), { providerUnsupported: true });
   const seen = new Set(), items = [];
   for (const item of result.items) {
     const title = text(item?.title, 300);
-    if (!title || (item.kind !== 'movie' && item.kind !== 'tv') || !Number.isSafeInteger(item.id) || item.id < 1) continue;
-    const id = `${item.kind}:${item.id}`;
+    if (!title || (item.kind !== 'movie' && item.kind !== 'tv') || item.provider !== result.provider || typeof item.id !== 'string' || !item.id.trim() || item.id.length > 256) continue;
+    const id = JSON.stringify([item.provider, item.kind, item.id]);
     if (seen.has(id)) continue;
     seen.add(id);
     const originalTitle = text(item.originalTitle, 300), year = Number(item.year) > 1800 && Number(item.year) < 3000 && Number.isInteger(Number(item.year)) ? Number(item.year) : undefined;
@@ -173,7 +174,7 @@ async function load() {
     result = next;
   } catch (error) {
     if (id !== request) return;
-    problem = error?.unsupported ? '이 MOA 버전은 인기 작품 목록을 지원하지 않음' : '인기 작품 목록을 불러올 수 없음';
+    problem = error?.providerUnsupported ? '이 플러그인은 현재 TMDB 목록만 표시할 수 있음' : error?.unsupported ? '이 MOA 버전은 인기 작품 목록을 지원하지 않음' : '인기 작품 목록을 불러올 수 없음';
   }
   loading = false; render();
 }

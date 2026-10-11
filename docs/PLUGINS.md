@@ -239,10 +239,22 @@ This additive SDK is implemented on `feat/discovery-plugin`; it is not present i
 Packages using it currently declare `minMoaVersion: "0.2.0-beta.1"` as the proposed
 integration target. Confirm the actual release before distributing the ZIP.
 
-The result is `{ status, items, updatedAt, stale }`. `status` is `ready`,
+The result is `{ provider, status, items, updatedAt, stale }`. `status` is `ready`,
 `unconfigured` (administrator must configure TMDB), `restricted` (child/missing
-profile), or `unavailable` (no usable provider result). Items contain only
-`MetadataCandidate` fields; they are external metadata, not playable source entries.
+profile), or `unavailable` (no usable provider result). Items use `DiscoveryItem`: `{ provider, kind, id, title, originalTitle?, year?,
+poster?, overview? }`. Identity is the tuple `(provider, kind, id)`. `id` is an
+opaque string: never parse it as a number, drop leading zeroes, or treat it as a
+MOA media ID. Do not merge identities across providers. The response-level
+`provider` identifies the selected feed even when items are empty. These are
+external metadata, not playable source entries.
+
+`moa.discovery.trending` and `discovery.read` are provider-neutral names. The host
+currently selects a single TMDB adapter behind a small `TrendingProvider` contract;
+no provider-selection setting or multi-provider registry is introduced. Additional
+adapters must preserve policy, attribution and cache-isolation requirements.
+The bundled plugin currently supports TMDB presentation/attribution only and
+explicitly refuses other feeds, instead of labelling their results as TMDB.
+Adding a provider also requires its correct UI attribution and image permission.
 A ready empty list is distinct from an unavailable result. `updatedAt` is the host's
 fetch timestamp in ISO UTC, not TMDB's ranking timestamp.
 

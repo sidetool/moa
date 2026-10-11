@@ -44,7 +44,7 @@ watchlist rights are requested by this plugin.
 
 ## Completed checks
 
-- Four focused tests cover provider normalization, bounded cache/backoff and
+- Five focused tests cover provider normalization, bounded cache/backoff and
   credential changes, profile-policy changes during a pending response, API
   account/permission/revision/revocation boundaries including ordinary members.
 - Existing TMDB (3), catalog-hook (1) and plugin (3) tests passed. The archive
@@ -80,3 +80,14 @@ The plugin's standalone browser suite also passed at desktop 1280px and mobile
 validation, text injection, poster queue/blob cleanup, keyboard navigation,
 attribution and resize. The real-host screenshots are under the verification
 output directory; standalone fake-SDK screenshots are not release evidence.
+
+## Provider-neutral contract follow-up
+
+`TrendingResponse` now carries `provider`, and `DiscoveryItem` replaces the TMDB
+`MetadataCandidate` at this boundary. IDs are opaque strings scoped to
+`(provider, kind, id)`. Existing metadata matching/recommendation types are unchanged.
+`PluginDiscovery` depends on the small structural `TrendingProvider` port, not on
+`Tmdb`. It invalidates cache entries and rejects pending results across provider
+identity/configuration changes. TMDB is still the sole installed adapter.
+The bundled UI explicitly rejects unfamiliar feeds to avoid wrong attribution;
+provider-specific logos/ranking labels/image permissions remain deliberate work.

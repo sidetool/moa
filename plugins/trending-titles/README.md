@@ -70,3 +70,12 @@ MOA_PLAYWRIGHT_PATH=/path/to/node_modules/playwright-core node plugins/trending-
 ```
 
 라이선스는 저장소의 [GPL-3.0-or-later 라이선스](../../LICENSE)를 따름.
+
+## 공급자와 식별자
+
+공통 API 이름은 `moa.discovery.trending`이며 공급자에 종속되지 않음. 응답의
+`provider`와 각 항목의 `(provider, kind, id)`를 함께 확인함. `id`는 숫자로
+변환하지 않는 문자열이고, MOA 작품 ID와 별개임. 이 패키지는 현재 TMDB의
+출처 표시·이미지 권한에 맞춰 구현되어 다른 공급자 응답은 명시적으로
+지원 불가로 표시함. 새 공급자를 추가할 때 출처 표시와 이미지 권한도
+맞춰야 하며, 다른 서비스 결과를 TMDB 트렌드라고 표시하지 않음.

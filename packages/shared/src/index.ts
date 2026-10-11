@@ -519,9 +519,21 @@ export type { RemoteAccessMode, RemoteAccessState, RemoteAccessConfig, RemoteAcc
 
 /** Fixed provider query; no arbitrary URLs or API credentials cross the plugin boundary. */
 export interface TrendingQuery { kind: 'movie' | 'tv'; window: 'day' | 'week' }
+/** External identity is the tuple (provider, kind, id); id is opaque, never a MOA media ID. */
+export interface DiscoveryItem {
+  provider: string;
+  kind: 'movie' | 'tv';
+  id: string;
+  title: string;
+  originalTitle?: string;
+  year?: number;
+  poster?: string;
+  overview?: string;
+}
 export interface TrendingResponse {
+  provider: string;
   status: 'ready' | 'unconfigured' | 'restricted' | 'unavailable';
-  items: MetadataCandidate[];
+  items: DiscoveryItem[];
   updatedAt: string | null;
   stale: boolean;
 }

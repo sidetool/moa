@@ -48,8 +48,8 @@ const sdk = `
 `;
 const page = html => `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'"><style>:root{--moa-text:#fafafa;--moa-muted:#a1a1aa;--moa-accent:#ef4444;--moa-surface:#18181b;color-scheme:dark;font:15px/1.5 system-ui;background:#09090b;color:var(--moa-text)}body{margin:16px}button,input,textarea{font:inherit;max-width:100%;box-sizing:border-box}button{cursor:pointer}</style><script>${sdk}</script><body><script>${html.replace(/<\/script/gi, '<\\/script')}</script>`;
 
-const items = (kind, count, extra = {}) => Array.from({ length: count }, (_, i) => ({ kind, id: i + 1, title: `${kind === 'tv' ? '시리즈' : '영화'} ${i + 1}`, ...(i === 0 ? { originalTitle: 'Original' } : {}), year: 2026, poster: `https://image.tmdb.org/t/p/w342/${kind}${i + 1}${i === 2 ? 'broken' : ''}.jpg`, overview: '소개', ...extra }));
-const ready = (list, extra = {}) => ({ status: 'ready', items: list, updatedAt: '2026-10-11T03:00:00Z', stale: false, ...extra });
+const items = (kind, count, extra = {}) => Array.from({ length: count }, (_, i) => ({ provider: 'tmdb', kind, id: String(i + 1), title: `${kind === 'tv' ? '시리즈' : '영화'} ${i + 1}`, ...(i === 0 ? { originalTitle: 'Original' } : {}), year: 2026, poster: `https://image.tmdb.org/t/p/w342/${kind}${i + 1}${i === 2 ? 'broken' : ''}.jpg`, overview: '소개', ...extra }));
+const ready = (list, extra = {}) => ({ provider: 'tmdb', status: 'ready', items: list, updatedAt: '2026-10-11T03:00:00Z', stale: false, ...extra });
 
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
 const pageErrors = [];
@@ -125,11 +125,11 @@ try {
     await tab.click('#refresh');
     const fetchesBefore = await tab.evaluate(() => calls.fetch.length);
     const hostile = [
-      { kind: 'movie', id: 9, title: '<img src=x onerror="errors.push(1)">' }, { kind: 'movie', id: 9, title: 'dup' }, { kind: 'person', id: 1, title: 'x' },
-      { kind: 'movie', id: 2 }, { kind: 'movie', id: '5', title: 'string id' }, { kind: 'movie', id: -1, title: 'negative' },
-      { kind: 'movie', id: 3, title: 'bad posters', poster: 'javascript:alert(1)' }, { kind: 'movie', id: 4, title: 'other size', poster: 'https://image.tmdb.org/t/p/original/a.jpg' },
-      { kind: 'movie', id: 6, title: 'other host', poster: 'https://evil.example/t/p/w342/a.jpg' }, { kind: 'movie', id: 7, title: 'traversal', poster: 'https://image.tmdb.org/t/p/w342/../a.jpg' },
-      ...items('tv', 30).map(item => ({ ...item, id: item.id + 100, poster: undefined })),
+      { provider: 'tmdb', kind: 'movie', id: '9', title: '<img src=x onerror="errors.push(1)">' }, { provider: 'tmdb', kind: 'movie', id: '9', title: 'dup' }, { provider: 'tmdb', kind: 'person', id: '1', title: 'x' },
+      { provider: 'tmdb', kind: 'movie', id: '2' }, { provider: 'tmdb', kind: 'movie', id: 5, title: 'numeric id' }, { kind: 'movie', id: -1, title: 'negative' },
+      { provider: 'tmdb', kind: 'movie', id: '3', title: 'bad posters', poster: 'javascript:alert(1)' }, { provider: 'tmdb', kind: 'movie', id: '4', title: 'other size', poster: 'https://image.tmdb.org/t/p/original/a.jpg' },
+      { provider: 'tmdb', kind: 'movie', id: '6', title: 'other host', poster: 'https://evil.example/t/p/w342/a.jpg' }, { provider: 'tmdb', kind: 'movie', id: '7', title: 'traversal', poster: 'https://image.tmdb.org/t/p/w342/../a.jpg' },
+      ...items('tv', 30).map(item => ({ ...item, id: String(Number(item.id) + 100), poster: undefined })),
     ];
     await latest(ready(hostile, { stale: true }));
     await until(() => document.querySelectorAll('.card').length === 20);
@@ -139,14 +139,28 @@ try {
     assert.match((await state()).status, /최신 정보가 아닐 수 있음/);
     assert.equal((await state()).retry, true);
 
+    await tab.click('#refresh');
+    await latest(ready(items('movie', 1).map(item => ({ ...item, provider: 'example-catalog' })), { provider: 'example-catalog' }));
+    await until(() => /현재 TMDB 목록만/.test(document.querySelector('#status').textContent));
+    assert.equal((await state()).cards, 0, 'unknown providers must not be mislabelled as TMDB');
+    await tab.click('#refresh');
+    await latest(ready([
+      {provider:'tmdb',kind:'movie',id:'0007/a:b',title:'Opaque movie'},
+      {provider:'tmdb',kind:'tv',id:'0007/a:b',title:'Opaque TV'},
+      {provider:'tmdb',kind:'movie',id:'0007/a:b',title:'Duplicate'},
+      {provider:'other',kind:'movie',id:'0007/a:b',title:'Wrong provider'},
+      {kind:'movie',id:'1',title:'Missing provider'},
+    ]));
+    await until(() => document.querySelectorAll('.card').length === 2);
+
     // Host states, a rejected request, an invalid payload, and retry. No content is kept from earlier answers.
     const cases = [
-      [{ status: 'unconfigured', items: [], updatedAt: null, stale: false }, /TMDB를 연결하면 표시됨/, true, 0],
-      [{ status: 'restricted', items: items('movie', 2), updatedAt: null, stale: false }, /이 프로필에서는/, false, 0],
-      [{ status: 'unavailable', items: [], updatedAt: null, stale: true }, /가져올 수 없음/, true, 0],
-      [{ status: 'unavailable', items: items('movie', 2), updatedAt: '2026-10-10T00:00:00Z', stale: true }, /최신 정보가 아닐 수 있음/, true, 2],
-      [{ status: 'ready', items: [], updatedAt: null, stale: false }, /표시할 작품이 없음/, false, 0],
-      [{ status: 'weird' }, /불러올 수 없음/, true, 0],
+      [{ provider: 'tmdb', status: 'unconfigured', items: [], updatedAt: null, stale: false }, /TMDB를 연결하면 표시됨/, true, 0],
+      [{ provider: 'tmdb', status: 'restricted', items: items('movie', 2), updatedAt: null, stale: false }, /이 프로필에서는/, false, 0],
+      [{ provider: 'tmdb', status: 'unavailable', items: [], updatedAt: null, stale: true }, /가져올 수 없음/, true, 0],
+      [{ provider: 'tmdb', status: 'unavailable', items: items('movie', 2), updatedAt: '2026-10-10T00:00:00Z', stale: true }, /최신 정보가 아닐 수 있음/, true, 2],
+      [{ provider: 'tmdb', status: 'ready', items: [], updatedAt: null, stale: false }, /표시할 작품이 없음/, false, 0],
+      [{ provider: 'tmdb', status: 'weird' }, /불러올 수 없음/, true, 0],
       ['reject', /불러올 수 없음/, true, 0],
     ];
     for (const [value, message, retry, cards] of cases) {

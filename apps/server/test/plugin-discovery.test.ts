@@ -8,7 +8,7 @@ import { Tmdb } from '../src/tmdb.js';
 import { PluginDiscovery } from '../src/plugin-discovery.js';
 import { buildApp } from '../src/app.js';
 
-const items = [{kind:'movie' as const,id:1,title:'영화'}];
+const items = [{provider:'tmdb',kind:'movie' as const,id:'1',title:'영화'}];
 async function fixture() {
   const dir=await mkdtemp(path.join(tmpdir(),'moa-discovery-')), db=new Store(dir);
   for (const [id,kids] of [['adult',0],['child',1]] as const) db.run('INSERT INTO profiles(id,name,color,kids,created_at) VALUES(?,?,?,?,?)',id,id,'blue',kids,'2026');
@@ -31,7 +31,7 @@ test('TMDB query is fixed, first-page only and strips secrets, adult/malformed/d
   try {
     const result=await tmdb.trending({kind:'movie',window:'week'});
     assert.equal(result.length,2);assert.equal(result[0].poster,'https://image.tmdb.org/t/p/w342/safe.jpg');
-    assert.equal(result[0].year,2026);assert.equal(result[1].poster,undefined);
+    assert.equal(result[0].year,2026);assert.equal(result[0].provider,'tmdb');assert.equal(result[0].id,'1');assert.equal(result[1].poster,undefined);
     assert.ok(!JSON.stringify(result).includes('synthetic-secret'));
     await assert.rejects(tmdb.trending({kind:'../account',window:'week'} as any));assert.equal(requests,1);
   } finally {tmdb.close();await f.close();}
@@ -39,7 +39,7 @@ test('TMDB query is fixed, first-page only and strips secrets, adult/malformed/d
 
 test('cache coalesces requests, reuses only bounded stale snapshots, backs off and clears on key changes',async()=>{
   const f=await fixture();let now=1_800_000_000_000,calls=0,fail=false;
-  const provider={enabled:true,configurationRevision:0,trending:async()=>{calls++;await Promise.resolve();if(fail)throw Error('secret upstream');return items;}};
+  const provider={providerId:'tmdb',enabled:true,configurationRevision:0,trending:async()=>{calls++;await Promise.resolve();if(fail)throw Error('secret upstream');return items;}};
   const d=new PluginDiscovery(f.db,provider,()=>now),q={kind:'movie' as const,window:'day' as const};
   try{
     const [a,b]=await Promise.all([d.trending('adult',q),d.trending('adult',q)]);
@@ -53,14 +53,14 @@ test('cache coalesces requests, reuses only bounded stale snapshots, backs off a
     assert.equal((await d.trending('adult',q)).status,'unconfigured');
     provider.enabled=true;provider.configurationRevision++;fail=false;
     assert.equal((await d.trending('adult',q)).stale,false);assert.equal(calls,4);
-    assert.deepEqual(await d.trending('child',q),{status:'restricted',items:[],updatedAt:null,stale:false});
+    assert.deepEqual(await d.trending('child',q),{provider:'tmdb',status:'restricted',items:[],updatedAt:null,stale:false});
     assert.equal((await d.trending('missing',q)).status,'restricted');assert.equal(calls,4);
   }finally{await f.close();}
 });
 
 test('profile policy and credential changes during pending provider calls win over fetched results',async()=>{
   const f=await fixture();let finish!:()=>void;
-  const provider={enabled:true,configurationRevision:0,trending:()=>new Promise<typeof items>(resolve=>{finish=()=>resolve(items);})};
+  const provider={providerId:'tmdb',enabled:true,configurationRevision:0,trending:()=>new Promise<typeof items>(resolve=>{finish=()=>resolve(items);})};
   const d=new PluginDiscovery(f.db,provider),q={kind:'tv' as const,window:'week' as const};
   try{
     let p=d.trending('adult',q);f.db.run("UPDATE profiles SET kids=1 WHERE id='adult'");finish();
@@ -85,7 +85,7 @@ test('runtime enforces account/profile, permission, revision and revocation; key
     const h={...admin,'x-moa-profile':profile.id};let revision=await install(plugin);
     const url='/api/plugin-runtime/trending-test/discovery/trending';
     const call=(query:object={kind:'movie',window:'week'},headers=h,rev=revision)=>env.app.inject({method:'POST',url,headers,payload:{revision:rev,query}});
-    let r=await call();assert.equal(r.statusCode,200,r.body);assert.equal(r.json().items.length,1);assert.equal(r.headers['cache-control'],'private, no-store');
+    let r=await call();assert.equal(r.statusCode,200,r.body);assert.equal(r.json().items.length,1);assert.equal(r.json().provider,'tmdb');assert.equal(r.json().items[0].id,'1');assert.equal(r.json().items[0].provider,'tmdb');assert.equal(r.headers['cache-control'],'private, no-store');
     assert.ok(!r.body.includes('synthetic-only-token'));
     const memberProfile=(await env.app.inject({method:'POST',url:'/api/profiles',headers:{'x-moa-account':'member','x-moa-role':'admin'},payload:{name:'Member'}})).json();
     const memberHeaders={'x-moa-account':'member','x-moa-role':'member','x-moa-profile':memberProfile.id};
@@ -110,4 +110,23 @@ test('runtime enforces account/profile, permission, revision and revocation; key
     env.db.run('UPDATE profiles SET kids=1 WHERE id=?',profile.id);
     r=await call();assert.equal(r.json().status,'restricted');assert.deepEqual(r.json().items,[]);assert.equal(calls,2);
   }finally{release?.();await env.app.close();await rm(dir,{recursive:true,force:true});}
+});
+
+
+test('alternate provider supports opaque IDs and cannot reuse another provider cache or in-flight result',async()=>{
+  const f=await fixture();let calls=0;
+  const provider={providerId:'tmdb',enabled:true,configurationRevision:0,trending:async()=>{calls++;return [{provider:provider.providerId,kind:'tv' as const,id:'0007/a:b',title:'Example'}];}};
+  const d=new PluginDiscovery(f.db,provider),q={kind:'tv' as const,window:'week' as const};
+  try {
+    const first=await d.trending('adult',q);
+    provider.providerId='example-catalog';
+    const second=await d.trending('adult',q);
+    assert.equal(calls,2);assert.equal(first.provider,'tmdb');assert.equal(second.provider,'example-catalog');
+    assert.equal(second.items[0].id,'0007/a:b');assert.equal(second.items[0].provider,'example-catalog');
+    let finish!:()=>void;
+    provider.trending=()=>new Promise(resolve=>{finish=()=>resolve([{provider:'example-catalog',kind:'tv',id:'1',title:'Old'}]);});
+    const pending=d.trending('adult',{...q,window:'day'});
+    provider.providerId='replacement';finish();
+    assert.equal((await pending).status,'unavailable');
+  }finally{await f.close();}
 });
