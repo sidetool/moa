@@ -1,6 +1,8 @@
 import { Downloads } from './downloads.js';
 import { GeneralMarkers } from './general-markers.js';
 import { Recommendations } from './recommendations.js';
+import { PluginPeople } from './plugin-people.js';
+import { PluginDiscovery } from './plugin-discovery.js';
 import { registerWebsitePlugins } from './website-plugins.js';
 import { registerUpdates } from './updates.js';
 import { UpdateMaintenance } from './update-maintenance.js';
@@ -184,7 +186,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
   app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
   app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db);
+  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb), new PluginPeople(db, tmdb));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));

@@ -268,7 +268,7 @@ export function TitlePage() {
         <InlinePlugins key={`plugins:${m.id}`} placement="detail" />
         <TitleSources key={m.id} id={m.id} title={m.title}/>
         {!isMovie && <Episodes media={m} saves={saves} />}
-        {!!m.people?.length && <PeopleRow people={m.people} />}
+        <PeopleRow key={`people:${m.id}`} people={m.people ?? []} mediaId={m.id} linked={Boolean(m.metadata?.id)} />
         {!!m.similar?.length && <SimilarRow items={m.similar} />}
         {m.fileInfo && (
           <section className="file-info" aria-label="파일 정보">

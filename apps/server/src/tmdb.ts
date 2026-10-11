@@ -1,3 +1,4 @@
+import { tmdbPeople, tmdbPersonWorks } from './tmdb-people.js';
 import { parseSeasonInfo } from './season-info.js';
 import { parseSeason } from '@moa/subtitles-ko';
 import type { MediaCard, MediaDetail, MetadataCandidate, MetadataKind, MetadataLink, Person } from '@moa/shared';
@@ -92,6 +93,8 @@ export function scoreResult(result: SearchResult, targets: Target[], expected: {
 
 /** Keeps a small number of TMDB requests in flight and retries rate limits. */
 export class Tmdb {
+  readonly providerId = 'tmdb';
+  configurationRevision = 0;
   get enabled() { return Boolean(this.token || this.key); }
   private environment: { token?: string; key?: string } = {};
   private reload() {
@@ -108,6 +111,7 @@ export class Tmdb {
     if (Object.keys(value).length !== 1 || value.clear !== undefined && value.clear !== true) throw new ApiFailure(400, 'invalid-request');
     this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('tmdb',?)", JSON.stringify(value.clear ? {} : value));
     this.reload();
+    this.configurationRevision++;
     return this.status();
   }
   private token?: string;
@@ -143,6 +147,46 @@ export class Tmdb {
         return await res.json();
       }
     } finally { this.release(); }
+  }
+
+  /** Read only existing accepted matches. Never run title matching on behalf of a plugin. */
+  linkedTitle(mediaId: string): import('@moa/shared').LinkedPluginTitle | null {
+    const row = this.db.get("SELECT m.title,l.kind,l.tmdb_id FROM media m JOIN tmdb_links l ON l.media_id=m.id WHERE m.id=? AND l.status IN ('auto','manual')", mediaId);
+    if (!row || !['movie','tv'].includes(row.kind) || !Number.isSafeInteger(row.tmdb_id) || row.tmdb_id <= 0) return null;
+    return {mediaId,provider:this.providerId,kind:row.kind,id:String(row.tmdb_id),name:row.title,scope:row.kind === 'tv' ? 'series' : 'movie'};
+  }
+  async peopleCredits(title: import('@moa/shared').LinkedPluginTitle) {
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    if (title.provider !== this.providerId || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new ApiFailure(400, 'invalid-metadata-identity');
+    const data = await this.get(`/${title.kind}/${title.id}/${title.kind === 'tv' ? 'aggregate_credits' : 'credits'}`, {language:'ko-KR'});
+    return tmdbPeople(data, title.kind);
+  }
+  async personWorks(id: string) {
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    if (!/^[1-9][0-9]{0,14}$/.test(id)) throw new ApiFailure(400, 'invalid-metadata-identity');
+    return tmdbPersonWorks(await this.get(`/person/${id}/combined_credits`, {language:'ko-KR'}));
+  }
+  /** Fixed first-page discovery; reuse credential storage, request limits and shutdown signal. */
+  async trending(query: import('@moa/shared').TrendingQuery): Promise<import('@moa/shared').DiscoveryItem[]> {
+    if (!['movie', 'tv'].includes(query.kind) || !['day', 'week'].includes(query.window)) throw new ApiFailure(400, 'invalid-discovery-query');
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    const data = await this.get(`/trending/${query.kind}/${query.window}`, { language: 'ko-KR' });
+    if (!data || !Array.isArray(data.results)) throw new Error('invalid-trending-response');
+    const seen = new Set<number>();
+    return data.results.slice(0, 20).flatMap((row: any) => {
+      if (!row || !Number.isSafeInteger(row.id) || row.id <= 0 || row.adult !== false || seen.has(row.id) || row.media_type && row.media_type !== query.kind) return [];
+      const title = query.kind === 'movie' ? row.title : row.name;
+      if (typeof title !== 'string' || !title.trim()) return [];
+      seen.add(row.id);
+      const original = query.kind === 'movie' ? row.original_title : row.original_name;
+      const date = query.kind === 'movie' ? row.release_date : row.first_air_date;
+      const year = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? Number(date.slice(0, 4)) : undefined;
+      const poster = typeof row.poster_path === 'string' && /^\/[a-zA-Z0-9_-]+\.(?:jpg|png|webp)$/.test(row.poster_path) ? `https://image.tmdb.org/t/p/w342${row.poster_path}` : undefined;
+      return [{ provider: this.providerId, kind: query.kind, id: String(row.id), title: title.slice(0, 300),
+        ...(typeof original === 'string' ? { originalTitle: original.slice(0, 300) } : {}),
+        ...(year ? { year } : {}), ...(poster ? { poster } : {}),
+        ...(typeof row.overview === 'string' ? { overview: row.overview.slice(0, 2000) } : {}) }];
+    });
   }
 
   /** Link titles in the background; resolves when done or after the budget, whichever is first. */
@@ -252,7 +296,7 @@ export class Tmdb {
     videos.sort((a, b) => Number(b.iso_639_1 === 'ko') - Number(a.iso_639_1 === 'ko') || Number(b.type === 'Trailer') - Number(a.type === 'Trailer') || Number(b.official) - Number(a.official));
     const detail: DetailInfo = {
       tagline: d.tagline || undefined, trailer: videos[0]?.key,
-      people: cast.slice(0, 16).map(p => ({ name: p.name, role: (p.roles?.[0]?.character || p.character || '').replace(/\s*\((?:voice|목소리)\)\s*$/i, '') || undefined, photo: img('w185', p.profile_path) })),
+      people: cast.slice(0, 16).map(p => ({ ...(Number.isSafeInteger(p.id) && p.id > 0 ? {identity:{provider:this.providerId,id:String(p.id)}} : {}), name: p.name, role: (p.roles?.[0]?.character || p.character || '').replace(/\s*\((?:voice|목소리)\)\s*$/i, '') || undefined, photo: img('w185', p.profile_path) })),
       similar: (d.recommendations?.results || []).filter((r: any) => r.poster_path).slice(0, 18).map((r: any) => candidate(r, kind)),
     };
     this.db.run('INSERT OR REPLACE INTO tmdb_titles VALUES(?,?,?,?,?)', kind, tmdbId, JSON.stringify(card), JSON.stringify(detail), Date.now());

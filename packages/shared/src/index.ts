@@ -152,7 +152,7 @@ export interface MediaDetail extends MediaCard {
 }
 
 export type MetadataKind = "tv" | "movie";
-export interface Person { name: string; role?: string; photo?: string }
+export interface Person { name: string; role?: string; photo?: string; identity?: { provider: string; id: string } }
 export interface MetadataCandidate { kind: MetadataKind; id: number; title: string; originalTitle?: string; year?: number; poster?: string; overview?: string; seasons?: number }
 export interface MetadataLink { status: "auto" | "manual" | "none" | "off" | "pending"; kind?: MetadataKind; id?: number; season?: number; title?: string }
 // GET   /api/metadata/status -> { tmdb: boolean }
@@ -215,7 +215,7 @@ export const PLUGIN_API_VERSION = 2;
 export interface WebsitePlugin {
   apiVersion: number;
   minMoaVersion?: string;
-  hooks?: Array<'catalog.transform'>;
+  hooks?: Array<'catalog.transform' | 'title.people'>;
   compatibility?: { supported: boolean; apiVersion: number; moaVersion: string | null };
   revision: string;
   id: string;
@@ -223,7 +223,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'history.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -551,3 +551,38 @@ export interface EpisodeDownloadStatus {
 export interface HistoryQuery { cursor?: string; limit?: number; since?: string }
 export interface HistoryRecord { mediaId:string;episodeId:string;title:string;episodeTitle:string;season:number;episode:number;position:number;duration:number;completed:boolean;updatedAt:string;tmdb?:{kind:'tv'|'movie';id:number} }
 export interface HistoryPage { revision:string;items:HistoryRecord[];nextCursor:string|null }
+/** Fixed provider query; no arbitrary URLs or API credentials cross the plugin boundary. */
+export interface TrendingQuery { kind: 'movie' | 'tv'; window: 'day' | 'week' }
+/** External identity is the tuple (provider, kind, id); id is opaque, never a MOA media ID. */
+export interface DiscoveryItem {
+  provider: string;
+  kind: 'movie' | 'tv';
+  id: string;
+  title: string;
+  originalTitle?: string;
+  year?: number;
+  poster?: string;
+  overview?: string;
+}
+export interface TrendingResponse {
+  provider: string;
+  status: 'ready' | 'unconfigured' | 'restricted' | 'unavailable';
+  items: DiscoveryItem[];
+  updatedAt: string | null;
+  stale: boolean;
+}
+
+/** Provider identities are opaque and scoped by provider, kind and id. */
+export interface LinkedPluginTitle {
+  mediaId: string; provider: string; kind: 'movie' | 'tv'; id: string; name: string; scope: 'movie' | 'series';
+}
+export interface PersonCredit { provider: string; id: string; name: string; photo?: string; roles: string[] }
+export interface TitlePeople { cast: PersonCredit[]; crew: PersonCredit[]; truncated: boolean }
+export type PeopleStatus = 'ready' | 'unlinked' | 'unconfigured' | 'restricted' | 'unavailable';
+export interface TitlePeopleResponse extends TitlePeople {
+  provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
+}
+export interface PersonWorksResponse {
+  provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
+  person: PersonCredit | null; items: DiscoveryItem[]; truncated: boolean;
+}
