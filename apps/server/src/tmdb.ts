@@ -1,3 +1,4 @@
+import { trailerCandidates } from './tmdb-trailers.js';
 import { tmdbPeople, tmdbPersonWorks } from './tmdb-people.js';
 import { parseSeasonInfo } from './season-info.js';
 import { parseSeason } from '@moa/subtitles-ko';
@@ -27,7 +28,7 @@ interface CardInfo {
   adult?: boolean; genreIds?: number[]; rating?: number; certification?: string; overview?: string; animation: boolean; originCountries?: string[]; runtime?: number;
   seasons?: Record<string, { poster?: string; year?: number; episodes?: number }>;
 }
-interface DetailInfo { tagline?: string; people: Person[]; trailer?: string; similar: MetadataCandidate[] }
+interface DetailInfo { tagline?: string; people: Person[]; trailer?: string; trailers?: string[]; trailerCheckedAt?: number; similar: MetadataCandidate[] }
 interface EpisodeInfo { number: number; name?: string; overview?: string; still?: string; airDate?: string; runtime?: number }
 interface Target { text: string; season?: number }
 
@@ -120,6 +121,7 @@ export class Tmdb {
   private waiting: Array<() => void> = [];
   private inflight = new Map<string, Promise<void>>();
   private refreshing = new Set<string>();
+  private trailerRequests = new Map<string, Promise<void>>();
   private seasonRequests = new Map<string, Promise<void>>();
   private abort = new AbortController();
   constructor(private db: Store, private log: (value: Record<string, unknown>) => void, options: { token?: string; key?: string; fetch?: typeof fetch } = { token: process.env.MOA_TMDB_TOKEN, key: process.env.MOA_TMDB_API_KEY }) {
@@ -204,11 +206,13 @@ export class Tmdb {
     if (!this.enabled) return;
     const work = (async () => {
       await this.link(id);
-      const link = this.db.get("SELECT * FROM tmdb_links WHERE media_id=? AND status IN ('auto','manual') AND kind='tv'", id);
+      const link = this.db.get("SELECT * FROM tmdb_links WHERE media_id=? AND status IN ('auto','manual') ", id);
       if (!link) return;
+      const trailers = this.ensureTrailers(link.kind,link.tmdb_id);
+      if (link.kind !== 'tv') { await trailers; return; }
       const remote = Boolean(this.db.get('SELECT 1 FROM source_media WHERE media_id=?', id));
       const seasons = remote && link.season != null ? [link.season] : this.db.all('SELECT DISTINCT season FROM episodes WHERE media_id=?', id).map(r => r.season as number);
-      await Promise.allSettled([...new Set(seasons.length ? seasons : [1])].slice(0, 6).map(n => this.season(link.tmdb_id, n)));
+      await Promise.allSettled([trailers, ...[...new Set(seasons.length ? seasons : [1])].slice(0, 6).map(n => this.season(link.tmdb_id, n))]);
     })().catch(error => this.log({ event: 'tmdb-detail-error', id, error: String(error) }));
     await Promise.race([work, sleep(budgetMs)]);
   }
@@ -267,9 +271,31 @@ export class Tmdb {
     this.db.run("INSERT OR REPLACE INTO tmdb_links(media_id,kind,tmdb_id,season,status,score,checked_at) VALUES(?,?,?,?,'auto',?,?)", id, kind, best.result.id, season, Math.round(best.score), Date.now());
     this.db.run('INSERT OR REPLACE INTO tmdb_match_versions VALUES(?,?)', id, MATCH_VERSION);
   }
+  /** Upgrade legacy single-video caches only on detail access; no catalog-wide refresh. */
+  private ensureTrailers(kind: MetadataKind, id: number): Promise<void> {
+    const key = `${kind}:${id}`, running = this.trailerRequests.get(key);
+    if (running) return running;
+    const row = this.db.get('SELECT detail FROM tmdb_titles WHERE kind=? AND tmdb_id=?',kind,id);
+    if (!row) return Promise.resolve();
+    const extra: DetailInfo = JSON.parse(row.detail);
+    if (Array.isArray(extra.trailers) || (extra.trailerCheckedAt ?? 0) > Date.now() - 5*60_000) return Promise.resolve();
+    // A failed refresh keeps the old trailer and backs off, including after restart.
+    this.db.run('UPDATE tmdb_titles SET detail=? WHERE kind=? AND tmdb_id=?',JSON.stringify({...extra,trailerCheckedAt:Date.now()}),kind,id);
+    const work = (async () => {
+      const data = await this.get(`/${kind}/${id}/videos`,{language:'ko-KR',include_video_language:'ko,en,ja,null'});
+      if (!Array.isArray(data?.results)) return;
+      const current = this.db.get('SELECT detail FROM tmdb_titles WHERE kind=? AND tmdb_id=?',kind,id);
+      if (!current) return;
+      const fresh: DetailInfo = JSON.parse(current.detail);
+      if (Array.isArray(fresh.trailers)) return; // a concurrent title refresh already supplied newer metadata
+      const trailers = trailerCandidates(data.results);
+      this.db.run('UPDATE tmdb_titles SET detail=? WHERE kind=? AND tmdb_id=?',JSON.stringify({...fresh,trailer:trailers[0],trailers}),kind,id);
+    })().finally(() => this.trailerRequests.delete(key));
+    this.trailerRequests.set(key,work); return work;
+  }
   private async title(kind: MetadataKind, tmdbId: number): Promise<CardInfo | null> {
     const append = kind === 'tv' ? 'aggregate_credits,images,videos,recommendations,content_ratings' : 'credits,images,videos,recommendations,release_dates';
-    const d = await this.get(`/${kind}/${tmdbId}`, { language: 'ko-KR', append_to_response: append, include_image_language: 'ko,en,null', include_video_language: 'ko,en' });
+    const d = await this.get(`/${kind}/${tmdbId}`, { language: 'ko-KR', append_to_response: append, include_image_language: 'ko,en,null', include_video_language: 'ko,en,ja,null' });
     if (!d) return null;
     const logos: any[] = d.images?.logos || [];
     const pickLogo = (lang: string) => logos.filter(l => l.iso_639_1 === lang).sort((a, b) => b.vote_average - a.vote_average)[0];
@@ -292,10 +318,9 @@ export class Tmdb {
       runtime: d.runtime || undefined, ...(kind === 'tv' ? { seasons } : {}),
     };
     const cast: any[] = (kind === 'tv' ? d.aggregate_credits?.cast : d.credits?.cast) || [];
-    const videos: any[] = (d.videos?.results || []).filter((v: any) => v.site === 'YouTube' && ['Trailer', 'Teaser'].includes(v.type));
-    videos.sort((a, b) => Number(b.iso_639_1 === 'ko') - Number(a.iso_639_1 === 'ko') || Number(b.type === 'Trailer') - Number(a.type === 'Trailer') || Number(b.official) - Number(a.official));
+    const trailers = trailerCandidates(d.videos?.results);
     const detail: DetailInfo = {
-      tagline: d.tagline || undefined, trailer: videos[0]?.key,
+      tagline: d.tagline || undefined, trailer: trailers[0], trailers,
       people: cast.slice(0, 16).map(p => ({ ...(Number.isSafeInteger(p.id) && p.id > 0 ? {identity:{provider:this.providerId,id:String(p.id)}} : {}), name: p.name, role: (p.roles?.[0]?.character || p.character || '').replace(/\s*\((?:voice|목소리)\)\s*$/i, '') || undefined, photo: img('w185', p.profile_path) })),
       similar: (d.recommendations?.results || []).filter((r: any) => r.poster_path).slice(0, 18).map((r: any) => candidate(r, kind)),
     };
@@ -449,7 +474,7 @@ export function overlayDetail(db: Store, detail: MediaDetail, local: boolean, en
     ...(extra.tagline ? { tagline: extra.tagline } : {}),
     ...(detail.type === 'movie' && !detail.runtime && info.runtime ? { runtime: info.runtime * 60 } : {}),
     ...(extra.people.length ? { people: extra.people, cast: extra.people.map(p => p.name) } : {}),
-    ...(extra.trailer ? { trailer: extra.trailer } : {}),
+    ...(Array.isArray(extra.trailers) ? { trailers: extra.trailers, trailer: extra.trailers[0] } : extra.trailer ? { trailer: extra.trailer, trailers: [extra.trailer] } : {}),
     ...(extra.similar.length ? { similar: extra.similar } : {}),
   };
 }

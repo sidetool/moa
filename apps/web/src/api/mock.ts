@@ -100,6 +100,17 @@ function history(): HistoryEntry[] {
   });
 }
 
+/* Placeholder trailer keys (valid shape, not real videos). A fake IFrame API in the smoke test reads the prefix:
+   `ok` plays, `e101`/`e150` are per-video errors, `e153` an embedder-identity error, `blk` blocks autoplay.
+   demo-2 also carries a duplicate and an invalid key to exercise client-side cleanup. */
+const mockTrailers: Record<string, Pick<MediaDetail, "trailer" | "trailers">> = {
+  "demo-2": { trailers: ["e101xxxxxxx", "okxxxxxxxxx", "e101xxxxxxx", "bad key"], trailer: "okxxxxxxxxx" },
+  "demo-6": { trailers: ["e101yyyyyyy", "e150yyyyyyy"] },
+  "lalaland": { trailer: "okzzzzzzzzz" },
+  "oshi": { trailers: ["e153zzzzzzz", "okyyyyyyyyy"] },
+  "demo-1": { trailers: ["blkzzzzzzzz"] }
+};
+
 function detail(id: string): MediaDetail | null {
   const card = byId.get(id);
   if (!card) return null;
@@ -111,6 +122,7 @@ function detail(id: string): MediaDetail | null {
       ...withProgress(card), inWatchlist: watchlist.has(id),
       overview: "연예계의 빛과 그림자를 배경으로, 쌍둥이 남매가 어머니의 죽음에 얽힌 진실을 좇는다. 2.5차원 무대를 둘러싼 새로운 이야기가 시작된다.",
       rating: 8.6, cast: ["타카하시 리에", "오오츠카 유이"],
+      ...mockTrailers[id],
       seasons: [{ number: 2, title: "시즌 2", episodes }],
       playTarget,
       fileInfo: { container: "MKV", video: "HEVC 10bit", audio: "AAC 2.0", resolution: "1080p", size: 5_300_000_000 }
@@ -121,6 +133,7 @@ function detail(id: string): MediaDetail | null {
     ...withProgress(card), inWatchlist: watchlist.has(id),
     overview: movie ? "꿈을 좇는 두 사람이 로스앤젤레스에서 만나 사랑에 빠지지만, 성공이 가까워질수록 서로의 길이 엇갈리기 시작한다." : undefined,
     runtime: movie ? 7680 : undefined, rating: movie ? 8.0 : undefined,
+    ...mockTrailers[id],
     seasons: [{ number: 1, title: movie ? "영화" : "시즌 1", episodes }],
     playTarget,
     fileInfo: id === "lalaland" ? { container: "MKV", video: "HEVC 10bit", audio: "E-AC3 5.1", resolution: "1080p", size: 2_800_000_000 } : undefined

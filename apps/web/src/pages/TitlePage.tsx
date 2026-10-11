@@ -1,7 +1,7 @@
 import { TitleSources } from '../components/TitleSources';
 import { InlinePlugins } from '../components/WebsitePlugins';
 import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Episode, MediaDetail } from "@moa/shared";
 import { useMe, useMedia, useWatchlistToggle } from "../api/queries";
@@ -10,7 +10,9 @@ import { useOneTapDownload } from "../components/ServerSave";
 import { DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../components/ServerSave";
 import { Artwork, TitleLogo } from "../components/Artwork";
 import { MetaLine } from "../components/Hero";
-import { MetadataCredit, PeopleRow, SimilarRow, TrailerDialog } from "../components/TitleExtras";
+import { MetadataCredit, PeopleRow, SimilarRow } from "../components/TitleExtras";
+import { TrailerDialog } from "../components/TrailerDialog";
+import { trailerKeys } from "../lib/youtube";
 import { Button, ButtonLink, EmptyState, ProgressBar, Skeleton } from "../components/ui";
 import { ApiError } from "../lib/api";
 import { foreignCode, foreignLang, langLabel, seasonInfo, type SeasonInfo } from "../lib/card-meta";
@@ -189,6 +191,7 @@ export function TitlePage() {
   const toggle = useWatchlistToggle();
   const [expanded, setExpanded] = useState(false);
   const [trailer, setTrailer] = useState(false);
+  const closeTrailer = useCallback(() => setTrailer(false), []);
   const admin = useMe().data?.role === "admin";
   const sourceMedia = Boolean(media.data && media.data.provider.kind !== "local");
   const downloads = useDownloadStatus(admin && sourceMedia && Boolean(media.data?.id), media.data?.id, true);
@@ -205,6 +208,7 @@ export function TitlePage() {
 
   const m = media.data;
   const isMovie = m.type === "movie";
+  const trailers = trailerKeys(m);
   const lang = foreignLang(m), season = seasonInfo(m);
   const episodes = m.seasons.flatMap(season => season.episodes);
   const target = m.playTarget;
@@ -258,7 +262,7 @@ export function TitlePage() {
               onClick={() => toggle.mutate({ id: m.id, add: !m.inWatchlist })}
             >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
-            {m.trailer && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
+            {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
@@ -289,7 +293,7 @@ export function TitlePage() {
         )}
         <MetadataCredit media={m} />
       </div>
-      {trailer && m.trailer && <TrailerDialog videoKey={m.trailer} title={m.title} onClose={() => setTrailer(false)} />}
+      {trailer && trailers.length > 0 && <TrailerDialog key={`${m.id}:${trailers.join(",")}`} keys={trailers} title={m.title} onClose={closeTrailer} />}
     </div>
   );
 }

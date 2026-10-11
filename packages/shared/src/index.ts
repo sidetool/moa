@@ -146,6 +146,8 @@ export interface MediaDetail extends MediaCard {
   people?: Person[];
   /** YouTube video key. */
   trailer?: string;
+  /** Ordered YouTube candidates; playback availability is determined on the viewing device. */
+  trailers?: string[];
   similar?: MetadataCandidate[];
   /** Current metadata link. Absent when metadata is not configured. */
   metadata?: MetadataLink;
