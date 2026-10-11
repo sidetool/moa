@@ -191,6 +191,44 @@ export class Tmdb {
     });
   }
 
+  /** Bounded popularity discovery with explicit genre filters; no keyword guesses for sports/variety. */
+  async shortPopular(category: import('@moa/shared').ShortsCategory): Promise<import('@moa/shared').ShortsItem[]> {
+    if(!this.enabled)throw new ApiFailure(503,'metadata-unconfigured');
+    if(!['movie','series','anime'].includes(category))throw new ApiFailure(400,'invalid-shorts-category');
+    const kinds:MetadataKind[]=category==='anime'?['movie','tv']:[category==='movie'?'movie':'tv'];
+    const pages=await Promise.all(kinds.map(async kind=>{
+      const data=await this.get(`/discover/${kind}`,{language:'ko-KR',include_adult:'false',sort_by:'popularity.desc',page:'1',
+        ...(category==='anime'?{with_genres:'16'}:{without_genres:kind==='tv'?'16,10763,10764,10767':'16'})});
+      if(!Array.isArray(data?.results))throw new Error('invalid-shorts-discovery');
+      return data.results.slice(0,20).flatMap((row:any)=>{
+        if(!row||row.adult!==false||!Number.isSafeInteger(row.id)||row.id<=0||!Array.isArray(row.genre_ids)||!row.genre_ids.length)return [];
+        const animation=row.genre_ids.includes(16);
+        if(category==='anime'?!animation:animation)return [];
+        if(category==='series'&&row.genre_ids.some((g:number)=>[10763,10764,10767].includes(g)))return [];
+        const c=candidate(row,kind);if(!c.title.trim())return [];
+        return [{key:`${kind}:${c.id}`,kind,tmdbId:c.id,title:c.title,poster:c.poster,overview:c.overview,year:c.year,category,
+          href:`/search?q=${encodeURIComponent(c.title)}`,reason:'popular' as const}];
+      });
+    }));
+    // Interleave films and shows in the animation bucket rather than exhausting films first.
+    const items:import('@moa/shared').ShortsItem[]=[];
+    for(let i=0;i<20;i++)for(const page of pages)if(page[i]&&items.length<20)items.push(page[i]);
+    return items;
+  }
+
+  /** Explicit trailer discovery: fixed TMDB identity, no extension extraction or automatic title linking. */
+  async shortTrailers(kind: MetadataKind, id: number): Promise<{trailers:string[]; adult:boolean}> {
+    if (!this.enabled) throw new ApiFailure(503,'metadata-unconfigured');
+    if (!['tv','movie'].includes(kind) || !Number.isSafeInteger(id) || id <= 0) throw new ApiFailure(400,'invalid-metadata-identity');
+    const cached=this.db.get('SELECT card,detail,fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?',kind,id);
+    if(cached && cached.fetched_at>Date.now()-7*86400_000){
+      const detail=JSON.parse(cached.detail),card=JSON.parse(cached.card);
+      if(Array.isArray(detail.trailers))return {trailers:detail.trailers,adult:card.adult!==false};
+    }
+    const data=await this.get(`/${kind}/${id}`,{language:'ko-KR',append_to_response:'videos',include_video_language:'ko,en,ja,null'});
+    return {trailers:trailerCandidates(data?.videos?.results),adult:data?.adult!==false};
+  }
+
   /** Link titles in the background; resolves when done or after the budget, whichever is first. */
   ensure(ids: string[], budgetMs: number): Promise<void> {
     if (!this.enabled || !ids.length) return Promise.resolve();
@@ -392,7 +430,7 @@ export class Tmdb {
 function candidate(r: SearchResult, fallback: MetadataKind): MetadataCandidate {
   const kind = (r.media_type === 'movie' || r.media_type === 'tv' ? r.media_type : fallback) as MetadataKind;
   const title = r.name || r.title || '', original = r.original_name || r.original_title;
-  return { kind, id: r.id, title, ...(original && original !== title ? { originalTitle: original } : {}), year: yearOf(r.first_air_date || r.release_date), poster: img('w342', r.poster_path), ...(r.overview ? { overview: r.overview.slice(0, 300) } : {}) };
+  return { ...(Array.isArray(r.genre_ids)?{genreIds:r.genre_ids.filter(Number.isSafeInteger)}:{}), kind, id: r.id, title, ...(original && original !== title ? { originalTitle: original } : {}), year: yearOf(r.first_air_date || r.release_date), poster: img('w342', r.poster_path), ...(r.overview ? { overview: r.overview.slice(0, 300) } : {}) };
 }
 
 /* ---------- Read side: used by the catalog for every card and detail ---------- */

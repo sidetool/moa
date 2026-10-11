@@ -155,7 +155,7 @@ export interface MediaDetail extends MediaCard {
 
 export type MetadataKind = "tv" | "movie";
 export interface Person { name: string; role?: string; photo?: string; identity?: { provider: string; id: string } }
-export interface MetadataCandidate { kind: MetadataKind; id: number; title: string; originalTitle?: string; year?: number; poster?: string; overview?: string; seasons?: number }
+export interface MetadataCandidate { genreIds?: number[]; kind: MetadataKind; id: number; title: string; originalTitle?: string; year?: number; poster?: string; overview?: string; seasons?: number }
 export interface MetadataLink { status: "auto" | "manual" | "none" | "off" | "pending"; kind?: MetadataKind; id?: number; season?: number; title?: string }
 // GET   /api/metadata/status -> { tmdb: boolean }
 // GET   /api/media/:id/metadata/search?q= -> MetadataCandidate[]
@@ -381,7 +381,14 @@ export interface NavigationTab {
   includeLocal: boolean;
 }
 
+export type ShortsCategory = 'movie' | 'series' | 'anime';
 export interface Settings {
+  /** Experimental trailer discovery; per-profile and off unless explicitly enabled. */
+  shortsEnabled?: boolean;
+  shortsCategories?: ShortsCategory[];
+  shortsMode?: 'mixed' | 'personal' | 'popular';
+  shortsHideWatched?: boolean;
+  shortsRepeatDays?: 0 | 1 | 7 | 30;
   recommendationsEnabled?: boolean;
   generalSkipEnabled?: boolean;
   /** Per-profile navigation. Omitted uses source-based defaults. */
@@ -590,4 +597,15 @@ export interface TitlePeopleResponse extends TitlePeople {
 export interface PersonWorksResponse {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
   person: PersonCredit | null; items: DiscoveryItem[]; truncated: boolean;
+}
+
+/** Short-form discovery uses official trailers; never writes episode progress. */
+export interface ShortsItem {
+  key: string; kind: MetadataKind; tmdbId: number; title: string; category?: ShortsCategory;
+  poster?: string; overview?: string; year?: number;
+  mediaId?: string; href: string; reason: 'personal' | 'popular';
+}
+export interface ShortsFeed {
+  status: 'ready' | 'disabled' | 'restricted' | 'unconfigured' | 'unavailable';
+  items: ShortsItem[]; nextCursor: string | null;
 }
