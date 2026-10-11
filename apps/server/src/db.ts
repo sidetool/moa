@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Settings, NavigationTab } from '@moa/shared';
 
-export const DEFAULT_SETTINGS: Settings = { shortsEnabled: false, shortsCategories: ['movie','series','anime'], shortsMode: 'mixed', shortsHideWatched: true, shortsRepeatDays: 7, recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'medium', preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: true, experimentalSubtitleSync: true, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true };
+export const DEFAULT_SETTINGS: Settings = { shortsEnabled: false, shortsScreenFit: true, shortsCategories: ['movie','series','anime'], shortsMode: 'mixed', shortsHideWatched: true, shortsRepeatDays: 7, recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'medium', preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: true, experimentalSubtitleSync: true, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true };
 export class Store {
   db: DatabaseSync;
   constructor(dataDir: string, database?: DatabaseSync) {

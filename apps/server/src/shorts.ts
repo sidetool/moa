@@ -150,7 +150,10 @@ export class Shorts {
     const result=value.adult?{trailers:[],checked:true}:await this.youtube.check(value.trailers);
     this.assert(profile);return result;
   }
-  seen(profile:string,key:string){
+  // Both actions suppress repeats temporarily; neither is a recommendation dislike or episode view.
+  seen(profile:string,key:string){this.exclude(profile,key);}
+  skip(profile:string,key:string){this.exclude(profile,key);}
+  private exclude(profile:string,key:string){
     this.assert(profile);if(!validKey.test(key))throw new ApiFailure(400,'invalid-shorts-key');
     this.cleanup();
     this.db.run('INSERT INTO shorts_seen VALUES(?,?,?) ON CONFLICT(profile_id,external_key) DO UPDATE SET seen_at=excluded.seen_at',profile,key,this.now());

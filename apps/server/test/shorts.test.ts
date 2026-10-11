@@ -50,6 +50,22 @@ test('viewed trailers expire after 7 days and isolate profiles',async t=>{
   f.advance(1);assert.ok((await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
   f.shorts.seen('viewer','movie:1');f.shorts.reset('viewer');assert.ok((await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
 });
+test('manual skips suppress repeats for the selected window without changing viewing history or recommendation feedback',async t=>{
+  const f=await fixture(t);
+  assert.equal(f.db.settings('viewer').shortsScreenFit,true);
+  for(const id of ['viewer','other'])f.configure(id,{shortsEnabled:true,shortsMode:'personal',shortsRepeatDays:7});
+  f.shorts.skip('viewer','movie:1');
+  assert.ok(!(await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
+  assert.ok((await f.shorts.feed('other')).items.some(i=>i.key==='movie:1'));
+  assert.ok((await f.shorts.feed('viewer','0',true)).items.some(i=>i.key==='movie:1'));
+  assert.equal(f.db.get('SELECT COUNT(*) AS n FROM progress')!.n,0);
+  assert.equal(f.db.get('SELECT COUNT(*) AS n FROM recommendation_feedback')!.n,0);
+  f.advance(7);assert.ok((await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
+  f.configure('viewer',{shortsEnabled:true,shortsMode:'personal',shortsRepeatDays:0});
+  f.shorts.skip('viewer','movie:1');assert.ok((await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
+  f.configure('viewer',{shortsEnabled:false});assert.throws(()=>f.shorts.skip('viewer','movie:2'),{error:'shorts-disabled'});
+  assert.throws(()=>f.shorts.skip('kid','movie:2'),{error:'shorts-restricted'});
+});
 test('watched titles and feedback are excluded; linked targets resolve within MOA',async t=>{
   const f=await fixture(t);f.configure('viewer',{shortsEnabled:true,shortsMode:'personal'});
   for(const n of [1,2]){
@@ -83,9 +99,13 @@ test('routes require profile ownership and settings validate new controls',async
   assert.equal((await app.inject({url:'/api/shorts'})).statusCode,401);
   assert.equal((await app.inject({url:'/api/shorts',headers:{...headers,'x-moa-profile':'q'}})).statusCode,401);
   assert.equal((await app.inject({url:'/api/shorts',headers})).json().status,'disabled');
-  for(const payload of [{shortsCategories:[]},{shortsCategories:['sports']},{shortsCategories:['anime','anime']},{shortsRepeatDays:-1},{shortsRepeatDays:365},{shortsMode:'bad'}])assert.equal((await app.inject({method:'PATCH',url:'/api/settings',headers,payload})).statusCode,400);
-  const enabled=await app.inject({method:'PATCH',url:'/api/settings',headers,payload:{shortsEnabled:true,shortsRepeatDays:7,shortsMode:'mixed'}});
+  assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/skip',headers:{...headers,'x-moa-profile':'q'},payload:{}})).statusCode,401);
+  assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/skip',headers,payload:{}})).statusCode,403);
+  for(const payload of [{shortsScreenFit:{}},{shortsCategories:[]},{shortsCategories:['sports']},{shortsCategories:['anime','anime']},{shortsRepeatDays:-1},{shortsRepeatDays:365},{shortsMode:'bad'}])assert.equal((await app.inject({method:'PATCH',url:'/api/settings',headers,payload})).statusCode,400);
+  const enabled=await app.inject({method:'PATCH',url:'/api/settings',headers,payload:{shortsEnabled:true,shortsScreenFit:false,shortsCategories:['movie','anime'],shortsRepeatDays:7,shortsMode:'mixed'}});
   assert.equal(enabled.statusCode,200,enabled.body);
+  assert.equal(enabled.json().shortsScreenFit,false);
+  assert.deepEqual(enabled.json().shortsCategories,['movie','anime']);
   assert.equal((await app.inject({url:'/api/shorts',headers})).json().status,'unconfigured');
 });
 
@@ -97,6 +117,8 @@ test('category selection rejects unknown genres and unselected personal candidat
   assert.deepEqual((await f.shorts.feed('viewer')).items.map(item=>item.key),['movie:1']);
   f.configure('viewer',{shortsEnabled:true,shortsMode:'personal',shortsCategories:['movie']});
   assert.deepEqual((await f.shorts.feed('viewer')).items.map(item=>item.key),['movie:2']);
+  f.configure('viewer',{shortsEnabled:true,shortsMode:'personal',shortsCategories:['movie','anime']});
+  assert.deepEqual((await f.shorts.feed('viewer')).items.map(item=>item.key),['movie:1','movie:2']);
 });
 test('TMDB category queries are bounded, classify actual genres and reject mismatched results',async t=>{
   const f=await fixture(t),urls:URL[]=[];
