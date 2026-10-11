@@ -25,10 +25,6 @@
 }
 .shorts-end { padding: 0 var(--gutter); }
 
-/* The work's artwork carries the whole screen; the player sits on it and nothing sits on the player. */
-.shorts-backdrop { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.shorts-backdrop img { position: absolute; inset: -64px; width: calc(100% + 128px); height: calc(100% + 128px); max-width: none; object-fit: cover; filter: blur(26px) saturate(1.15) brightness(.72); }
-.shorts-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(9, 9, 11, .3) 0%, rgba(9, 9, 11, .08) 30%, rgba(9, 9, 11, .5) 68%, rgba(9, 9, 11, .88) 100%); }
 .shorts-frame {
   position: relative;
   display: grid;
@@ -92,8 +88,8 @@
   .shorts-rail-steps { display: grid; gap: 8px; }
   .shorts-rail-steps .shorts-rail-icon { width: 40px; height: 40px; }
   .shorts-nav { display: none; }
-  /* 화면 맞춤: the whole 16:9 player as large as the free width/height allows, edge to edge; the artwork
-     fills the rest. A taller player would only add YouTube's own black letterbox, so it isn't stretched. */
+  /* 화면 맞춤: the whole 16:9 player as large as the free width/height allows, edge to edge.
+     A taller player would only add YouTube's own black letterbox, so it isn't stretched. */
   .shorts.is-fit .shorts-stage { width: min(100cqw, calc((100cqh - 240px) * 16 / 9)); border-radius: 0; box-shadow: 0 0 80px rgba(0, 0, 0, .35); }
 }
 @media (max-height: 560px) { .shorts-overview { display: none; } }

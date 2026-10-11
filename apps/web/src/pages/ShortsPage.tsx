@@ -193,7 +193,7 @@ function RailButton({ label, caption, pressed, disabled, onClick, children }: { 
   </button>;
 }
 
-/** Artwork fills the screen around the player; title and actions sit on it, never on the iframe. */
+/** Title and side actions remain outside the iframe. */
 function ShortsSlide({ item, index, total, active, near, muted, blocked, inWatchlist, onPlay, onStep, onUnmute, children }: {
   item: ShortsItem; index: number; total: number; active: boolean; near: boolean; muted: boolean; blocked: boolean; inWatchlist: boolean;
   onPlay: () => void; onStep: (delta: number) => void; onUnmute: () => void; children: React.ReactNode;
@@ -202,7 +202,6 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, inWatch
   const poster = sized(item.poster, 500);
   const meta = [item.year, item.category && CATEGORY_LABEL[item.category], item.reason === "personal" ? "취향" : "인기"].filter(Boolean).join(" · ");
   return <article className={cx("shorts-slide", active && "is-active")} aria-posinset={index + 1} aria-setsize={total} aria-label={item.title}>
-    <div className="shorts-backdrop" aria-hidden="true">{near && poster && <img src={poster} alt="" />}</div>
     <div className="shorts-frame">
       <div className="shorts-screen">
         <div className="shorts-stage">
