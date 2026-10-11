@@ -122,7 +122,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   await downloads.initialize();
   const casting = new Casting(db, (id, profile) => remotePlayback.sessions.has(id) ? remotePlayback.get(id, profile) : playback.get(id, profile));
   const updateMaintenance = new UpdateMaintenance(process.env.MOA_UPDATER_DIR, () =>
-    downloads.busy || playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
+    nativeShorts.busy || downloads.busy || playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
     Boolean(db.get("SELECT 1 FROM skip_analysis_jobs WHERE status='running' LIMIT 1")));
   updateMaintenance.register(app);
   /** Give TMDB a moment to link new titles so first visits already show its artwork. */

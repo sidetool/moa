@@ -9,7 +9,7 @@ export const shortsCategories = (s?: Settings): ShortsCategory[] => {
 };
 export const shortsAvailable = (s: Settings | undefined, kids: boolean | undefined) => s?.shortsEnabled === true && kids !== true;
 
-const MAX_PAGES = 12; // the server pool is bounded; this only guards a misbehaving cursor
+const MAX_PAGES = 13; // the server pool is bounded; this only guards a misbehaving cursor
 
 /** Feed pages keyed by everything that shapes them. Seen reports never invalidate it, so the open feed stays put. */
 export const shortsFeedKey = (settings: Settings | undefined, replay: boolean) =>

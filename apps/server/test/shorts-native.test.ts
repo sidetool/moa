@@ -22,7 +22,9 @@ test('leases are profile-bound, capped per profile, expire, and return no upstre
   let now=1;
   const native=new NativeShorts(async()=>selected,undefined,()=>now);
   try{
+    assert.equal(native.busy,false);
     const a=await native.prepare('a',[id],new AbortController().signal,'socks5://private.invalid');
+    assert.equal(native.busy,true);
     assert.equal(native.owner(a.sessionId),'a');assert.ok(!JSON.stringify(a).includes('googlevideo'));
     native.release(a.sessionId,'b');assert.equal(native.owner(a.sessionId),'a');
     await native.prepare('a',[id],new AbortController().signal);await native.prepare('a',[id],new AbortController().signal);
@@ -30,7 +32,7 @@ test('leases are profile-bound, capped per profile, expire, and return no upstre
     await native.prepare('a',[id],new AbortController().signal);
     assert.equal(native.owner(a.sessionId),undefined);
     const b=await native.prepare('b',[id],new AbortController().signal);
-    now+=600_001;await native.prepare('c',[id],new AbortController().signal);
+    now+=600_001;assert.equal(native.busy,false);await native.prepare('c',[id],new AbortController().signal);
     assert.equal(native.owner(b.sessionId),undefined);
   }finally{native.close();}
 });
@@ -38,7 +40,8 @@ test('aborted preparations do not create leases; shutdown aborts workers and pre
   let finish!:(value:NativeTrailer)=>void,childSignal!:AbortSignal;
   const native=new NativeShorts(async(_id,signal)=>{childSignal=signal;return new Promise(resolve=>finish=resolve);});
   const control=new AbortController(),pending=native.prepare('a',[id],control.signal);
-  control.abort();finish(selected);await assert.rejects(pending);assert.equal(childSignal.aborted,true);
+  assert.equal(native.busy,true);
+  control.abort();finish(selected);await assert.rejects(pending);assert.equal(childSignal.aborted,true);assert.equal(native.busy,false);
   const pending2=native.prepare('a',[id],new AbortController().signal);native.close();finish(selected);
   await assert.rejects(pending2);assert.equal(childSignal.aborted,true);
   await assert.rejects(native.prepare('a',[id],new AbortController().signal),{error:'shorts-native-unconfigured'});

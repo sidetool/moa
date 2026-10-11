@@ -149,6 +149,7 @@ export class NativeShorts {
     this.sweep=setInterval(()=>{for(const [id,s] of this.sessions)if(s.expires<=this.now())this.release(id);},30_000);this.sweep.unref();
   }
   get available(){return Boolean(this.extractor)&&!this.closed;}
+  get busy(){return this.pending.size>0||[...this.sessions.values()].some(s=>s.expires>this.now());}
   owner(id:string){return this.sessions.get(id)?.profile;}
   release(id:string,profile?:string){const s=this.sessions.get(id);if(s&&(!profile||s.profile===profile)){s.abort.abort();this.sessions.delete(id);for(const cleanup of s.cleanups.values()){try{cleanup();}catch{}}s.cleanups.clear();}}
   private asset(id:string,s:Session,asset:Asset){

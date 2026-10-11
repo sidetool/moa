@@ -13,7 +13,7 @@ Popularity uses fixed first-page TMDB discover queries sorted by popularity, wit
 - `shortsMode`: `mixed` (default), `personal`, or `popular`. Mixed interleaves up to two existing recommendation candidates with one popular candidate, then uses the remaining pool. Personal mode falls back to popular when there are no personal candidates. Existing recommendation opt-out and dismissals are respected.
 - `shortsHideWatched`: true by default; exclude titles with episode progress. This does not erase history. Personal recommendations already exclude watched titles; disabling this option mainly allows them in the popular pool.
 - `shortsRepeatDays`: 7 by default, selectable 0/1/7/30 (0 disables the repeat exclusion). Five seconds of playback or an intentional forward skip suppress repeats, independently of episode progress, by profile and TMDB work identity. A skip is not a permanent dislike and does not alter recommendations. Automatic transitions, failed trailers and background navigation are not skip signals. Switching videos within a work does not evade the repeat window.
-- Candidate pool: at most 20 personal and 60 popular, deduplicated by `(kind, TMDB id)`. Popular order is stable for a profile/day. Feed pages contain up to eight works. `replay=1` bypasses trailer-view exclusions for that request without deleting any history; watched-episode and dismissal exclusions still apply. A finite empty state is preferable to silently replaying excluded works.
+- Candidate pool: at most 40 personal and 60 popular, deduplicated by `(kind, TMDB id)`. Popular order is stable for a profile/day. Feed pages contain up to eight works. `replay=1` bypasses trailer-view exclusions for that request without deleting any history; watched-episode and dismissal exclusions still apply. A finite empty state is preferable to silently replaying excluded works.
 - Linked works open their MOA detail; unknown works open in-app search. There is no promise that every advertised title exists in the installed sources.
 
 ## API
@@ -37,7 +37,7 @@ References: [YouTube required player behavior](https://developers.google.com/you
 
 ## Release boundary
 
-Experimental branch; personal preview deployments are kept separate from public releases and standard image builds.
+Available as an opt-in experiment starting in v0.1.2-beta.2. The standard image supports the YouTube embed. Native playback requires the separate setup below; the extractor is not installed in release images.
 
 ## Native player experiment (opt-in, separate from the embed)
 
@@ -50,7 +50,7 @@ The server resolves at most two existing TMDB/YouTube trailer candidates for the
 - `POST /api/shorts/:key/native {}` prepares `{sessionId,url,mime,subtitles}`. The URL is an opaque same-origin media lease, never the signed upstream URL.
 - `GET /api/playback/:sessionId/shorts/:assetId` streams media with existing account, profile-PIN and watch-permission checks, public-IP/DNS pinning and redirect validation. HLS assets are rewritten into the same lease; encrypted playlists are rejected.
 - `DELETE /api/shorts/native/:sessionId` stops a profile-owned lease. The client aborts preparation and releases playback when it leaves the card. After playback starts, it prepares the next two cards sequentially and hands over the same request/lease when the user advances. Hiding/leaving the feed cancels prefetch and releases unused leases; prefetch never plays or reports a view. Failed prefetch is not automatically repeated.
-- Maximum two concurrent extractions, forty seconds per candidate; child process groups are killed on timeout/cancellation/exit. Three leases per profile (current plus two ahead), thirty-two globally, expire after ten minutes. Each lease permits eight simultaneous media requests, 128 MiB total, at most 1024 HLS assets and 512 KiB per playlist. Successful references are reused for up to two minutes, scoped to profile, candidate list and proxy, capped at 64 entries, and invalidated on upstream HTTP failure. No account cookies or upstream URLs are sent to the client. All lease metadata stays in memory and clears on shutdown. Temporary network/extraction failures retain their error class rather than being mislabeled unsupported media.
+- Native preparation and retained media leases count as active work for the updater, so an update waits for them to be released or expire. Maximum two concurrent extractions, forty seconds per candidate; child process groups are killed on timeout/cancellation/exit. Three leases per profile (current plus two ahead), thirty-two globally, expire after ten minutes. Each lease permits eight simultaneous media requests, 128 MiB total, at most 1024 HLS assets and 512 KiB per playlist. Successful references are reused for up to two minutes, scoped to profile, candidate list and proxy, capped at 64 entries, and invalidated on upstream HTTP failure. No account cookies or upstream URLs are sent to the client. All lease metadata stays in memory and clears on shutdown. Temporary network/extraction failures retain their error class rather than being mislabeled unsupported media.
 
 YouTube extraction may require additional tokens or fail after upstream changes. No automatic account-cookie/PO-token provisioning is implemented. A failure offers the existing inline embed; it does not count as watched/disliked. This is an isolated experiment, not a replacement for the supported embed or a guarantee of regional availability.
 
@@ -61,7 +61,7 @@ Upstream installation/runtime references: [yt-dlp](https://github.com/yt-dlp/yt-
 The tested dependency is official yt-dlp `2026.08.19` with bundled EJS `0.8.0`. The optional derivative Dockerfile pins and checks the Unix zipimport archive; it adds Python only to the trial image. It is **not** part of release image builds and is not activated by the standard Compose configuration.
 
 ```sh
-# Run from this experimental branch, without replacing the running app.
+# Run from the release source, without replacing the running app.
 docker build -t moa:shorts-native-base .
 docker build -f deploy/shorts-native/Dockerfile -t moa:shorts-native-trial .
 ```
