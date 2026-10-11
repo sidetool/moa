@@ -9,7 +9,7 @@ Categories are independent from recommendation mode: movie, series, animation (a
 Popularity uses fixed first-page TMDB discover queries sorted by popularity, with genre filters. Each category contributes up to 20; animation interleaves movies and shows. These three public lists cache 30 minutes and coalesce concurrent requests; failures back off one minute. No source catalog extraction runs to populate the feed.
 
 - `shortsEnabled`: off by default. OFF performs no feed discovery. Child profiles are excluded in this first version because public trending metadata lacks consistent age certification.
-- `shortsScreenFit`: true by default. On mobile, the player fits within the available width and height while preserving its landscape viewport; disabling uses a compact presentation. The surrounding feed uses the plain app background, without poster blur or artificial fill. YouTube owns the aspect fitting inside its player. No iframe crop, control clipping, or swipe overlay is used. Desktop keeps its layout.
+- `shortsScreenFit`: true by default. In embed mode on mobile, the player fits within the available width and height while preserving its landscape viewport; disabling uses a compact presentation. The surrounding feed uses the plain app background, without poster blur or artificial fill. YouTube owns the aspect fitting inside its player. No iframe crop, control clipping, or swipe overlay is used. Desktop keeps its layout.
 - `shortsMode`: `mixed` (default), `personal`, or `popular`. Mixed interleaves up to two existing recommendation candidates with one popular candidate, then uses the remaining pool. Personal mode falls back to popular when there are no personal candidates. Existing recommendation opt-out and dismissals are respected.
 - `shortsHideWatched`: true by default; exclude titles with episode progress. This does not erase history. Personal recommendations already exclude watched titles; disabling this option mainly allows them in the popular pool.
 - `shortsRepeatDays`: 7 by default, selectable 0/1/7/30 (0 disables the repeat exclusion). Five seconds of playback or an intentional forward skip suppress repeats, independently of episode progress, by profile and TMDB work identity. A skip is not a permanent dislike and does not alter recommendations. Automatic transitions, failed trailers and background navigation are not skip signals. Switching videos within a work does not evade the repeat window.
@@ -38,3 +38,34 @@ References: [YouTube required player behavior](https://developers.google.com/you
 ## Release boundary
 
 Development branch only. No live site extensions, production database, deployment settings, GitHub release, or container have been changed for this experiment.
+
+## Native player experiment (opt-in, separate from the embed)
+
+`shortsPlayback` defaults to `embed`. `native` uses MOA's own video element; mobile screen fit crops **the video** with `object-fit: cover`, while disabling fit keeps the complete frame. Native playback permits the feed's controls and captions over the picture. The embed keeps its existing unobscured layout. There is no artificial artwork fill.
+
+The server must explicitly set `MOA_SHORTS_EXTRACTOR` to an installed **yt-dlp executable** with its matching EJS scripts; Node 22+ is used as the JavaScript runtime. The standard image does not install or enable this dependency. `GET /api/shorts/native` reports configuration availability, not a guarantee that YouTube will accept a request. Profile settings select the mode separately. Existing trailer dialogs and episode playback are unaffected.
+
+The server resolves at most two existing TMDB/YouTube trailer candidates for the active work. It never accepts a client-provided video URL. The extractor uses a fixed YouTube watch URL, ignores user configs/plugins, has no login cookies, and performs no runtime component downloads. Only non-live, non-DRM previews up to ten minutes with muxed H.264/AAC MP4 or HLS, at most 720p, are accepted. Split audio/video formats are unsupported; there is no transcoding or background download/cache in this prototype. Extraction and media relay use the same snapshot of the server default proxy, when configured.
+
+- `POST /api/shorts/:key/native {}` prepares `{sessionId,url,mime}`. The URL is an opaque same-origin media lease, never the signed upstream URL.
+- `GET /api/playback/:sessionId/shorts/:assetId` streams media with existing account, profile-PIN and watch-permission checks, public-IP/DNS pinning and redirect validation. HLS assets are rewritten into the same lease; encrypted playlists are rejected.
+- `DELETE /api/shorts/native/:sessionId` stops a profile-owned lease. The client aborts preparation and releases playback when it leaves the card.
+- Maximum two concurrent extractions, forty seconds per candidate; child process groups are killed on timeout/cancellation/exit. Two leases per profile, thirty-two globally, expire after ten minutes. Each lease permits eight simultaneous media requests, 128 MiB total, at most 1024 HLS assets and 512 KiB per playlist. All lease metadata stays in memory and clears on shutdown.
+
+YouTube extraction may require additional tokens or fail after upstream changes. No automatic account-cookie/PO-token provisioning is implemented. A failure offers the existing inline embed; it does not count as watched/disliked. This is an isolated experiment, not a replacement for the supported embed or a guarantee of regional availability.
+
+Upstream installation/runtime references: [yt-dlp](https://github.com/yt-dlp/yt-dlp#installation), [EJS setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+
+### Local trial setup
+
+The tested dependency is official yt-dlp `2026.08.19` with bundled EJS `0.8.0`. The optional derivative Dockerfile pins and checks the Unix zipimport archive; it adds Python only to the trial image. It is **not** part of release image builds and is not activated by the standard Compose configuration.
+
+```sh
+# Run from this experimental branch, without replacing the running app.
+docker build -t moa:shorts-native-base .
+docker build -f deploy/shorts-native/Dockerfile -t moa:shorts-native-trial .
+```
+
+For a separate trial instance, choose the trial image and explicitly set `MOA_SHORTS_EXTRACTOR=/usr/local/bin/yt-dlp` (Compose's empty default overrides an image ENV). Use separate test data/ports. Enable Shorts and then 직접 재생 for the profile. With a host development server, set the variable to the isolated executable instead. Changing images does not itself select native playback for existing profiles. Removing the binary/configuration preserves the embed; no migrations or downloaded trailer files need cleanup.
+
+Real checks so far: one public trailer prepared through the actual app API, then a bounded 5 MiB authenticated MP4 Range response; cross-account access denied and released lease rejected. Offline Chromium decoded both video frames and audio bytes from that API response without a media error; audible output was not human-checked. The verified muxed stream was 360p. Higher resolutions may only exist as separate video/audio and are not merged here. One other public trailer was unavailable. HLS is covered by synthetic relay checks, not a live YouTube HLS sample. The optional derivative image recipe has not been built yet.

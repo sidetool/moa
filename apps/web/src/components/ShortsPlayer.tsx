@@ -19,6 +19,29 @@ export interface ShortsSession {
   failed: Set<string>;
 }
 
+/** Foreground playing time for one work. `since` is set while it plays; `flush` banks it. Reports seen
+ *  once after five seconds; best effort, no retries. */
+export function useWatchTime(itemKey: string, session: ShortsSession) {
+  const since = useRef<number | null>(null);
+  const flush = () => {
+    if (since.current === null) return;
+    session.watched.set(itemKey, (session.watched.get(itemKey) ?? 0) + performance.now() - since.current);
+    since.current = null;
+  };
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => {
+    const tick = window.setInterval(() => {
+      if (since.current === null || session.reported.has(itemKey)) return;
+      if ((session.watched.get(itemKey) ?? 0) + performance.now() - since.current < SEEN_AFTER) return;
+      session.reported.add(itemKey);
+      markShortSeen(itemKey).catch(() => {});
+    }, 500);
+    return () => { window.clearInterval(tick); flushRef.current(); };
+  }, [itemKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { since, flush };
+}
+
 type Phase = "list" | "list-error" | "loading" | "ready" | "blocked" | "none" | "env";
 
 /** Plays one work's trailers; only ever mounted for the settled slide. Video-specific failures
@@ -40,17 +63,11 @@ export function ShortsPlayer({ itemKey, title, session, control, muted, onMuted,
   const [phase, setPhase] = useState<Phase>("list");
   const frame = useRef<HTMLIFrameElement>(null);
   const player = useRef<YouTubePlayer | null>(null);
-  const since = useRef<number | null>(null);
+  const { since, flush } = useWatchTime(itemKey, session);
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
   const callbacks = useRef({ onMuted, onBlocked, onPlaying, onEnded, onAutoNext });
   callbacks.current = { onMuted, onBlocked, onPlaying, onEnded, onAutoNext };
-
-  const flush = () => {
-    if (since.current === null) return;
-    session.watched.set(itemKey, (session.watched.get(itemKey) ?? 0) + performance.now() - since.current);
-    since.current = null;
-  };
 
   // Only the selected work's references are requested.
   useEffect(() => {
@@ -120,16 +137,6 @@ export function ShortsPlayer({ itemKey, title, session, control, muted, onMuted,
 
   useEffect(() => { if (muted) player.current?.mute?.(); else player.current?.unMute?.(); }, [muted]);
 
-  // Report once after five seconds of real foreground playback; best effort, no retries.
-  useEffect(() => {
-    const tick = window.setInterval(() => {
-      if (since.current === null || session.reported.has(itemKey)) return;
-      if ((session.watched.get(itemKey) ?? 0) + performance.now() - since.current < SEEN_AFTER) return;
-      session.reported.add(itemKey);
-      markShortSeen(itemKey).catch(() => {});
-    }, 500);
-    return () => { window.clearInterval(tick); flush(); };
-  }, [itemKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (phase !== "none" || !autoNext) return;

@@ -1,7 +1,7 @@
 import type { Settings } from "@moa/shared";
 import { Check } from "lucide-react";
 import { Link } from "react-router-dom";
-import { SHORTS_CATEGORIES, shortsCategories } from "../api/shorts";
+import { SHORTS_CATEGORIES, shortsCategories, useShortsNative } from "../api/shorts";
 import { cx } from "../lib/format";
 import { Select, Toggle } from "./ui";
 
@@ -12,6 +12,8 @@ const REPEAT: Array<[NonNullable<Settings["shortsRepeatDays"]>, string]> = [[0, 
 export function ShortsSettings({ settings, kids, save }: { settings: Settings; kids: boolean; save: (patch: Partial<Settings>) => void }) {
   const on = settings.shortsEnabled === true && !kids;
   const categories = shortsCategories(settings);
+  const nativeOn = settings.shortsPlayback === "native";
+  const nativeReady = useShortsNative(on).data?.available === true;
   const flip = (value: (typeof categories)[number]) => {
     const next = categories.includes(value) ? categories.filter(item => item !== value) : SHORTS_CATEGORIES.map(([item]) => item).filter(item => item === value || categories.includes(item));
     if (next.length) save({ shortsCategories: next });
@@ -30,7 +32,9 @@ export function ShortsSettings({ settings, kids, save }: { settings: Settings; k
           </button>;
         })}
       </div>, "shorts-kinds")}
-      {row("화면 맞춤", "휴대폰에서 예고편을 화면 폭에 맞춰 최대한 크게 보여줘요. 끄면 여백을 두고 작게 보여요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
+      {row("직접 재생", nativeReady || nativeOn ? <>실험 · YouTube 대신 MOA 플레이어로 화면 가득 재생해요.{!nativeReady && " 지금은 이 서버에서 쓸 수 없어요."}</> : "실험 · 이 서버에서는 쓸 수 없어요.",
+        <Toggle label="직접 재생" checked={nativeOn} disabled={!nativeOn && !nativeReady} onChange={value => save({ shortsPlayback: value ? "native" : "embed" })} />)}
+      {row("화면 맞춤", nativeOn ? "화면을 꽉 채워요. 끄면 영상 전체가 보여요." : "휴대폰에서 예고편을 화면 폭에 맞춰 최대한 크게 보여줘요. 끄면 여백을 두고 작게 보여요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
       {row("본 작품 숨기기", "5초 넘게 봤거나 직접 넘긴 작품을 이 기간 동안 빼요.", <Select className="setting-select" aria-label="본 작품 숨기기" value={String(settings.shortsRepeatDays ?? 7)} onChange={value => save({ shortsRepeatDays: Number(value) as Settings["shortsRepeatDays"] })} options={REPEAT.map(([value, label]) => ({ value: String(value), label }))} />)}
     </>}
   </div></section>;

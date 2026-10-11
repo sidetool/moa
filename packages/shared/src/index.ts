@@ -386,6 +386,7 @@ export interface Settings {
   /** Experimental trailer discovery; per-profile and off unless explicitly enabled. */
   shortsEnabled?: boolean;
   shortsScreenFit?: boolean;
+  shortsPlayback?: 'embed' | 'native';
   shortsCategories?: ShortsCategory[];
   shortsMode?: 'mixed' | 'personal' | 'popular';
   shortsHideWatched?: boolean;

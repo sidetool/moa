@@ -38,6 +38,7 @@ import { OnlineSubtitles, type OnlineClient } from './online.js';
 import { Enrichment, type EnrichmentOptions } from './enrichment.js';
 import { Tmdb } from './tmdb.js';
 import { Shorts } from './shorts.js';
+import { NativeShorts, ytDlpExtractor } from './shorts-native.js';
 import { YouTubeTrailers } from './youtube-trailers.js';
 import { ProfilePins, hashPin } from './profile-pin.js';
 
@@ -50,7 +51,7 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 const profileFields = { pin: { type: ['string', 'null'], pattern: '^[0-9]{4,8}$' }, avatar: { type: ['string', 'null'], pattern: '^[a-z]+-[0-9]{1,2}$', maxLength: 64 }, name: { ...string, pattern: '\\S' }, color: { type: 'string', enum: COLORS }, kids: { type: 'boolean' } };
 const filterChange = object({ position: { type: 'integer', minimum: 0, maximum: 511 }, groupPosition: { type: 'integer', minimum: 0, maximum: 511 }, value: { type:['string','number','boolean','object'], maxLength:2000, additionalProperties:false, properties:{index:{type:'integer',minimum:0},ascending:{type:'boolean'}}, required:['index','ascending'] } }, ['position','value']);
 const browseSelection = object({ revision: {type:'string',maxLength:80}, filters: {type:'array',maxItems:512,items:filterChange} }, ['revision','filters']);
-const settingsFields = { shortsCategories: {type:'array',minItems:1,maxItems:3,uniqueItems:true,items:{type:'string',enum:['movie','series','anime']}}, shortsEnabled: {type:'boolean'}, shortsScreenFit: {type:'boolean'}, shortsMode: {type:'string',enum:['mixed','personal','popular']}, shortsHideWatched: {type:'boolean'}, shortsRepeatDays: {type:'integer',enum:[0,1,7,30]}, recommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
+const settingsFields = { shortsPlayback: {type:'string',enum:['embed','native']}, shortsCategories: {type:'array',minItems:1,maxItems:3,uniqueItems:true,items:{type:'string',enum:['movie','series','anime']}}, shortsEnabled: {type:'boolean'}, shortsScreenFit: {type:'boolean'}, shortsMode: {type:'string',enum:['mixed','personal','popular']}, shortsHideWatched: {type:'boolean'}, shortsRepeatDays: {type:'integer',enum:[0,1,7,30]}, recommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
 const validateNavigation = (tabs: NavigationTab[] | null | undefined) => {
   if (tabs && (tabs[0]?.id !== 'home' || new Set(tabs.map(t => t.id)).size !== tabs.length)) throw new ApiFailure(400, 'invalid-navigation');
 };
@@ -101,6 +102,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const cacheStatsTimer = setInterval(()=>app.log.info({event:'cache-stats',...sources.stats.snapshot()}),5*60_000); cacheStatsTimer.unref();
   const tmdb = new Tmdb(db, value => app.log.info(value), services.tmdb);
   const youtube = new YouTubeTrailers(db, services.youtube);
+  const nativeShorts = new NativeShorts(cfg.shortsExtractor ? ytDlpExtractor(cfg.shortsExtractor) : undefined);
   catalog.metadata = tmdb.enabled;
   const recommendations = new Recommendations(db, tmdb);
   const groups = new TitleGroups(catalog);
@@ -180,7 +182,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     }
     if (sessionAsset) {
       const sessionId = params(req).sessionId;
-      const owner = playback.sessions.get(sessionId)?.profile ?? remotePlayback.sessions.get(sessionId)?.profile ?? online.assetProfile(sessionId) ?? translations.assetProfile(sessionId) ?? subtitleLibrary.assetProfile(sessionId);
+      const owner = playback.sessions.get(sessionId)?.profile ?? remotePlayback.sessions.get(sessionId)?.profile ?? online.assetProfile(sessionId) ?? translations.assetProfile(sessionId) ?? subtitleLibrary.assetProfile(sessionId) ?? nativeShorts.owner(sessionId);
       if (owner && !db.get('SELECT 1 FROM profiles WHERE id=? AND account_id=?', owner, req.moaAccount.id)) throw new ApiFailure(403, 'session-account-mismatch');
       if (owner) pins.assert(owner, req);
     }
@@ -196,6 +198,34 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const shortsKey = object({key:{type:'string',pattern:'^(tv|movie):[1-9][0-9]{0,14}$'}},['key']);
   app.get('/api/shorts/:key/trailers', {schema:{params:shortsKey}}, async (req,reply) =>
     reply.header('Cache-Control','private, no-store').send(await shorts.trailers(profile(req),(req.params as {key:string}).key)));
+  app.get('/api/shorts/native',async (_req,reply)=>reply.header('Cache-Control','private, no-store').send({available:nativeShorts.available}));
+  app.post('/api/shorts/:key/native',{schema:{params:shortsKey,body:object({})}},async(req,reply)=>{
+    const owner=profile(req),abort=new AbortController();
+    if(!req.moaAccount.permissions.includes('video.watch'))throw new ApiFailure(403,'permission-denied');
+    if(db.settings(owner).shortsPlayback!=='native')throw new ApiFailure(403,'shorts-native-disabled');
+    if(!nativeShorts.available)throw new ApiFailure(503,'shorts-native-unconfigured');
+    const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};
+    req.raw.once('aborted',disconnect);reply.raw.once('close',disconnect);
+    let lease:string|undefined;
+    try{
+      const {trailers}=await shorts.trailers(owner,params(req).key);
+      abort.signal.throwIfAborted();
+      const prepared=await nativeShorts.prepare(owner,trailers,abort.signal,sources.proxy());lease=prepared.sessionId;
+      const row=db.get('SELECT kids,account_id FROM profiles WHERE id=?',owner),settings=db.settings(owner);
+      if(!row||row.kids||row.account_id!==req.moaAccount.id||!settings.shortsEnabled||settings.shortsPlayback!=='native')throw new ApiFailure(403,'shorts-native-disabled');
+      pins.assert(owner,req);abort.signal.throwIfAborted();
+      return reply.header('Cache-Control','private, no-store').send(prepared);
+    }catch(error){if(lease)nativeShorts.release(lease);throw error;}
+    finally{req.raw.off('aborted',disconnect);reply.raw.off('close',disconnect);}
+  });
+  app.delete('/api/shorts/native/:sessionId',async req=>{nativeShorts.release(params(req).sessionId,profile(req));return {ok:true};});
+  app.get('/api/playback/:sessionId/shorts/:assetId',async(req,reply)=>{
+    const id=params(req).sessionId,owner=nativeShorts.owner(id);
+    if(!owner)throw new ApiFailure(410,'shorts-native-expired');
+    const settings=db.settings(owner),row=db.get('SELECT kids FROM profiles WHERE id=?',owner);
+    if(!row||row.kids||!settings.shortsEnabled||settings.shortsPlayback!=='native'){nativeShorts.release(id);throw new ApiFailure(403,'shorts-native-disabled');}
+    return nativeShorts.stream(req,reply,id,params(req).assetId);
+  });
   app.post('/api/shorts/:key/seen', {schema:{params:shortsKey}}, async req => { shorts.seen(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
@@ -591,6 +621,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

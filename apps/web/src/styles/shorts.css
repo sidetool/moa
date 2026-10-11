@@ -106,3 +106,32 @@
   .setting.shorts-kinds { flex-direction: column; align-items: stretch; gap: 12px; }
   .shorts-kinds .choice-chips { justify-content: flex-start; }
 }
+
+/* ---------- Direct playback (experimental): MOA's own video fills the slide; text and actions sit on it ---------- */
+.shorts-slide.is-native .shorts-frame { display: block; }
+.shorts-slide.is-native .shorts-screen, .shorts-slide.is-native .shorts-stage { position: absolute; inset: 0; }
+.shorts-slide.is-native .shorts-stage { width: auto; min-width: 0; height: auto; min-height: 0; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
+.shorts-slide.is-native .shorts-poster { object-fit: cover; opacity: .35; }
+.shorts:not(.is-fit) .shorts-slide.is-native .shorts-poster { object-fit: contain; }
+.shorts-native-video { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; background: #000; opacity: 0; transition: opacity .25s; }
+.shorts-native-video.is-on { opacity: 1; }
+.shorts:not(.is-fit) .shorts-native-video { object-fit: contain; }
+/* A soft shade under the captions, part of the video, not a panel. */
+.shorts-slide.is-native .shorts-stage::after { content: ""; position: absolute; inset: auto 0 0; z-index: 2; height: 42%; background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .62)); pointer-events: none; }
+.shorts-slide.is-native .shorts-overlay { z-index: 3; }
+.shorts-native-paused { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: rgba(255, 255, 255, .9); pointer-events: none; filter: drop-shadow(0 2px 12px rgba(0, 0, 0, .5)); }
+.shorts-progress { position: absolute; inset: auto 0 0; z-index: 3; height: 2px; background: rgba(255, 255, 255, .18); pointer-events: none; }
+.shorts-progress i { display: block; width: 0; height: 100%; background: #fff; }
+.shorts-overlay-actions { display: inline-flex; gap: 16px; margin-top: 4px; }
+.shorts-overlay-actions .text-btn { color: #fff; font-weight: 650; }
+.shorts-slide.is-native .shorts-info { position: absolute; left: var(--gutter); right: 96px; bottom: 26px; z-index: 4; width: auto; min-width: 0; padding: 0; }
+.shorts-slide.is-native .shorts-info h2 { font-size: 1.4rem; }
+.shorts-slide.is-native .shorts-rail { position: absolute; right: var(--gutter); bottom: 26px; z-index: 4; padding: 0; }
+.shorts.is-native .shorts-rail-steps { display: grid; gap: 8px; }
+.shorts.is-native .shorts-rail-steps .shorts-rail-icon { width: 40px; height: 40px; }
+.shorts.is-native .shorts-nav { display: none; }
+@media (max-width: 760px) {
+  .shorts-slide.is-native .shorts-info { left: var(--gutter); right: 76px; bottom: 18px; }
+  .shorts-slide.is-native .shorts-info h2 { font-size: 1.2rem; }
+  .shorts-slide.is-native .shorts-rail { right: 12px; bottom: 18px; }
+}

@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { Settings, ShortsCategory, ShortsFeed, ShortsItem } from "@moa/shared";
 import { api, currentProfileId } from "../lib/api";
 
@@ -40,3 +40,12 @@ export const shortsTrailers = (key: string, signal: AbortSignal) => api<{ traile
 export const markShortSeen = (key: string) => api<{ ok: true }>(`${path(key)}/seen`, { method: "POST", body: {}, keepalive: true });
 /** Only for a person moving on from the work on screen; never for automatic transitions. */
 export const markShortSkipped = (key: string) => api<{ ok: true }>(`${path(key)}/skip`, { method: "POST", body: {}, keepalive: true });
+
+/** Experimental server-side trailer playback; the server answers only whether it is configured. */
+export const useShortsNative = (enabled: boolean) => useQuery({
+  queryKey: ["shorts-native"], enabled, staleTime: 60_000, retry: false,
+  queryFn: ({ signal }) => api<{ available: boolean }>("/shorts/native", { signal })
+});
+export interface ShortsNativeSession { sessionId: string; url: string; mime: "video/mp4" | "application/vnd.apple.mpegurl" }
+export const prepareShortNative = (key: string, signal: AbortSignal) => api<ShortsNativeSession>(`${path(key)}/native`, { method: "POST", body: {}, signal });
+export const closeShortNative = (sessionId: string) => { api<{ ok: true }>(`/shorts/native/${encodeURIComponent(sessionId)}`, { method: "DELETE", keepalive: true }).catch(() => {}); };

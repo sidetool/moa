@@ -1,11 +1,12 @@
-import { Check, ChevronDown, ChevronUp, Clapperboard, Play, Plus, RotateCcw, Search, VolumeX } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clapperboard, Play, Plus, RotateCcw, Search, Volume2, VolumeX } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { MediaCard, ShortsItem } from "@moa/shared";
 import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
-import { markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
+import { useShortsNative, markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
+import { ShortsNativePlayer } from "../components/ShortsNativePlayer";
 import { ShortsPlayer, type ShortsControl, type ShortsSession } from "../components/ShortsPlayer";
 import { Button, ButtonLink, EmptyState, IconButton, Spinner } from "../components/ui";
 import { api, currentProfileId, sized } from "../lib/api";
@@ -29,8 +30,11 @@ export function ShortsPage() {
   const on = shortsAvailable(settings.data, kids);
   const [replay, setReplay] = useState(false);
   const feed = useShortsFeed(settings.data, on, replay);
+  const nativeWanted = on && settings.data?.shortsPlayback === "native";
+  const nativeCap = useShortsNative(nativeWanted);
+  const native = nativeWanted && nativeCap.data?.available === true;
 
-  if (settings.isPending || profiles.isPending) return <Centered><Spinner /></Centered>;
+  if (settings.isPending || profiles.isPending || (nativeWanted && nativeCap.isPending)) return <Centered><Spinner /></Centered>;
   if (kids) return <Centered><EmptyState icon={<Clapperboard size={32} />} title="어린이 프로필에서는 쓸 수 없어요" /></Centered>;
   const status = feed.data?.pages[0]?.status;
   if (!on || status === "disabled") return <Centered><EmptyState icon={<Clapperboard size={32} />} title="쇼츠가 꺼져 있어요"
@@ -45,10 +49,11 @@ export function ShortsPage() {
   if (!items.length && !feed.hasNextPage) return <Centered><EmptyState icon={<Clapperboard size={32} />} title="새로 볼 예고편이 없어요"
     body={replay ? undefined : "본 작품은 설정한 기간 동안 빼고 보여줘요."}
     action={<span className="shorts-state-actions">{!replay && <Button onClick={() => setReplay(true)}>본 것도 보기</Button>}<ButtonLink to="/settings#experimental" variant="ghost">설정</ButtonLink></span>} /></Centered>;
-  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} onReplay={() => setReplay(true)} />;
+  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} native={native} onReplay={() => setReplay(true)} />;
 }
 
-function ShortsReel({ items, feed, replay, fit, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; onReplay: () => void }) {
+function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; native: boolean; onReplay: () => void }) {
+  const [embedded, setEmbedded] = useState<ReadonlySet<string>>(() => new Set()); // works switched to the YouTube player by hand
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [shownKey, setShownKey] = useState<string | null>(null); // only this work has a mostly visible stage
@@ -161,15 +166,18 @@ function ShortsReel({ items, feed, replay, fit, onReplay }: { items: ShortsItem[
   const current = items[active];
   const watchlist = useQuery({ queryKey: keys.watchlist, queryFn: () => api<MediaCard[]>("/watchlist"), enabled: Boolean(current?.mediaId) });
 
-  return <div className={cx("shorts", fit && "is-fit")} ref={scroller} role="feed" aria-label="쇼츠" aria-busy={isFetchingNextPage} tabIndex={-1}>
+  return <div className={cx("shorts", fit && "is-fit", native && "is-native")} ref={scroller} role="feed" aria-label="쇼츠" aria-busy={isFetchingNextPage} tabIndex={-1}>
     {items.map((item, index) => <ShortsSlide key={item.key} item={item} index={index} total={hasNextPage ? -1 : items.length}
       active={index === active} near={Math.abs(index - active) <= 2} muted={muted}
       inWatchlist={Boolean(item.mediaId && watchlist.data?.some(card => card.id === item.mediaId))}
-      blocked={index === active && blocked} onPlay={() => control.current?.play()}
-      onStep={step} onUnmute={() => setMuted(false)}>
-      {index === active && shownKey === item.key && visible && <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
+      blocked={index === active && blocked} onPlay={() => control.current?.play()} native={native && !embedded.has(item.key)}
+      onStep={step} onSound={() => setMuted(old => !old)}>
+      {index === active && shownKey === item.key && visible && (native && !embedded.has(item.key)
+        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
+            onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
+        : <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
         onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)}
-        autoNext={autoSkips < AUTO_SKIP_LIMIT} onAutoNext={() => { setAutoSkips(old => old + 1); goTo(index + 1, true); }} />}
+        autoNext={autoSkips < AUTO_SKIP_LIMIT} onAutoNext={() => { setAutoSkips(old => old + 1); goTo(index + 1, true); }} />)}
     </ShortsSlide>)}
     <section className="shorts-slide shorts-end" aria-label="끝">
       {hasNextPage || isFetchingNextPage
@@ -193,15 +201,15 @@ function RailButton({ label, caption, pressed, disabled, onClick, children }: { 
   </button>;
 }
 
-/** Title and side actions remain outside the iframe. */
-function ShortsSlide({ item, index, total, active, near, muted, blocked, inWatchlist, onPlay, onStep, onUnmute, children }: {
-  item: ShortsItem; index: number; total: number; active: boolean; near: boolean; muted: boolean; blocked: boolean; inWatchlist: boolean;
-  onPlay: () => void; onStep: (delta: number) => void; onUnmute: () => void; children: React.ReactNode;
+/** YouTube mode keeps title and actions outside the iframe; direct mode lays them over MOA’s own video. */
+function ShortsSlide({ item, index, total, active, near, muted, blocked, native, inWatchlist, onPlay, onStep, onSound, children }: {
+  item: ShortsItem; index: number; total: number; active: boolean; near: boolean; muted: boolean; blocked: boolean; native: boolean; inWatchlist: boolean;
+  onPlay: () => void; onStep: (delta: number) => void; onSound: () => void; children: React.ReactNode;
 }) {
   const toggle = useWatchlistToggle();
   const poster = sized(item.poster, 500);
   const meta = [item.year, item.category && CATEGORY_LABEL[item.category], item.reason === "personal" ? "취향" : "인기"].filter(Boolean).join(" · ");
-  return <article className={cx("shorts-slide", active && "is-active")} aria-posinset={index + 1} aria-setsize={total} aria-label={item.title}>
+  return <article className={cx("shorts-slide", active && "is-active", native && "is-native")} aria-posinset={index + 1} aria-setsize={total} aria-label={item.title}>
     <div className="shorts-frame">
       <div className="shorts-screen">
         <div className="shorts-stage">
@@ -219,7 +227,7 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, inWatch
       </div>
       <div className="shorts-rail">
         {blocked && <RailButton label="재생" caption="재생" onClick={onPlay}><Play size={24} fill="currentColor" /></RailButton>}
-        {active && muted && <RailButton label="소리 켜기" caption="소리" onClick={onUnmute}><VolumeX size={24} /></RailButton>}
+        {active && (muted || native) && <RailButton label={muted ? "소리 켜기" : "소리 끄기"} caption="소리" onClick={onSound}>{muted ? <VolumeX size={24} /> : <Volume2 size={24} />}</RailButton>}
         {item.mediaId && <RailButton label={inWatchlist ? "내 목록에서 빼기" : "내 목록에 추가"} caption="내 목록" pressed={inWatchlist} disabled={toggle.isPending}
           onClick={() => toggle.mutate({ id: item.mediaId!, add: !inWatchlist })}>{inWatchlist ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
         <span className="shorts-rail-steps">
