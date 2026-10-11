@@ -1,6 +1,6 @@
 import type { SkipMarkers } from "./types.js";
 
-const priority = { manual: 3, fingerprint: 2, aniskip: 1 };
+const priority = { manual: 3, fingerprint: 2, aniskip: 1, theintrodb: 1 };
 /** OP start/end are atomic: never combine boundaries from different sources. */
 export function mergeMarkers(...candidates: (SkipMarkers | null | undefined)[]): SkipMarkers | null {
   const available = candidates.filter((m): m is SkipMarkers => !!m);

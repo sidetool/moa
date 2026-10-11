@@ -4,7 +4,7 @@ import { SubtitleLibrarySettings } from '../components/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
 import { NavigationSettings } from "../components/NavigationSettings";
 import { devicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
-import { ChevronLeft, FlaskConical, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
+import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,6 +12,8 @@ import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared
 import { NetworkSettings } from "../components/NetworkSettings";
 import { TmdbSettings } from "../components/TmdbSettings";
 import { TranslationSettings } from "../components/TranslationSettings";
+import { DownloadSettings } from "../components/DownloadSettings";
+import { recommendationsKey, useResetDismissals } from "../api/recommendations";
 import { UpdateSettings } from "../components/UpdateSettings";
 import { SystemInfo } from "../components/SystemInfo";
 import { SubtitleAdvancedSettings } from "../components/SubtitleAdvancedSettings";
@@ -184,6 +186,7 @@ export function SettingsPage() {
       { value: "library", label: "소스와 라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "plugins", label: "플러그인", group: "서버 관리", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "translation", label: "번역 서비스", group: "서버 관리", icon: <Languages size={18} />, scope: "모든 프로필의 AI 자막 번역에 쓰여요." },
+      { value: "downloads", label: "서버 저장", group: "서버 관리", icon: <HardDriveDownload size={18} />, scope: "소스 영상을 서버에 저장해요. 저장·삭제는 관리자만, 재생은 볼 수 있는 모든 프로필이 할 수 있어요." },
       { value: "network", label: "네트워크", group: "서버 관리", icon: <Network size={18} />, scope: "모든 프로필에 적용돼요." }
     ] : []),
     { value: "about", label: "정보", group: "", icon: <Info size={18} />, scope: "버전, 업데이트와 크레딧" }
@@ -236,6 +239,7 @@ export function SettingsPage() {
           {row("다음 화 자동 재생", "에피소드가 끝나면 다음 화를 이어서 재생합니다.", <Toggle label="다음 화 자동 재생" checked={s.autoplayNext} onChange={value => void save({ autoplayNext: value })} />)}
           {s.autoplayNext && row("자동 재생 대기 시간", "다음 화 카드가 나온 뒤 재생까지 기다리는 시간", select("autoplayDelay", [[3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]]))}
           {row("시청 기록 작품별로 보기", "시청 기록에서 작품마다 가장 최근 회차만 보여줘요. 끄면 회차별로 모두 보여줘요.", <Toggle label="시청 기록 작품별로 보기" checked={s.groupHistory} onChange={value => void save({ groupHistory: value }).then(() => client.invalidateQueries({ queryKey: keys.history }))} />)}
+          {row("영화·드라마 구간 건너뛰기", "외부 구간 정보가 있는 영화·드라마에서 오프닝·크레딧 건너뛰기 버튼을 보여줘요. 작품 정보만 조회하며 애니 구간은 이 설정과 관계없이 그대로예요.", <Toggle label="영화·드라마 구간 건너뛰기" checked={s.generalSkipEnabled !== false} onChange={value => void save({ generalSkipEnabled: value })} />)}
           {row("기본 화질", "네트워크가 느리면 낮은 화질이 끊김이 적어요.", select("preferredQuality", [["auto", "자동"], ["1080", "1080p"], ["720", "720p"], ["480", "480p"]]))}
           {row("하드웨어 변환", "브라우저가 재생할 수 없는 영상을 서버 GPU로 변환합니다.", <Toggle label="하드웨어 변환" checked={s.hardwareTranscoding} onChange={value => void save({ hardwareTranscoding: value })} />)}
         </div>
@@ -272,6 +276,7 @@ export function SettingsPage() {
       </div></section>}
       {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /></>}<section className="settings-group"><h2>크레딧</h2><div className="settings-card">{link("/about", <Info size={20} />, "정보/크레딧", "작품 정보 제공 및 오픈소스 라이선스")}</div></section></>}
       {category === "tabs" && <NavigationSettings />}
+      {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} onChange={value => void save({ recommendationsEnabled: value }).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
       {admin && category === "library" && <section className="settings-group">
         <div className="settings-card">
           {link("/sources", <Tv size={20} />, "영상 소스", "확장 저장소, 소스 설치·업데이트·설정")}
@@ -282,6 +287,7 @@ export function SettingsPage() {
       </section>}
       {admin && category === "plugins" && <WebsitePlugins admin />}
       {admin && category === "translation" && <TranslationSettings />}
+      {admin && category === "downloads" && <DownloadSettings />}
       {admin && category === "network" && <>
         <section className="settings-group"><h2>원격 접속</h2><div className="settings-card">{link("/remote-access", <Globe size={20} />, "원격 접속", "집 밖에서도 MOA 열기 · 주소와 QR")}</div></section>
         <NetworkSettings />
@@ -290,6 +296,16 @@ export function SettingsPage() {
       </div>
     </div>
   );
+}
+
+function RecommendationSettings({ enabled, onChange }: { enabled: boolean; onChange: (value: boolean) => void }) {
+  const reset = useResetDismissals();
+  const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const run = async () => { setState("busy"); try { await reset(); setState("done"); } catch { setState("error"); } };
+  return <section className="settings-group"><h2>추천</h2><div className="settings-card">
+    <div className="setting"><div><b>시청 기록 기반 추천</b><small>홈에 이 프로필의 시청 기록과 비슷한 작품을 보여줘요. 시청 기록은 외부로 보내지 않아요.</small></div><Toggle label="시청 기록 기반 추천" checked={enabled} onChange={onChange} /></div>
+    <div className="setting"><div><b>숨긴 추천 초기화</b><small>{state === "done" ? "숨긴 작품이 다시 추천될 수 있어요." : state === "error" ? <span className="settings-error">초기화하지 못했어요. 다시 시도해 주세요.</span> : "‘관심 없음’으로 숨긴 작품을 다시 추천 후보에 넣어요."}</small></div><Button disabled={state === "busy" || state === "done"} onClick={() => void run()}>{state === "busy" ? "초기화 중…" : state === "done" ? "초기화됨" : "초기화"}</Button></div>
+  </div></section>;
 }
 
 export function PluginsPage() {

@@ -11,6 +11,8 @@ services:
     init: true
     environment:
       MOA_REQUIRE_ACCOUNT: "1"
+      MOA_DOWNLOAD_ROOT: /downloads
+      MOA_DOWNLOADS_ENABLED: ${MOA_DOWNLOADS_ENABLED:-1}
       MOA_APK_URL: http://moa-apk:8797
       MOA_APK_SECRET_FILE: /run/moa-apk/token
       MOA_CONNECTOR_URL: http://moa-gateway:8798
@@ -24,6 +26,7 @@ services:
       - ${MOA_APK_SECRET_PATH:-moa-apk-secret}:/run/moa-apk:ro
       - ${MOA_CONNECTOR_SECRET_PATH:-moa-connector-secret}:/run/moa-connector:ro
       - ${MOA_DATA_PATH:-moa-data}:/data
+      - ${MOA_DOWNLOAD_PATH:-moa-downloads}:/downloads
       - ${MEDIA_PATH:-moa-media}:${MEDIA_CONTAINER_PATH:-/media/library}:ro
     restart: unless-stopped
     logging:
@@ -127,6 +130,7 @@ volumes:
   moa-auth-config:
   moa-auth-data:
   moa-media:
+  moa-downloads:
   moa-connector-data:
   moa-connector-secret:
 networks:

@@ -230,3 +230,15 @@ node plugins/template/build.mjs examples/catalog-labels
 ```
 
 Install the generated ZIP from `plugins/template/dist`, or select the entire template folder without building. The build script uses Node.js 22.15 or later and needs no dependencies. Include one `manifest.json` and one `plugin.js` or `index.html` at the package root; bundle dependencies into that JavaScript or HTML file. Unrelated documentation files are ignored. Encrypted ZIPs, symbolic links, duplicate paths, and unsafe paths are rejected. Change the plugin ID before publishing a separate plugin, increase its version for updates, document requested permissions, and include a license.
+
+## Read-only viewing history
+
+Declare `history.read` to use `await moa.history.list({ limit: 50, cursor, since })`.
+Installation/update previews show the new permission for approval. It is never granted to packages without the declaration.
+The server checks the installed revision and current unlocked profile on every call. The SDK cannot select a different profile.
+The response is `{ revision, items, nextCursor }`; limit is 1–100 and `since` is an ISO timestamp.
+Each item includes MOA `mediaId`, `episodeId`, display titles, season/episode numbers, last `position`, `duration`, `completed`, `updatedAt`, and an optional confirmed `tmdb: {kind,id}`.
+Positions are resume positions, **not accumulated viewing time**. No account details, stream URLs, cookies or credentials are returned.
+Kids filtering applies. An empty page may have a nextCursor when filtered records were skipped.
+If history changes during pagination, the server returns `history-changed`; restart pagination without the cursor.
+No history mutation API is exposed. A plugin with both history and external-network permissions can send records to its declared origins: only grant these permissions to trusted plugins. Revoking access cannot erase copies the plugin already stored.

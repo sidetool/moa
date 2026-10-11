@@ -79,6 +79,7 @@ export function HistoryPage() {
       const grouped = entry.groupedCount !== undefined;
       await api(grouped ? `/history/media/${encodeURIComponent(entry.media.id)}` : `/history/${encodeURIComponent(entry.episode.id)}`, { method: "DELETE" });
       setConfirm(null);
+      void client.invalidateQueries({ queryKey: ["recommendations"] });
       void client.invalidateQueries({ queryKey: keys.history });
       void client.invalidateQueries({ queryKey: ["home"] });
     } catch {

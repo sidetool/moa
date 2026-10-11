@@ -1,3 +1,4 @@
+import { mergePlaybackMarkers } from '../player/skip-markers';
 import { SubtitleStyleControls } from '../components/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitle-files';
 import { PluginScripts, PluginTools } from '../components/WebsitePlugins';
@@ -21,6 +22,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import { useQueryClient } from "@tanstack/react-query";
 import type { MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, SubtitleTrack } from "@moa/shared";
 import { useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
+import { useEpisodeDownload } from "../api/downloads";
 import { cancelTranslationJob, coveredUntil, isTranslationTrack, savedTranslations, translationModeOf, untranslatedGap, useTranslationConfig, type TranslatedRange, type TranslationJob } from "../api/translation";
 import { useSubtitleTranslation } from "../player/subtitle-translation";
 import { hasUnlabelledSiteSubtitle } from "../player/subtitle-language";
@@ -44,8 +46,13 @@ const VOLUME_KEY = "moa.volume";
 /** Longest a newer translation revision waits for a quiet moment (no translated cue on screen). */
 const REVISION_MAX_WAIT = 45_000;
 
-function useSession(episodeId: string, startOverride: number | null) {
-  const [session, setSession] = useState<PlaybackSession | null>(null);
+/** Where the server reads the video: a ready saved copy first (auto), or the original source on request. */
+type PlaybackLocation = "auto" | "source";
+type Session = PlaybackSession & { saved?: boolean };
+
+function useSession(episodeId: string, startOverride: number | null, initialLocation: PlaybackLocation) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [location, setLocation] = useState(initialLocation);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [streamId, setStreamId] = useState<string | undefined>();
@@ -59,9 +66,9 @@ function useSession(episodeId: string, startOverride: number | null) {
     setError(null);
     preparePlayback(async () => {
       if (cancelled) return;
-      const result = await api<PlaybackSession>("/playback", {
+      const result = await api<Session>("/playback", {
         method: "POST",
-        body: { episodeId, capabilities: detectCapabilities(compatible), audioTrackId, streamId, ...(resumeAt.current !== null ? { startPosition: resumeAt.current } : {}) }
+        body: { episodeId, capabilities: detectCapabilities(compatible), audioTrackId, streamId, ...(location !== "auto" ? { location } : {}), ...(resumeAt.current !== null ? { startPosition: resumeAt.current } : {}) }
       });
       created = result;
       if (cancelled) await retirePlayback(result.sessionId, result.runtimeDependent);
@@ -71,13 +78,14 @@ function useSession(episodeId: string, startOverride: number | null) {
       cancelled = true;
       if (created) void retirePlayback(created.sessionId, created.runtimeDependent);
     };
-  }, [episodeId, audioTrackId, streamId, compatible, attempt]);
+  }, [episodeId, audioTrackId, streamId, compatible, attempt, location]);
 
   const switchAudio = (id: string, at: number) => { resumeAt.current = at; setSession(null); setAudioTrackId(id); };
   const switchStream = (id: string, at: number) => { resumeAt.current = at; setSession(null); setStreamId(id); };
   const switchCompatibility = (value: boolean, at: number) => { resumeAt.current = at; setCompatibilityPlayback(value); setSession(null); setCompatible(value); };
   const retry = (at: number) => { resumeAt.current = at; setSession(null); setAttempt(n => n + 1); };
-  return { retry, session, error, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility };
+  const switchLocation = (value: PlaybackLocation, at: number) => { resumeAt.current = at; setSession(null); setStreamId(undefined); setAudioTrackId(undefined); setLocation(value); };
+  return { retry, session, error, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location, switchLocation };
 }
 
 /** Page zoom never helps while watching and turns double-tap seeks into zoom toggles. */
@@ -107,7 +115,7 @@ export function WatchPage() {
 
 function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeId: string; fullscreenHost: RefObject<HTMLDivElement | null>; pip: ReturnType<typeof useDocumentPip> }) {
   const pipWindow = documentPip.pipWindow;
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const client = useQueryClient();
   const settings = useSettings().data;
@@ -117,7 +125,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const canTranslate = admin || Boolean(account?.permissions?.includes('subtitles.translate'));
   const carried = useLocation().state as { subtitle?: SubtitleTrack } | null;
   const t = params.get("t");
-  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility } = useSession(episodeId, t === null ? null : Number(t));
+  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto");
+  // Only asked when the viewer chose the source over a saved copy, to offer the way back.
+  const savedCopy = useEpisodeDownload(episodeId, playbackLocation === "source").data?.saved;
+  const changeLocation = (value: PlaybackLocation) => {
+    setPanel(null);
+    switchLocation(value, video.current?.currentTime || 0);
+    setParams(old => { const next = new URLSearchParams(old); next.delete("t"); if (value === "source") next.set("location", "source"); else next.delete("location"); return next; }, { replace: true, state: carried });
+  };
   const media = useMedia(session?.mediaId ?? "");
 
   const root = useRef<HTMLDivElement>(null);
@@ -210,6 +225,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     void api("/progress", { method: "POST", body: { episodeId: session.episodeId, position, duration }, keepalive }).then(() => {
       // Periodic saves mark caches stale; final saves also refresh screens already mounted after exit.
       void client.invalidateQueries({ queryKey: ["home"], refetchType: keepalive ? "active" : "none" });
+      void client.invalidateQueries({ queryKey: ["recommendations"], refetchType: "none" });
       void client.invalidateQueries({ queryKey: ["history"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["media", session.mediaId], refetchType: keepalive ? "active" : "none" });
     }).catch(() => {});
@@ -788,26 +804,28 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   // HLS metadata can refine duration after playback begins. Do not query using
   // a catalogue estimate, or reuse the previous stream's decoded duration.
   const markerDuration = Math.round(duration);
-  const remoteSkip = Boolean(session?.streams?.length && !live && session.mediaType === 'anime');
+  // Local, source and saved playback all ask for markers bound to this playback session.
+  const generalSkip = settings?.generalSkipEnabled !== false;
+  const remoteSkip = Boolean(session && !live && (session.mediaType === 'anime' || generalSkip));
   useEffect(() => {
     setSkipStatus('idle');
     if (!remoteSkip || !markerSessionId || markerDuration < 60 || !Number.isFinite(markerDuration)) return;
     const controller = new AbortController();
     setSkipStatus('loading');
-    void api<{markers:PlaybackSession['markers']|null;status:string}>(`/episodes/${encodeURIComponent(episodeId)}/markers?duration=${markerDuration}`,{signal:controller.signal}).then(result=>{
+    void api<{markers:PlaybackSession['markers']|null;status:string}>(`/episodes/${encodeURIComponent(episodeId)}/markers?${new URLSearchParams({ duration: String(markerDuration), sessionId: markerSessionId })}`,{signal:controller.signal}).then(result=>{
       if (controller.signal.aborted) return;
       // AniSkip can return only OP or ED for a different episodeLength. A
       // partial/failed refresh is not a deletion of this session's known range.
       setRemoteMarkerState(previous => ({
         sessionId: markerSessionId,
-        markers: result.markers ? { ...(previous?.sessionId === markerSessionId ? previous.markers : {}), ...result.markers }
+        markers: result.markers ? mergePlaybackMarkers(result.markers,previous?.sessionId === markerSessionId ? previous.markers : undefined)
           : previous?.sessionId === markerSessionId ? previous.markers : undefined
       }));
       setSkipStatus(result.status);
     }).catch(()=>{if(!controller.signal.aborted)setSkipStatus('error');});
     return ()=>controller.abort();
   },[remoteSkip,markerSessionId,episodeId,markerDuration]);
-  const markers = session?.markers ?? (remoteMarkerState?.sessionId === markerSessionId ? remoteMarkerState?.markers : undefined);
+  const markers = mergePlaybackMarkers(session?.markers,remoteSkip && remoteMarkerState?.sessionId === markerSessionId ? remoteMarkerState?.markers : undefined);
   const skipRanges = total > 0 ? [
     { label: '오프닝', kind: 'intro', start: markers?.introStart ?? 0, end: markers?.introEnd },
     { label: '엔딩', kind: 'credits', start: markers?.creditsStart, end: markers?.creditsEnd ?? total }
@@ -816,8 +834,9 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   // Post-credits content (> 20s after the ending song) means the episode is
   // not over at the credits: offer "skip ending" and save next-up for the end.
   const postCredits = Boolean(markers?.creditsEnd && total && total - markers.creditsEnd > 20);
-  const creditsAt = postCredits ? total - 15 : markers?.creditsStart ?? (total ? total - 30 : Infinity);
-  const inCredits = Boolean(postCredits && markers?.creditsStart !== undefined && time >= markers.creditsStart && time < markers.creditsEnd! - 1);
+  const generalCredits = (markers?.provenance?.credits ?? markers?.source) === 'theintrodb';
+  const creditsAt = generalCredits ? (total ? total - (postCredits ? 15 : 30) : Infinity) : postCredits ? total - 15 : markers?.creditsStart ?? (total ? total - 30 : Infinity);
+  const inCredits = Boolean((postCredits || generalCredits) && markers?.creditsEnd !== undefined && markers?.creditsStart !== undefined && time >= markers.creditsStart && time < markers.creditsEnd! - 1);
   const showNext = Boolean(session?.next && !nextDismissed && total && time >= creditsAt && !ended);
   const autoplay = settings?.autoplayNext ?? true;
   const showEnd = !live && ended && !(session?.next && autoplay);
@@ -1491,7 +1510,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                   <button role="switch" aria-checked={compatible} aria-label="호환 재생" className={cx("switch", compatible && "is-on")} onClick={() => { setPanel(null); switchCompatibility(!compatible, video.current?.currentTime || 0); }}><i /></button>
                 </div>
               )}
-              {session.mediaType === "anime" && !live && <p className="panel-note" role="status">{markers ? "오프닝·엔딩 건너뛰기 사용 가능" : skipStatus === "loading" ? "오프닝·엔딩 구간 확인 중…" : skipStatus === "error" ? "건너뛰기 구간을 불러오지 못했어요" : "이 회차는 건너뛰기 구간 정보가 없어요"}</p>}
+              {(session.saved || playbackLocation === "source" && savedCopy) && (
+                <div className="pf-row pf-location">
+                  <div><b>{session.saved ? "서버 저장본으로 재생 중" : "원본 소스로 재생 중"}</b><small>{session.saved ? "소스 사이트와 관계없이 서버에 저장된 영상을 재생해요." : "이 회차는 서버에 저장본이 있어요."}</small></div>
+                  <Button onClick={() => changeLocation(session.saved ? "source" : "auto")}>{session.saved ? "원본 소스로" : "저장본으로"}</Button>
+                </div>
+              )}
+              {!live && (remoteSkip || Boolean(session.markers)) && <p className="panel-note" role="status">{markers ? `${session.mediaType === "anime" ? "오프닝·엔딩" : "오프닝·크레딧"} 건너뛰기 사용 가능` : skipStatus === "loading" ? "건너뛰기 구간 확인 중…" : skipStatus === "error" ? "건너뛰기 구간을 불러오지 못했어요" : session.mediaType === "anime" ? "이 회차는 건너뛰기 구간 정보가 없어요" : "이 영상은 건너뛰기 구간 정보가 없어요"}</p>}
             </div>
           )}
           {panel === "episodes" && (

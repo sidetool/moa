@@ -175,6 +175,21 @@ export class ReleaseUpdater {
         existing.services[name].image = image; delete existing.services[name].build;
         existing.services[name].pull_policy = 'never';
       }
+      // Add an empty dedicated volume only; the app stays disabled until an admin sets a quota.
+      // Preserve an explicitly configured root/mount. Never put video blobs in /data backups.
+      const app = existing.services.moa;
+      if (!app.environment?.MOA_DOWNLOAD_ROOT) {
+        const mounts = app.volumes ?? [];
+        const mounted = mounts.some(v => typeof v === 'string' ? v.split(':').slice(1).includes('/downloads') : v.target === '/downloads');
+        if (!mounted) {
+          existing.volumes ??= {};
+          let name = 'moa-downloads';
+          for (let n = 1; Object.hasOwn(existing.volumes, name); n++) name = `moa-downloads-${n}`;
+          existing.volumes[name] = {};
+          app.volumes = [...mounts, { type: 'volume', source: name, target: '/downloads' }];
+        }
+        app.environment = { ...app.environment, MOA_DOWNLOAD_ROOT: '/downloads' };
+      }
       existing.services.moa.environment = { ...existing.services.moa.environment, MOA_VERSION: m.version, MOA_DEPLOYMENT: 'release' };
       const target = { version: m.version, manifestDigest: this.candidate.digest, schemaEpoch: m.schemaEpoch, services: this.current.services, compose: path.join(targetDir, 'compose.json'), runtime: targetDir, previousRuntime: this.current.runtime };
       // existing is already interpolation-escaped on disk, preserve it as-is.

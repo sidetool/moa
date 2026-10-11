@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
-import { Updates, installationInfo } from '../src/updates.js';
+import Fastify from 'fastify';
+import { Updates, installationInfo, registerUpdates } from '../src/updates.js';
 
 test('updates and system info require an administrator; installation requires a live agent', async t => {
   t.mock.method(globalThis, 'fetch', async () => Response.json([]));
@@ -108,4 +109,25 @@ test('release metadata falls back to the upstream remote and an exact installed 
   git('-c', 'tag.gpgSign=false', 'tag', 'v1.0.0');
   assert.deepEqual(await installationInfo({}, cwd), { version: 'v1.0.0', revision: git('rev-parse', 'HEAD'), repository: 'sidetool/moa', mode: 'git' });
   assert.equal((await installationInfo({ ...installed, MOA_REPOSITORY: '../private/anything' }, cwd)).repository, 'sidetool/moa');
+});
+
+
+test('update handoff serializes apply and releases the queue if preparation fails', async t => {
+  const dir=await mkdtemp(path.join(tmpdir(),'moa-update-handoff-'));
+  const previous=process.env.MOA_UPDATER_DIR;process.env.MOA_UPDATER_DIR=dir;
+  const app=Fastify();let resumes=0,calls=0;
+  let started!:()=>void,rejectPreparation!:(error:Error)=>void;
+  const entering=new Promise<void>(resolve=>{started=resolve;});
+  const waiting=new Promise<void>((_resolve,reject)=>{rejectPreparation=reject;});
+  registerUpdates(app,{prepare:async()=>{calls++;if(calls===1){started();await waiting;}},resume:()=>{resumes++;}});
+  app.setErrorHandler((error,_req,reply)=>reply.code((error as {statusCode?:number}).statusCode||500).send({error:(error as Error).message}));
+  t.after(async()=>{await app.close();if(previous===undefined)delete process.env.MOA_UPDATER_DIR;else process.env.MOA_UPDATER_DIR=previous;await rm(dir,{recursive:true,force:true});});
+  await writeFile(path.join(dir,'status.json'),JSON.stringify({connected:true,heartbeat:Date.now(),mode:'git',state:'available'}));
+  const first=app.inject({method:'POST',url:'/api/admin/updates/apply'}).then(r=>r);
+  await entering;
+  const concurrent=await app.inject({method:'POST',url:'/api/admin/updates/apply'});
+  assert.equal(concurrent.statusCode,409);assert.equal(calls,1);assert.equal(resumes,0);
+  rejectPreparation(Error('synthetic preparation failure'));assert.equal((await first).statusCode,500);assert.equal(resumes,1);
+  assert.equal((await app.inject({method:'POST',url:'/api/admin/updates/apply'})).statusCode,202);
+  assert.equal(calls,2);assert.equal(JSON.parse(await readFile(path.join(dir,'request.json'),'utf8')).action,'apply');
 });

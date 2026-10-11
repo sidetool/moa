@@ -1,3 +1,6 @@
+import { Downloads } from './downloads.js';
+import { GeneralMarkers } from './general-markers.js';
+import { Recommendations } from './recommendations.js';
 import { registerWebsitePlugins } from './website-plugins.js';
 import { registerUpdates } from './updates.js';
 import { UpdateMaintenance } from './update-maintenance.js';
@@ -43,7 +46,7 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 const profileFields = { pin: { type: ['string', 'null'], pattern: '^[0-9]{4,8}$' }, avatar: { type: ['string', 'null'], pattern: '^[a-z]+-[0-9]{1,2}$', maxLength: 64 }, name: { ...string, pattern: '\\S' }, color: { type: 'string', enum: COLORS }, kids: { type: 'boolean' } };
 const filterChange = object({ position: { type: 'integer', minimum: 0, maximum: 511 }, groupPosition: { type: 'integer', minimum: 0, maximum: 511 }, value: { type:['string','number','boolean','object'], maxLength:2000, additionalProperties:false, properties:{index:{type:'integer',minimum:0},ascending:{type:'boolean'}}, required:['index','ascending'] } }, ['position','value']);
 const browseSelection = object({ revision: {type:'string',maxLength:80}, filters: {type:'array',maxItems:512,items:filterChange} }, ['revision','filters']);
-const settingsFields = { groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
+const settingsFields = { recommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
 const validateNavigation = (tabs: NavigationTab[] | null | undefined) => {
   if (tabs && (tabs[0]?.id !== 'home' || new Set(tabs.map(t => t.id)).size !== tabs.length)) throw new ApiFailure(400, 'invalid-navigation');
 };
@@ -67,7 +70,7 @@ export async function sendFile(reply: FastifyReply, file: string, mime: string, 
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
   return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
 }
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -94,6 +97,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const cacheStatsTimer = setInterval(()=>app.log.info({event:'cache-stats',...sources.stats.snapshot()}),5*60_000); cacheStatsTimer.unref();
   const tmdb = new Tmdb(db, value => app.log.info(value), services.tmdb);
   catalog.metadata = tmdb.enabled;
+  const recommendations = new Recommendations(db, tmdb);
   const groups = new TitleGroups(catalog);
   const franchises = new Franchises(catalog, groups, sources, tmdb);
   // Session tokens live only in memory. Remove their obsolete segments after a restart.
@@ -103,12 +107,15 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const translations = new Translations(db, catalog, cfg.dataDir, new Gemini(services.translationFetch));
   const subtitleLibrary = new SubtitleLibrary(db, catalog, translations, online, groups);
   const remotePlayback = new RemotePlayback(db, catalog, sources, undefined, online);
+  const generalMarkers = new GeneralMarkers(db,services.generalMarkerFetch);
   const enrichment = new Enrichment(db, cfg, online, value => app.log.info(value), services);
   const library = new Library(db, cfg, message => app.log.warn(message), () => enrichment.schedule());
   const playback = new Playback(db, catalog, cfg, value => app.log.info(value), online, enrichment);
+  const downloads = new Downloads(db,cfg,sources,playback,services.downloadTransport);
+  await downloads.initialize();
   const casting = new Casting(db, (id, profile) => remotePlayback.sessions.has(id) ? remotePlayback.get(id, profile) : playback.get(id, profile));
   const updateMaintenance = new UpdateMaintenance(process.env.MOA_UPDATER_DIR, () =>
-    playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
+    downloads.busy || playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
     Boolean(db.get("SELECT 1 FROM skip_analysis_jobs WHERE status='running' LIMIT 1")));
   updateMaintenance.register(app);
   /** Give TMDB a moment to link new titles so first visits already show its artwork. */
@@ -159,8 +166,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     const sessionAsset = ['GET','HEAD'].includes(req.method) && /^\/api\/playback\/[^/]+\//.test(url);
     const scoped = !(/^\/api\/(me$|profiles(?:\/|$)|admin\/|images\/)/.test(url)) && !sessionAsset;
     const header = req.headers['x-moa-profile'];
+    const downloadProfile = route === '/api/admin/downloads/choices' || route === '/api/admin/downloads' && req.method === 'POST' || route === '/api/admin/downloads/:id/retry';
     const copyNavigation = route === '/api/admin/default-navigation' && req.method === 'PUT' && header !== undefined;
-    if (scoped || copyNavigation || sessionAsset && header !== undefined) {
+    if (scoped || downloadProfile || copyNavigation || sessionAsset && header !== undefined) {
       if (typeof header !== 'string' || !db.get('SELECT id FROM profiles WHERE id=? AND account_id=?', header, req.moaAccount.id)) throw new ApiFailure(401, 'profile-required');
       req.moaProfile = header;
       pins.assert(header, req);
@@ -172,8 +180,12 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       if (owner) pins.assert(owner, req);
     }
   });
+  app.get('/api/recommendations', async (req,reply) => reply.header('Cache-Control','private, no-store').send(recommendations.get(profile(req))));
+  app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
+  app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
+  app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
   registerWebsitePlugins(app, db);
-  registerUpdates(app);
+  registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
   app.get('/api/admin/tmdb/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(tmdb.status()));
@@ -387,9 +399,20 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   app.post('/api/library/scan', async () => library.start());
   app.get('/api/library/status', async () => library.status);
-  app.get('/api/episodes/:id/markers', { schema: { params: idParams(), querystring: object({ duration: {type:'number',minimum:60,maximum:21600} }, ['duration']) } }, async req => {
-    if (!db.get('SELECT id FROM episodes WHERE id=?',params(req).id)) throw new ApiFailure(404,'episode-not-found');
-    return enrichment.remoteMarkers(params(req).id,(req.query as {duration:number}).duration);
+  app.get('/api/episodes/:id/markers', { schema: { params: idParams(), querystring: object({ duration: {type:'number',minimum:60,maximum:21600},sessionId:string }, ['duration']) } }, async (req,reply) => {
+    reply.header('Cache-Control','private, no-store');
+    const episode=db.get('SELECT e.media_id,m.type FROM episodes e JOIN media m ON m.id=e.media_id WHERE e.id=?',params(req).id);
+    if(!episode)throw new ApiFailure(404,'episode-not-found');
+    catalog.kids.assert(episode.media_id,profile(req));
+    const {duration,sessionId}=req.query as {duration:number;sessionId?:string};
+    if(sessionId){
+      const s=remotePlayback.sessions.has(sessionId)?remotePlayback.get(sessionId,profile(req)):playback.get(sessionId,profile(req));
+      if(s.response.episodeId!==params(req).id||s.response.live)throw new ApiFailure(400,'marker-session-mismatch');
+    }
+    if(episode.type==='anime')return enrichment.remoteMarkers(params(req).id,duration);
+    if(!sessionId||db.settings(profile(req)).generalSkipEnabled===false)return {markers:null,status:'unsupported'};
+    const markers=await generalMarkers.get(params(req).id,sessionId,duration);
+    return {markers,status:markers?'matched':'unavailable'};
   });
   app.post('/api/subtitles/import', { bodyLimit: 14 * 1024 * 1024, schema: { body: object({ episodeId: string, filename: { type: 'string', minLength: 1, maxLength: 255 }, data: { type: 'string', minLength: 4, maxLength: 14 * 1024 * 1024 } }, ['episodeId', 'filename', 'data']) } }, async req => {
     const body = req.body as { episodeId: string; filename: string; data: string };
@@ -435,13 +458,26 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     }
     return reply.code(204).send();
   });
-  app.post('/api/playback', { schema: { body: object({ episodeId: string, capabilities: object({ h264: { type: 'boolean' }, hevc: { type: 'boolean' }, av1: { type: 'boolean' }, vp9: { type: 'boolean' }, audioCodecs: { type: 'array', items: { type: 'string', maxLength: 32 }, maxItems: 32 }, maxHeight: { type: 'integer', minimum: 2 } }, ['h264', 'hevc', 'av1']), audioTrackId: string, streamId: string, startPosition: { type: 'number', minimum: 0 } }, ['episodeId', 'capabilities']) } }, async req => {
-    const body = req.body as { episodeId: string; capabilities: ClientCapabilities; audioTrackId?: string; streamId?: string; startPosition?: number };
+  app.get('/api/admin/downloads',async (_req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.status()));
+  app.put('/api/admin/downloads/config',{schema:{body:object({quotaBytes:{type:'integer',minimum:1,maximum:1099511627776000}},['quotaBytes'])}},async req=>{downloads.configure((req.body as {quotaBytes:number}).quotaBytes);return downloads.status();});
+  app.get('/api/admin/downloads/choices',{schema:{querystring:object({episodeId:string},['episodeId'])}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.choices(query(req).episodeId,profile(req))));
+  app.post('/api/admin/downloads',{schema:{body:object({episodeId:string,selectionToken:string,choiceId:string},['episodeId','selectionToken','choiceId'])}},async req=>{const b=req.body as {episodeId:string;selectionToken:string;choiceId:string};return downloads.create(b.episodeId,profile(req),b.selectionToken,b.choiceId);});
+  app.post('/api/admin/downloads/:id/cancel',{schema:{params:idParams()}},async req=>downloads.cancel(params(req).id));
+  app.post('/api/admin/downloads/:id/retry',{schema:{params:idParams()}},async req=>downloads.retry(params(req).id,profile(req)));
+  app.delete('/api/admin/downloads/:id',{schema:{params:idParams()}},async(req,reply)=>{await downloads.remove(params(req).id);return reply.code(204).send();});
+  app.get('/api/episodes/:id/download',{schema:{params:idParams()}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(downloads.episode(params(req).id,profile(req))));
+  app.post('/api/playback', { schema: { body: object({ episodeId: string, location: {type:'string',enum:['auto','saved','source']}, capabilities: object({ h264: { type: 'boolean' }, hevc: { type: 'boolean' }, av1: { type: 'boolean' }, vp9: { type: 'boolean' }, audioCodecs: { type: 'array', items: { type: 'string', maxLength: 32 }, maxItems: 32 }, maxHeight: { type: 'integer', minimum: 2 } }, ['h264', 'hevc', 'av1']), audioTrackId: string, streamId: string, startPosition: { type: 'number', minimum: 0 } }, ['episodeId', 'capabilities']) } }, async req => {
+    const body = req.body as { episodeId: string; capabilities: ClientCapabilities; location?:'auto'|'saved'|'source'; audioTrackId?: string; streamId?: string; startPosition?: number };
     const episode = db.get('SELECT media_id FROM episodes WHERE id=?', body.episodeId);
     if (episode) catalog.kids.assert(episode.media_id, profile(req));
-    const result = sources.remoteEpisode(body.episodeId)
-      ? await remotePlayback.create(profile(req), body.episodeId, body.startPosition, body.streamId)
-      : await playback.create(profile(req), body.episodeId, body.capabilities, body.audioTrackId, body.startPosition);
+    const openSource=()=>sources.remoteEpisode(body.episodeId)
+      ? remotePlayback.create(profile(req), body.episodeId, body.startPosition, body.streamId)
+      : playback.create(profile(req), body.episodeId, body.capabilities, body.audioTrackId, body.startPosition);
+    const result=body.location==='source'?await openSource():await downloads.withSaved(body.episodeId,async asset=>{
+      if(asset)return playback.create(profile(req),body.episodeId,body.capabilities,body.audioTrackId,body.startPosition,asset);
+      if(body.location==='saved')throw new ApiFailure(404,'download-file-missing');
+      return openSource();
+    });
     const saved = subtitleLibrary.tracks(body.episodeId, profile(req));
     result.subtitles.push(...saved.filter(track => !result.subtitles.some(existing => existing.id === track.id)));
     return result;
@@ -463,7 +499,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   casting.asset(app, '/api/playback/:sessionId/original', async (req, reply) => {
     const s = session(req); if (s.response.mode !== 'direct') throw new ApiFailure(404, 'not-direct');
-    const safe = await safePath(cfg.mediaRoot, s.file); return sendFile(reply, safe, s.response.mime, req.headers.range);
+    const safe = await safePath(s.root, s.file); return sendFile(reply, safe, s.response.mime, req.headers.range);
   });
   casting.asset(app, '/api/playback/:sessionId/:asset', async (req, reply) => {
     const s = session(req), asset = params(req).asset, match = /^(seg-(\d+)\.m4s|init\.mp4)$/.exec(asset);
@@ -488,7 +524,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       const row = online.content(s.response.episodeId, source.onlineId, undefined, s.profile);
       return reply.type(row.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').send(row.content);
     }
-    const safe = await safePath(cfg.mediaRoot, source.file);
+    const safe = await safePath(s.root, source.file);
     // Preserve external ASS exactly, including styles, embedded drawings, and timing.
     if (source.stream === undefined && source.format === 'ass') return sendFile(reply, safe, 'text/x-ssa; charset=utf-8');
     if (source.stream === undefined && /\.vtt$/i.test(safe)) return sendFile(reply, safe, 'text/vtt; charset=utf-8');
@@ -497,7 +533,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   app.get('/api/playback/:sessionId/fonts/:font', async (req, reply) => {
     const s = session(req), index = s.fontSources.get(params(req).font); if (index === undefined) throw new ApiFailure(404, 'font-not-found');
-    const file = await playback.subtitleCache.font(await safePath(cfg.mediaRoot, s.file), index);
+    const file = await playback.subtitleCache.font(await safePath(s.root, s.file), index);
     return sendFile(reply, file, 'application/octet-stream');
   });
   app.get('/api/images/:id', { schema: { params: idParams(), querystring: object({ w: { type: 'integer', minimum: 32, maximum: 1920 } }) } }, async (req, reply) => {
@@ -530,6 +566,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
-  return { app, db, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
+  app.addHook('onClose', async () => { generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }
