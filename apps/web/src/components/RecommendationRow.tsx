@@ -31,7 +31,7 @@ export function RecommendationRow() {
   };
 
   return (
-    <RowShell id="recommendations" title="시청 기록 기반 추천" layout="poster" className="row-recommend" count={items.length}
+    <RowShell id="recommendations" title="취향 기반 추천" layout="poster" className="row-recommend" count={items.length}
       note={<span className="row-note" title="이 프로필의 시청 기록과 비슷한 작품이에요. 재생할 수 있는 소스가 있는지는 상세 화면에서 확인해요.">이 프로필 전용</span>}>
       {items.map(item => hidden[item.key]
         ? <HiddenCard key={item.key} item={item} state={hidden[item.key]} onUndo={() => undo(item.key)} onRetry={() => dismiss(item.key)} />

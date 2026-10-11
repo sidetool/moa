@@ -99,6 +99,9 @@ export function useWatchlistToggle() {
     onSettled: (_data, _error, { id }) => {
       void client.invalidateQueries({ queryKey: keys.media(id) });
       void client.invalidateQueries({ queryKey: keys.watchlist });
+      void client.invalidateQueries({ queryKey: ["recommendations"] });
+      // Mark cached feeds stale, but never reorder the Shorts currently playing.
+      void client.invalidateQueries({ queryKey: ["shorts"], refetchType: "none" });
       void client.invalidateQueries({ queryKey: ["home"] });
     }
   });

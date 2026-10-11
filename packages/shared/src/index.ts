@@ -225,7 +225,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -566,6 +566,9 @@ export interface EpisodeDownloadStatus {
 export interface HistoryQuery { cursor?: string; limit?: number; since?: string }
 export interface HistoryRecord { mediaId:string;episodeId:string;title:string;episodeTitle:string;season:number;episode:number;position:number;duration:number;completed:boolean;updatedAt:string;tmdb?:{kind:'tv'|'movie';id:number} }
 export interface HistoryPage { revision:string;items:HistoryRecord[];nextCursor:string|null }
+export interface WatchlistQuery { cursor?: string; limit?: number; since?: string }
+export interface WatchlistRecord { mediaId: string; title: string; type: MediaType; addedAt: string; tmdb?: { kind: 'tv' | 'movie'; id: number } }
+export interface WatchlistPage { revision: string; items: WatchlistRecord[]; nextCursor: string | null }
 /** Fixed provider query; no arbitrary URLs or API credentials cross the plugin boundary. */
 export interface TrendingQuery { kind: 'movie' | 'tv'; window: 'day' | 'week' }
 /** External identity is the tuple (provider, kind, id); id is opaque, never a MOA media ID. */

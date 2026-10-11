@@ -308,7 +308,7 @@ function RecommendationSettings({ enabled, onChange }: { enabled: boolean; onCha
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const run = async () => { setState("busy"); try { await reset(); setState("done"); } catch { setState("error"); } };
   return <section className="settings-group"><h2>추천</h2><div className="settings-card">
-    <div className="setting"><div><b>시청 기록 기반 추천</b><small>홈에 이 프로필의 시청 기록과 비슷한 작품을 보여줘요. 시청 기록은 외부로 보내지 않아요.</small></div><Toggle label="시청 기록 기반 추천" checked={enabled} onChange={onChange} /></div>
+    <div className="setting"><div><b>취향 기반 추천</b><small>홈에 시청 기록과 내 목록을 바탕으로 작품을 추천해요.</small></div><Toggle label="취향 기반 추천" checked={enabled} onChange={onChange} /></div>
     <div className="setting"><div><b>숨긴 추천 초기화</b><small>{state === "done" ? "숨긴 작품이 다시 추천될 수 있어요." : state === "error" ? <span className="settings-error">초기화하지 못했어요. 다시 시도해 주세요.</span> : "‘관심 없음’으로 숨긴 작품을 다시 추천 후보에 넣어요."}</small></div><Button disabled={state === "busy" || state === "done"} onClick={() => void run()}>{state === "busy" ? "초기화 중…" : state === "done" ? "초기화됨" : "초기화"}</Button></div>
   </div></section>;
 }
