@@ -188,7 +188,7 @@ export function TitlePage() {
   const [trailer, setTrailer] = useState(false);
   const admin = useMe().data?.role === "admin";
   const sourceMedia = Boolean(media.data && media.data.provider.kind !== "local");
-  const downloads = useDownloadStatus(admin && sourceMedia);
+  const downloads = useDownloadStatus(admin && sourceMedia && Boolean(media.data?.id), media.data?.id, true);
   const [saving, setSaving] = useState<{ id: string; title: string } | null>(null);
 
   const backButton = <button className="title-back" aria-label="이전 화면" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate("/")}><ArrowLeft size={16} /><span>뒤로</span></button>;

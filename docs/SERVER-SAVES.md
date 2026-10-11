@@ -17,3 +17,9 @@ Saved playback uses the same episode and history. Auto playback resolves the sav
 An update request stops the queue and interrupts the active job before handing control to the host updater. Interrupted jobs require manual retry after restart. Video blobs stay out of the data backup. Keep a separate backup if needed. Startup removes known abandoned partial directories but retains unknown completed files after metadata rollback; an administrator must inspect orphaned `job-*` directories rather than silently losing saved videos. Missing mounted storage retains asset metadata and reports an unavailable state.
 
 To block new saves while keeping stored playback, set `MOA_DOWNLOADS_ENABLED=0` in the application environment and restart. Keep the storage mount. Existing saved videos and history are retained; restarting interrupts queued/active work without automatic retry.
+
+
+The management list groups by the stored title ID rather than its name; identically named titles from different sources are not implicitly merged. List pages use a stable creation-time/ID cursor, so progress updates and deletion of a page boundary do not hide older jobs. The API supports filtering by `mediaId` for title-detail status. A selection acts on loaded entries, not unseen pages. Each deletion uses the same server-side active-playback and opening-session checks; a mixed result must retain and identify failed entries. Removing a saved copy never removes watch history or the title.
+
+
+Management UI verification used 67 synthetic jobs with a reduced page size: loaded all pages, selected a 14-episode group, deleted 13 while retaining one protected copy and its error/selection, and checked the expanded layout at 390px width. Server regression checks separately cover more than 200 jobs, a deleted cursor boundary, status updates between pages, title filtering, and independent protected/successful removals. These checks do not delete any real saved video.

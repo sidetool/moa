@@ -322,6 +322,15 @@ const downloadJobs: DownloadJob[] = [
   { id: "dl-1", episodeId: "demo-1-e1", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "1화", state: "ready", bytes: 1.4 * GiB, totalBytes: 1.4 * GiB, error: "download-subtitles-incomplete", createdAt: ago(86_400_000), updatedAt: ago(86_000_000), quality: "1080p" },
   { id: "dl-2", episodeId: "demo-1-e3", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "3화", state: "failed", bytes: 0, totalBytes: null, error: "download-auth-expired", createdAt: ago(7_200_000), updatedAt: ago(7_000_000), quality: "720p" }
 ];
+// `moa.mockManyDownloads=1` adds long synthetic series to preview grouping, paging and batch delete.
+if (localStorage.getItem("moa.mockManyDownloads") === "1") {
+  const many = (mediaId: string, title: string, count: number, offset: number) => Array.from({ length: count }, (_, i): DownloadJob => ({
+    id: `dl-${mediaId}-${i + 1}`, episodeId: `${mediaId}-e${i + 1}`, mediaId, title, episodeTitle: `${i + 1}화`,
+    state: i % 17 === 5 ? "failed" : i % 23 === 7 ? "cancelled" : "ready", bytes: 0.7 * GiB, totalBytes: i % 17 === 5 || i % 23 === 7 ? null : 0.7 * GiB,
+    error: i % 17 === 5 ? "download-space-low" : null, createdAt: ago(offset + i * 60_000), updatedAt: ago(offset + i * 60_000), quality: "1080p"
+  }));
+  downloadJobs.push(...many("long-a", "긴 연재 시리즈 (예시)", 48, 20_000_000), ...many("long-b", "두 번째 예시 시리즈", 14, 40_000_000), ...many("demo-3", "스테이지 뒤편", 3, 60_000_000));
+}
 const downloadStarted = new Map<string, number>();
 function tickDownloads() {
   for (const job of downloadJobs) {
@@ -334,10 +343,19 @@ function tickDownloads() {
     job.updatedAt = new Date().toISOString();
   }
 }
-function downloadStatus(): DownloadStatus {
+/** Newest first, keyset-paged like the server (`moa.mockDownloadPage` shrinks the 200-row page). */
+function downloadStatus(cursor = "", mediaId = ""): DownloadStatus {
   tickDownloads();
+  const size = Number(localStorage.getItem("moa.mockDownloadPage")) || 200;
+  const sorted = downloadJobs.filter(job => !mediaId || job.mediaId === mediaId).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  const [at, id] = cursor ? JSON.parse(atob(cursor)) as [string, string] : [];
+  const rest = at ? sorted.filter(job => job.createdAt < at || (job.createdAt === at && job.id < id!)) : sorted;
+  const page = rest.slice(0, size), last = page.at(-1);
+  return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
+}
+function downloadSummary() {
   const off = localStorage.getItem("moa.mockDownloads") === "off";
-  return { configured: !off, reason: off ? "저장 폴더(/downloads)가 연결되지 않았어요. 설치 안내에 따라 볼륨을 추가한 뒤 다시 시작해 주세요." : null, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0), jobs: downloadJobs.map(job => ({ ...job })) };
+  return { configured: !off, reason: off ? "저장 폴더(/downloads)가 연결되지 않았어요. 설치 안내에 따라 볼륨을 추가한 뒤 다시 시작해 주세요." : null, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0) };
 }
 const savedEpisode = (episodeId: string) => { tickDownloads(); return downloadJobs.some(job => job.episodeId === episodeId && job.state === "ready"); };
 
@@ -549,7 +567,7 @@ export function installMockApi() {
     const episodeDownload = /^\/episodes\/([^/]+)\/download$/.exec(path);
     if (episodeDownload) { const id = decodeURIComponent(episodeDownload[1]), job = downloadJobs.find(item => item.episodeId === id && item.state === "ready"); return json({ saved: Boolean(job), ...(job ? { job } : {}) }); }
     if (path.startsWith("/admin/downloads") && localStorage.getItem("moa.mockRole") === "member") return json({ error: "admin-required" }, 403);
-    if (path === "/admin/downloads" && method === "GET") return json(downloadStatus());
+    if (path === "/admin/downloads" && method === "GET") return json(downloadStatus(url.searchParams.get("cursor") ?? "", url.searchParams.get("mediaId") ?? ""));
     if (path === "/admin/downloads/config" && method === "PUT") { if (!Number.isSafeInteger(body.quotaBytes) || body.quotaBytes <= 0) return json({ error: "invalid-request" }, 400); downloadQuota = body.quotaBytes; return json(downloadStatus()); }
     if (path === "/admin/downloads/choices") {
       const id = url.searchParams.get("episodeId") ?? "";
@@ -567,7 +585,7 @@ export function installMockApi() {
     if (downloadAction && path !== "/admin/downloads/config") {
       const job = downloadJobs.find(item => item.id === decodeURIComponent(downloadAction[1]));
       if (!job) return json({ error: "not-found" }, 404);
-      if (method === "DELETE") { if (localStorage.getItem("moa.mockDownloadInUse") === job.id) return json({ error: "download-in-use" }, 409); downloadJobs.splice(downloadJobs.indexOf(job), 1); return json(null, 204); }
+      if (method === "DELETE") { if ((localStorage.getItem("moa.mockDownloadInUse") ?? "").split(",").includes(job.id)) return json({ error: "download-in-use" }, 409); downloadJobs.splice(downloadJobs.indexOf(job), 1); return json(null, 204); }
       if (downloadAction[2] === "cancel") { downloadStarted.delete(job.id); job.state = "cancelled"; job.bytes = 0; }
       if (downloadAction[2] === "retry") { job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
       job.updatedAt = new Date().toISOString();

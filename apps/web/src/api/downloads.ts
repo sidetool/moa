@@ -1,6 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DownloadChoice, DownloadJob, DownloadState, DownloadStatus, EpisodeDownloadStatus } from "@moa/shared";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 
 export const downloadKeys = {
   admin: ["admin-downloads"] as const,
@@ -39,14 +40,40 @@ const DOWNLOAD_ERROR_TEXT: Record<string, string> = {
 /** Server error codes as short Korean; unknown codes get a generic line instead of the raw code. */
 export const downloadErrorText = (code: string | null | undefined) => !code ? null : DOWNLOAD_ERROR_TEXT[code] ?? "저장하지 못했어요. 다시 시도해 주세요.";
 
-/** Admin-only list; polls while something is moving. */
-export const useDownloadStatus = (enabled = true) => useQuery({
-  queryKey: downloadKeys.admin,
-  queryFn: ({ signal }) => api<DownloadStatus>("/admin/downloads", { signal }).then(data => ({ ...data, reason: downloadErrorText(data.reason) })),
-  enabled,
-  retry: false,
-  refetchInterval: query => query.state.data?.jobs.some(job => ACTIVE_DOWNLOAD.includes(job.state)) ? 2000 : false
-});
+/** Admin list, paged by the server (newest first). Loaded pages are refetched together, so polling and
+ *  mutations also drop removed rows from older pages. `mediaId` narrows the list to one title. */
+const MAX_AUTO_PAGES = 50;
+
+/** `loadAll` keeps following the cursor (bounded) for screens that must know every status, e.g. one title. */
+export function useDownloadStatus(enabled = true, mediaId?: string, loadAll = false) {
+  const query = useInfiniteQuery({
+    queryKey: [...downloadKeys.admin, mediaId ?? "all"],
+    queryFn: ({ signal, pageParam }) => {
+      const params = new URLSearchParams();
+      if (pageParam) params.set("cursor", pageParam);
+      if (mediaId) params.set("mediaId", mediaId);
+      return api<DownloadStatus>(`/admin/downloads${params.size ? `?${params}` : ""}`, { signal });
+    },
+    initialPageParam: "",
+    getNextPageParam: last => last.nextCursor || undefined,
+    enabled,
+    retry: false,
+    refetchInterval: query => query.state.data?.pages.some(page => page.jobs.some(job => ACTIVE_DOWNLOAD.includes(job.state))) ? 2000 : false
+  });
+  const pages = query.data?.pages;
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
+  useEffect(() => {
+    if (loadAll && enabled && hasNextPage && !isFetchingNextPage && !isFetchNextPageError && (pages?.length ?? 0) < MAX_AUTO_PAGES) void fetchNextPage();
+  }, [loadAll, enabled, hasNextPage, isFetchingNextPage, isFetchNextPageError, pages?.length, fetchNextPage]);
+  const data = useMemo(() => {
+    if (!pages?.length) return undefined;
+    const seen = new Set<string>(), jobs: DownloadJob[] = [];
+    for (const job of pages.flatMap(page => page.jobs)) if (!seen.has(job.id)) { seen.add(job.id); jobs.push(job); }
+    const first = pages[0];
+    return { ...first, reason: downloadErrorText(first.reason), jobs, totalJobs: first.totalJobs ?? jobs.length };
+  }, [pages]);
+  return { data, isPending: query.isPending, refetch: query.refetch, fetchNextPage: query.fetchNextPage, hasNextPage: query.hasNextPage, isFetchingNextPage: query.isFetchingNextPage, isFetchNextPageError: query.isFetchNextPageError };
+}
 
 /** Whether a saved copy exists for any viewer allowed to play the episode. */
 export const useEpisodeDownload = (episodeId: string, enabled = true) => useQuery({
@@ -71,6 +98,30 @@ export const downloadRatio = (job: DownloadJob) => job.totalBytes ? Math.min(1, 
 
 export const fetchDownloadChoices = (episodeId: string, signal?: AbortSignal) =>
   api<{ choices: DownloadChoice[]; selectionToken: string }>(`/admin/downloads/choices?episodeId=${encodeURIComponent(episodeId)}`, { signal });
+
+export type RemoveResult = { removed: DownloadJob[]; failed: Array<{ job: DownloadJob; inUse: boolean }> };
+
+/** Deletes one at a time so each saved copy keeps the server's in-use protection; failures stay listed. */
+export function useRemoveDownloads() {
+  const client = useQueryClient();
+  return async (jobs: DownloadJob[], onProgress: (done: number) => void): Promise<RemoveResult> => {
+    const result: RemoveResult = { removed: [], failed: [] };
+    try {
+      for (const [index, job] of jobs.entries()) {
+        try { await api<void>(`/admin/downloads/${encodeURIComponent(job.id)}`, { method: "DELETE" }); result.removed.push(job); }
+        catch (cause) {
+          if (cause instanceof ApiError && cause.status === 404) result.removed.push(job); // already gone
+          else result.failed.push({ job, inUse: cause instanceof ApiError && cause.status === 409 });
+        }
+        onProgress(index + 1);
+      }
+    } finally {
+      void client.invalidateQueries({ queryKey: downloadKeys.admin });
+      for (const episodeId of new Set(jobs.map(job => job.episodeId))) void client.invalidateQueries({ queryKey: downloadKeys.episode(episodeId) });
+    }
+    return result;
+  };
+}
 
 export function useDownloadActions() {
   const client = useQueryClient();
