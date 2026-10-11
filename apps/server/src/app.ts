@@ -1,3 +1,4 @@
+import { PluginDiscovery } from './plugin-discovery.js';
 import { registerWebsitePlugins } from './website-plugins.js';
 import { registerUpdates } from './updates.js';
 import { UpdateMaintenance } from './update-maintenance.js';
@@ -172,7 +173,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       if (owner) pins.assert(owner, req);
     }
   });
-  registerWebsitePlugins(app, db);
+  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb));
   registerUpdates(app);
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));

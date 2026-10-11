@@ -230,3 +230,40 @@ node plugins/template/build.mjs examples/catalog-labels
 ```
 
 Install the generated ZIP from `plugins/template/dist`, or select the entire template folder without building. The build script uses Node.js 22.15 or later and needs no dependencies. Include one `manifest.json` and one `plugin.js` or `index.html` at the package root; bundle dependencies into that JavaScript or HTML file. Unrelated documentation files are ignored. Encrypted ZIPs, symbolic links, duplicate paths, and unsafe paths are rejected. Change the plugin ID before publishing a separate plugin, increase its version for updates, document requested permissions, and include a license.
+
+## Trending discovery (unreleased)
+
+The `discovery.read` permission enables
+`moa.discovery.trending({ kind: 'movie' | 'tv', window: 'day' | 'week' })`.
+This additive SDK is implemented on `feat/discovery-plugin`; it is not present in v0.1.1.
+Packages using it currently declare `minMoaVersion: "0.2.0-beta.1"` as the proposed
+integration target. Confirm the actual release before distributing the ZIP.
+
+The result is `{ status, items, updatedAt, stale }`. `status` is `ready`,
+`unconfigured` (administrator must configure TMDB), `restricted` (child/missing
+profile), or `unavailable` (no usable provider result). Items contain only
+`MetadataCandidate` fields; they are external metadata, not playable source entries.
+A ready empty list is distinct from an unavailable result. `updatedAt` is the host's
+fetch timestamp in ISO UTC, not TMDB's ranking timestamp.
+
+- Uses the host's existing TMDB credentials and request limiter. No keys, URLs,
+  headers, arbitrary parameters or history are accepted or returned by this SDK.
+- Fixed Korean-language first page (up to 20 non-adult titles), daily/weekly movie/TV
+  endpoints only. This is global TMDB interest, not Korean viewing or OTT ranking.
+- Four shared in-memory cache entries; fresh for 30 minutes. Failed refreshes retry
+  after 60 seconds and may serve a marked stale snapshot younger than 24 hours.
+  Credentials changed/cleared in settings invalidate this cache. No polling task.
+- The host withholds the entire feed for kids profiles because trending data alone
+  does not provide enough age-certification data. Client hiding is not the guard.
+- `connect` is unnecessary for discovery itself. The iframe only displays data/blob
+  images, so the sample plugin declares `https://image.tmdb.org` in `connect` and
+  fetches poster bytes through `moa.fetch`, then renders object URLs. It preserves
+  the existing CSP and server request checks.
+- Plugin enablement, compatibility, package revision and declared permission are
+  enforced before and after asynchronous retrieval. Account/profile/PIN checks use
+  the existing API gate. The HTTP response is private and not cacheable by proxies.
+- Render returned text as text, handle all states, include TMDB attribution, and
+  use title search rather than implying that every external title can be played.
+
+The POST transport is `/api/plugin-runtime/:id/discovery/trending` with
+`{ revision, query }`; plugins use the SDK, not direct internal requests.

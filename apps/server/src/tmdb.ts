@@ -92,6 +92,7 @@ export function scoreResult(result: SearchResult, targets: Target[], expected: {
 
 /** Keeps a small number of TMDB requests in flight and retries rate limits. */
 export class Tmdb {
+  configurationRevision = 0;
   get enabled() { return Boolean(this.token || this.key); }
   private environment: { token?: string; key?: string } = {};
   private reload() {
@@ -108,6 +109,7 @@ export class Tmdb {
     if (Object.keys(value).length !== 1 || value.clear !== undefined && value.clear !== true) throw new ApiFailure(400, 'invalid-request');
     this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('tmdb',?)", JSON.stringify(value.clear ? {} : value));
     this.reload();
+    this.configurationRevision++;
     return this.status();
   }
   private token?: string;
@@ -143,6 +145,29 @@ export class Tmdb {
         return await res.json();
       }
     } finally { this.release(); }
+  }
+
+  /** Fixed first-page discovery; reuse credential storage, request limits and shutdown signal. */
+  async trending(query: import('@moa/shared').TrendingQuery): Promise<import('@moa/shared').MetadataCandidate[]> {
+    if (!['movie', 'tv'].includes(query.kind) || !['day', 'week'].includes(query.window)) throw new ApiFailure(400, 'invalid-discovery-query');
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    const data = await this.get(`/trending/${query.kind}/${query.window}`, { language: 'ko-KR' });
+    if (!data || !Array.isArray(data.results)) throw new Error('invalid-trending-response');
+    const seen = new Set<number>();
+    return data.results.slice(0, 20).flatMap((row: any) => {
+      if (!row || !Number.isSafeInteger(row.id) || row.id <= 0 || row.adult !== false || seen.has(row.id) || row.media_type && row.media_type !== query.kind) return [];
+      const title = query.kind === 'movie' ? row.title : row.name;
+      if (typeof title !== 'string' || !title.trim()) return [];
+      seen.add(row.id);
+      const original = query.kind === 'movie' ? row.original_title : row.original_name;
+      const date = query.kind === 'movie' ? row.release_date : row.first_air_date;
+      const year = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? Number(date.slice(0, 4)) : undefined;
+      const poster = typeof row.poster_path === 'string' && /^\/[a-zA-Z0-9_-]+\.(?:jpg|png|webp)$/.test(row.poster_path) ? `https://image.tmdb.org/t/p/w342${row.poster_path}` : undefined;
+      return [{ kind: query.kind, id: row.id, title: title.slice(0, 300),
+        ...(typeof original === 'string' ? { originalTitle: original.slice(0, 300) } : {}),
+        ...(year ? { year } : {}), ...(poster ? { poster } : {}),
+        ...(typeof row.overview === 'string' ? { overview: row.overview.slice(0, 2000) } : {}) }];
+    });
   }
 
   /** Link titles in the background; resolves when done or after the budget, whichever is first. */

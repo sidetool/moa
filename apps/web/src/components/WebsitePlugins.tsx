@@ -15,7 +15,7 @@ const usePlugins = () => {
 const catalogQueries = ['home', 'media', 'media-list', 'search', 'watchlist', 'source-page', 'source-browse', 'tab-source', 'tab-source-latest', 'grouped-cards'];
 const path = (id: string) => `/plugins/${encodeURIComponent(id)}`;
 const runtimePath = (id: string) => `/plugin-runtime/${encodeURIComponent(id)}`;
-const permissionLabels = { 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
+const permissionLabels = { 'discovery.read': 'TMDB 인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
 type Player = { episodeId: string; title: string; getTime: () => number; onImport: (files: File[]) => Promise<boolean>; control: (action: string, seconds?: number) => Promise<void> };
 const act = (pluginId: string, actionId?: string) => window.dispatchEvent(new CustomEvent('moa:plugin-action', { detail: { pluginId, actionId } }));
 const sdk = `
@@ -67,6 +67,7 @@ const sdk = `
     app: Object.freeze({ context: () => call('app.context'), navigate: path => call('app.navigate', path) }),
     ui: Object.freeze({ open: () => call('ui', true), close: () => call('ui', false), resize: height => call('ui.resize', height) }),
     player: Object.freeze({ play: () => call('player.control', { action: 'play' }), pause: () => call('player.control', { action: 'pause' }), seek: seconds => call('player.control', { action: 'seek', seconds }) }),
+    discovery: Object.freeze({ trending: query => call('discovery.trending', query) }),
     storage: Object.freeze({ get: () => call('storage'), set: value => call('storage', value) }),
     notify: text => call('notifications', text),
     fetch: async url => {
@@ -153,6 +154,8 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
         } else if (data.method === 'fetch') {
           if (typeof data.value?.url !== 'string' || data.value.url.length > 2048) throw new Error('주소를 확인해 주세요.');
           result = await api(`${runtimePath(plugin.id)}/request`, { method: 'POST', body: { url: data.value.url, revision: plugin.revision } });
+        } else if (data.method === 'discovery.trending' && installed.permissions.includes('discovery.read')) {
+          result = await api(`${runtimePath(plugin.id)}/discovery/trending`, { method: 'POST', body: { revision: plugin.revision, query: data.value } });
         } else if (data.method === 'app.context' && installed.permissions.includes('app.context')) {
           result = appContext();
         } else if (data.method === 'app.navigate' && installed.permissions.includes('app.navigate')) {

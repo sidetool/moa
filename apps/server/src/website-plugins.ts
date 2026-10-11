@@ -1,3 +1,4 @@
+import type { PluginDiscovery } from './plugin-discovery.js';
 import { compatibilityHttp } from '@moa/extensions';
 import { safeZipPath } from '@moa/subtitles-ko';
 import { PLUGIN_API_VERSION, type WebsitePlugin, type WebsitePluginPackage, type WebsitePluginRuntime } from '@moa/shared';
@@ -34,7 +35,7 @@ export function pluginPackage(value: unknown): WebsitePluginPackage {
     !Number.isSafeInteger(p.apiVersion) || p.apiVersion < 1 || p.apiVersion > 1000 || p.minMoaVersion !== undefined && (typeof p.minMoaVersion !== 'string' || p.minMoaVersion.length > 80 || !semver.test(p.minMoaVersion)) || typeof p.id !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(p.id) || typeof p.name !== 'string' || !p.name.trim() || p.name.length > 80 ||
     typeof p.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(p.version) || p.version.length > 40 ||
     typeof p.description !== 'string' || p.description.length > 500 || !list(p.placements, ['app', 'settings', 'player', 'home', 'detail']) || !p.placements.length ||
-    !list(p.permissions, ['app.context', 'app.navigate', 'ui', 'player.context', 'player.control', 'subtitles.import', 'storage', 'notifications', 'catalog.modify']) || !Array.isArray(p.connect) || p.connect.length > 10 || new Set(p.connect).size !== p.connect.length ||
+    !list(p.permissions, ['app.context', 'app.navigate', 'ui', 'player.context', 'player.control', 'subtitles.import', 'storage', 'notifications', 'catalog.modify', 'discovery.read']) || !Array.isArray(p.connect) || p.connect.length > 10 || new Set(p.connect).size !== p.connect.length ||
     p.hooks !== undefined && (!list(p.hooks, ['catalog.transform']) || !p.permissions.includes('catalog.modify') || !p.script || p.apiVersion < 2) || p.placements.includes('detail') && p.apiVersion < 2 ||
     (p.html !== undefined && typeof p.html !== 'string') || (p.script !== undefined && typeof p.script !== 'string') || (typeof p.html === 'string') === (typeof p.script === 'string') || typeof (p.html ?? p.script) !== 'string' || !(p.html ?? p.script)!.trim() || Buffer.byteLength((p.html ?? p.script)!) > 200 * 1024 ||
     p.actions !== undefined && (!p.script || !Array.isArray(p.actions) || p.actions.length > 8 || new Set(p.actions.map(action => action?.id)).size !== p.actions.length || p.actions.some(action => !action || Object.keys(action).some(key => !['id', 'label'].includes(key)) || typeof action.id !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(action.id) || typeof action.label !== 'string' || !action.label.trim() || action.label.length > 60))) throw new ApiFailure(400, 'invalid-plugin');
@@ -119,7 +120,7 @@ export async function unpackPlugin(value: unknown): Promise<WebsitePluginPackage
   }
 }
 
-export function registerWebsitePlugins(app: FastifyInstance, db: Store) {
+export function registerWebsitePlugins(app: FastifyInstance, db: Store, discovery?: PluginDiscovery) {
   db.db.exec('CREATE TABLE IF NOT EXISTS website_plugins(id TEXT PRIMARY KEY,package TEXT NOT NULL,enabled INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS website_plugin_data(plugin_id TEXT REFERENCES website_plugins(id) ON DELETE CASCADE,profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,value TEXT NOT NULL,PRIMARY KEY(plugin_id,profile_id))');
   const metadata = (row: Record<string, any>): WebsitePlugin => { const { html, script, ...p } = JSON.parse(row.package) as WebsitePluginPackage; return { ...p, kind: script === undefined ? 'html' : 'script', revision: hash(row.package), enabled: Boolean(row.enabled), compatibility: pluginCompatibility(p) }; };
   const get = (id: string, enabled = true) => {
@@ -148,6 +149,27 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store) {
   });
   app.delete('/api/admin/plugins/:id', async (req, reply) => { db.run('DELETE FROM website_plugins WHERE id=?', (req.params as { id: string }).id); return reply.code(204).send(); });
   for (const base of ['/api/plugins', '/api/plugin-runtime']) {
+    app.post(`${base}/:id/discovery/trending`, { bodyLimit: 4096, schema: { body: {
+      type: 'object', additionalProperties: false, required: ['revision', 'query'], properties: {
+        revision: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+        query: { type: 'object', additionalProperties: false, required: ['kind', 'window'], properties: {
+          kind: { type: 'string', enum: ['movie', 'tv'] }, window: { type: 'string', enum: ['day', 'week'] }
+        } }
+      }
+    } } }, async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const body = req.body as { revision: string; query: import('@moa/shared').TrendingQuery };
+      const check = () => {
+        const row = get(id), p = JSON.parse(row.package) as WebsitePluginPackage;
+        if (body.revision !== hash(row.package)) throw new ApiFailure(409, 'plugin-updated');
+        if (!p.permissions.includes('discovery.read')) throw new ApiFailure(403, 'plugin-permission-denied');
+      };
+      check();
+      if (!discovery) throw new ApiFailure(503, 'plugin-discovery-unavailable');
+      const result = await discovery.trending(req.moaProfile!, body.query);
+      check(); // Permission revocation or a package update during the provider request wins.
+      return reply.header('Cache-Control', 'private, no-store').send(result);
+    });
     app.post(`${base}/:id/storage`, { bodyLimit: 20 * 1024, schema: { body: { type: 'object', additionalProperties: false, required: ['revision'], properties: { revision: { type: 'string', pattern: '^[a-f0-9]{32}$' }, value: { type: 'object', maxProperties: 128 } } } } }, async req => {
       const id = (req.params as { id: string }).id, row = get(id), p = JSON.parse(row.package) as WebsitePluginPackage;
       const body = req.body as { revision: string; value?: Record<string, unknown> };

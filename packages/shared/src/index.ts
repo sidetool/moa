@@ -223,7 +223,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -516,3 +516,12 @@ export interface JimakuSearch {
 }
 
 export type { RemoteAccessMode, RemoteAccessState, RemoteAccessConfig, RemoteAccessConfigure, RemoteAccessStatus } from './remote-access.js';
+
+/** Fixed provider query; no arbitrary URLs or API credentials cross the plugin boundary. */
+export interface TrendingQuery { kind: 'movie' | 'tv'; window: 'day' | 'week' }
+export interface TrendingResponse {
+  status: 'ready' | 'unconfigured' | 'restricted' | 'unavailable';
+  items: MetadataCandidate[];
+  updatedAt: string | null;
+  stale: boolean;
+}
