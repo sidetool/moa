@@ -67,7 +67,7 @@ export function useDownloadStatus(enabled = true, mediaId?: string, loadAll = fa
     getNextPageParam: last => last.nextCursor || undefined,
     enabled,
     retry: false,
-    refetchInterval: query => query.state.data?.pages.some(page => page.jobs.some(job => ACTIVE_DOWNLOAD.includes(job.state))) ? 2000 : false
+    refetchInterval: query => query.state.data?.pages.some(page => (page.activeJobs ?? 0) > 0 || page.jobs.some(job => ACTIVE_DOWNLOAD.includes(job.state))) ? 2000 : false
   });
   const pages = query.data?.pages;
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;

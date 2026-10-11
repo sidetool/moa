@@ -291,7 +291,9 @@ test('saved list pages remain reachable across deletes and progress updates and 
     db.run("INSERT INTO episodes VALUES('second-ep','second',1,1,'Episode',1200,NULL)");
     db.run("INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES('other','second-ep','second','source','viewer','failed','720p','fixture','2025','2025')");
   });
-  const first=await downloads.status();assert.equal(first.jobs.length,200);assert.equal(first.totalJobs,206);assert.ok(first.nextCursor);
+  // Retrying an old job must remain visible to the global OFF confirmation, even off-page.
+  db.run("UPDATE download_jobs SET state='resolving' WHERE id='other'");
+  const first=await downloads.status();assert.equal(first.activeJobs,1);assert.ok(first.jobs.every(job=>job.state==='failed'));assert.equal(first.jobs.length,200);assert.equal(first.totalJobs,206);assert.ok(first.nextCursor);
   const boundary=first.jobs.at(-1)!;
   await downloads.remove(boundary.id);
   db.run("UPDATE download_jobs SET updated_at='2099' WHERE id='002'");
@@ -300,6 +302,9 @@ test('saved list pages remain reachable across deletes and progress updates and 
   assert.ok(next.jobs.every(j=>!first.jobs.some(p=>p.id===j.id)));
   assert.equal(new Set([...first.jobs,...next.jobs].map(j=>j.id)).size,206);
   const second=await downloads.status({mediaId:'second'});assert.deepEqual(second.jobs.map(j=>j.id),['other']);assert.equal(second.totalJobs,1);
+  assert.equal((await downloads.status({mediaId:'m'})).activeJobs,1);
+  db.run("UPDATE download_jobs SET state='failed' WHERE id='other'");
+  assert.equal((await downloads.status()).activeJobs,0);
   await assert.rejects(downloads.status({mediaId:'second',cursor:first.nextCursor!}),{error:'download-query-invalid'});
   await assert.rejects(downloads.status({cursor:'not a cursor'}),{error:'download-query-invalid'});
 });
@@ -352,7 +357,7 @@ test('one-click queues before extraction, uses one APK lease and captures prefer
   const job=await f.downloads.createPreferred('ep','viewer');assert.ok(['queued','resolving'].includes(job.state));await started;
   await f.downloads.configureSettings({quality:'best'});
   await assert.rejects(f.downloads.createPreferred('ep','viewer'),{error:'download-already-exists'});
-  finish();const done=await settled(f.downloads,job.id);assert.equal(done.state,'ready');assert.equal(done.quality,'720p');
+  finish();const done=await settled(f.downloads,job.id);assert.equal(done.state,'ready');assert.equal(done.quality,'360p'); // Probe reports the saved file, not the source's 720p label.
   assert.equal(extractions,1);assert.deepEqual(fetched,['https://source.test/low.mp4']);assert.deepEqual(f.released,['auto-lease']);
 });
 

@@ -119,7 +119,7 @@ export class Downloads {
     // Materialize rows before any further asynchronous work so concurrent deletion cannot
     // make an otherwise valid status response fail halfway through.
     const jobs=page.filter(r=>this.db.get('SELECT 1 FROM download_jobs WHERE id=?',r.id)).map(r=>this.job(r.id));
-    return{enabled:this.enabled(),allowed:this.cfg.downloadsEnabled!==false,storageReady,quality:this.quality(),configured:!reason,reason,quotaBytes:this.quota(),usedBytes:this.used(),jobs,totalJobs,
+    return{enabled:this.enabled(),allowed:this.cfg.downloadsEnabled!==false,storageReady,quality:this.quality(),configured:!reason,reason,quotaBytes:this.quota(),usedBytes:this.used(),jobs,totalJobs,activeJobs:this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state IN ('queued','resolving','downloading','finalizing')")!.n as number,
       nextCursor:rows.length>200&&last?Buffer.from(JSON.stringify({media,time:last.created_at,id:last.id})).toString('base64url'):null};
   }
 
@@ -208,7 +208,9 @@ export class Downloads {
       signalWithLimit.throwIfAborted();
       const subtitles=result.subtitles.map(n=>path.join(dir!,n));const size=result.size+(await Promise.all(subtitles.map(f=>stat(f)))).reduce((a,b)=>a+b.size,0);
       if(this.used()+size>this.quota())throw new ApiFailure(507,'download-quota-exceeded');
+      const height=result.probe.streams.find(stream=>stream.codec_type==='video')?.height;
       this.db.transaction(()=>{
+        if(typeof height==='number'&&Number.isSafeInteger(height)&&height>0)this.db.run('UPDATE download_jobs SET quality=? WHERE id=?',`${height}p`,row.id);
         this.db.run('INSERT INTO download_assets VALUES(?,?,?,?,?,?)',row.episode_id,row.id,path.relative(root,path.join(dir!,'video.mp4')),size,JSON.stringify(result.probe),JSON.stringify(subtitles));
         this.db.run("UPDATE download_jobs SET state='ready',bytes=?,total_bytes=?,error=?,updated_at=? WHERE id=?",size,size,result.subtitleWarning?'download-subtitles-incomplete':null,new Date().toISOString(),row.id);
       });

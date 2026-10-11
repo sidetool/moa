@@ -380,7 +380,7 @@ function downloadStatus(cursor = "", mediaId = ""): DownloadStatus {
   const [at, id] = cursor ? JSON.parse(atob(cursor)) as [string, string] : [];
   const rest = at ? sorted.filter(job => job.createdAt < at || (job.createdAt === at && job.id < id!)) : sorted;
   const page = rest.slice(0, size), last = page.at(-1);
-  return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
+  return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, activeJobs: downloadJobs.filter(job => ["queued", "resolving", "downloading", "finalizing"].includes(job.state)).length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
 }
 function downloadSummary() {
   const storageReady = localStorage.getItem("moa.mockDownloads") !== "off", allowed = localStorage.getItem("moa.mockDownloadsAllowed") !== "0";

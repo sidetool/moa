@@ -545,7 +545,8 @@ export interface DownloadStatus {
   enabled: boolean; allowed: boolean; storageReady: boolean; quality: DownloadQuality;
   configured: boolean; reason: string | null; quotaBytes: number; usedBytes: number;
   jobs: DownloadJob[];
-  totalJobs?: number; nextCursor?: string | null;
+  /** Active jobs across the entire server, independent of page/title filters. */
+  activeJobs?: number; totalJobs?: number; nextCursor?: string | null;
 }
 export interface DownloadChoice { id: string; label: string }
 export interface EpisodeDownloadStatus {

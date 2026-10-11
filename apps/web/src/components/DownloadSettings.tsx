@@ -55,7 +55,7 @@ export function DownloadSettings() {
     catch (cause) { setQuotaError(configError(cause, "한도를 저장하지 못했어요.")); setQuotaState("error"); }
   };
   const ready = data.allowed && data.storageReady && data.quotaBytes > 0;
-  const runningCount = data.jobs.filter(job => ACTIVE_DOWNLOAD.includes(job.state)).length;
+  const runningCount = data.activeJobs ?? data.jobs.filter(job => ACTIVE_DOWNLOAD.includes(job.state)).length;
   const patch = async (key: "enabled" | "quality", body: { enabled?: boolean; quality?: DownloadQuality }) => {
     setConfig({ busy: key, error: null });
     try { await actions.configure(body); setConfig({ busy: null, error: null }); setConfirmOff(false); }
