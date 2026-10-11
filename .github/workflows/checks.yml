@@ -24,8 +24,10 @@ jobs:
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts
       - name: Source playback integration
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-identity.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
-      - name: Plugin discovery contract
-        run: pnpm --filter @moa/server exec tsx --test test/plugin-discovery.test.ts
+      - name: Plugin discovery and people contracts
+        run: |
+          pnpm --filter @moa/server exec tsx --test test/plugin-discovery.test.ts test/plugin-people.test.ts
+          node --test plugins/title-people/test/plugin.test.mjs
       - run: pnpm --filter @moa/web build
       - name: Isolated Docker update and rollback
         run: |

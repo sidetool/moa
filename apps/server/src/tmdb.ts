@@ -1,3 +1,4 @@
+import { tmdbPeople, tmdbPersonWorks } from './tmdb-people.js';
 import { parseSeasonInfo } from './season-info.js';
 import { parseSeason } from '@moa/subtitles-ko';
 import type { MediaCard, MediaDetail, MetadataCandidate, MetadataKind, MetadataLink, Person } from '@moa/shared';
@@ -148,6 +149,23 @@ export class Tmdb {
     } finally { this.release(); }
   }
 
+  /** Read only existing accepted matches. Never run title matching on behalf of a plugin. */
+  linkedTitle(mediaId: string): import('@moa/shared').LinkedPluginTitle | null {
+    const row = this.db.get("SELECT m.title,l.kind,l.tmdb_id FROM media m JOIN tmdb_links l ON l.media_id=m.id WHERE m.id=? AND l.status IN ('auto','manual')", mediaId);
+    if (!row || !['movie','tv'].includes(row.kind) || !Number.isSafeInteger(row.tmdb_id) || row.tmdb_id <= 0) return null;
+    return {mediaId,provider:this.providerId,kind:row.kind,id:String(row.tmdb_id),name:row.title,scope:row.kind === 'tv' ? 'series' : 'movie'};
+  }
+  async peopleCredits(title: import('@moa/shared').LinkedPluginTitle) {
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    if (title.provider !== this.providerId || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new ApiFailure(400, 'invalid-metadata-identity');
+    const data = await this.get(`/${title.kind}/${title.id}/${title.kind === 'tv' ? 'aggregate_credits' : 'credits'}`, {language:'ko-KR'});
+    return tmdbPeople(data, title.kind);
+  }
+  async personWorks(id: string) {
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    if (!/^[1-9][0-9]{0,14}$/.test(id)) throw new ApiFailure(400, 'invalid-metadata-identity');
+    return tmdbPersonWorks(await this.get(`/person/${id}/combined_credits`, {language:'ko-KR'}));
+  }
   /** Fixed first-page discovery; reuse credential storage, request limits and shutdown signal. */
   async trending(query: import('@moa/shared').TrendingQuery): Promise<import('@moa/shared').DiscoveryItem[]> {
     if (!['movie', 'tv'].includes(query.kind) || !['day', 'week'].includes(query.window)) throw new ApiFailure(400, 'invalid-discovery-query');
@@ -278,7 +296,7 @@ export class Tmdb {
     videos.sort((a, b) => Number(b.iso_639_1 === 'ko') - Number(a.iso_639_1 === 'ko') || Number(b.type === 'Trailer') - Number(a.type === 'Trailer') || Number(b.official) - Number(a.official));
     const detail: DetailInfo = {
       tagline: d.tagline || undefined, trailer: videos[0]?.key,
-      people: cast.slice(0, 16).map(p => ({ name: p.name, role: (p.roles?.[0]?.character || p.character || '').replace(/\s*\((?:voice|목소리)\)\s*$/i, '') || undefined, photo: img('w185', p.profile_path) })),
+      people: cast.slice(0, 16).map(p => ({ ...(Number.isSafeInteger(p.id) && p.id > 0 ? {identity:{provider:this.providerId,id:String(p.id)}} : {}), name: p.name, role: (p.roles?.[0]?.character || p.character || '').replace(/\s*\((?:voice|목소리)\)\s*$/i, '') || undefined, photo: img('w185', p.profile_path) })),
       similar: (d.recommendations?.results || []).filter((r: any) => r.poster_path).slice(0, 18).map((r: any) => candidate(r, kind)),
     };
     this.db.run('INSERT OR REPLACE INTO tmdb_titles VALUES(?,?,?,?,?)', kind, tmdbId, JSON.stringify(card), JSON.stringify(detail), Date.now());

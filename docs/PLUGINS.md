@@ -279,3 +279,100 @@ fetch timestamp in ISO UTC, not TMDB's ranking timestamp.
 
 The POST transport is `/api/plugin-runtime/:id/discovery/trending` with
 `{ revision, query }`; plugins use the SDK, not direct internal requests.
+
+## 작품 크레딧과 인물 참여작 (구현 브랜치, 미출시)
+
+`feat/people-plugin`은 기존 `feat/discovery-plugin` 위에 추가된 기능이다.
+현재 정식 v0.1.1에는 없으며, 제공 버전이 확정되기 전의 최소 버전 후보는
+`0.2.0-beta.1`이다. 패키지에 `metadata.read` 권한을 명시해야 한다.
+
+```js
+const credits = await moa.metadata.credits();
+// 현재 상세 화면의 크레딧에 있는 인물만 조회한다.
+const works = await moa.metadata.person({provider: person.provider, id: person.id});
+```
+
+호스트 SDK는 현재 `/title/:id`에서 MOA 작품 ID를 가져온다. 플러그인이 제목을
+검색해서 작품을 재매칭하지 않는다. 서버는 기존 `auto`/`manual` 연결만 읽고,
+연결을 만들거나 변경하지 않는다. 자동 연결의 정확도를 추가 보증하는 API는
+아니며, 연결이 잘못됐다면 MOA 메타데이터 설정에서 바로잡아야 한다.
+
+- 크레딧 응답: `{provider,status,title,cast,crew,truncated}`.
+- 참여작 응답: `{provider,status,title,person,items,truncated}`.
+- `status`: `ready`, `unlinked`(사용 가능한 기존 연결 없음),
+  `unconfigured`(공급자 키 없음), `restricted`(키즈/없는 프로필),
+  `unavailable`(조회 실패·조회 중 연결 변경·동시 요청 한도 등).
+- 준비되지 않은 응답은 `title/person:null`, 빈 목록이며 이전 데이터를 표시하지 않는다.
+- `title`: `{mediaId,provider,kind,id,name,scope}`. `mediaId`는 MOA ID,
+  `id`는 공급자 ID다. `scope`는 영화 `movie` 또는 TV 시리즈 전체 `series`다.
+- `PersonCredit`: `{provider,id,name,photo?,roles:string[]}`. 출연진과 제작진을
+  별도 목록으로 반환한다. 같은 인물의 여러 배역·직책을 보존한다.
+- `items`는 인기 API와 같은 `DiscoveryItem[]`이다. 작품·인물의 외부 ID는
+  불투명 문자열이다. 공급자가 다른 ID를 합치거나 숫자로 변환하지 않는다.
+- 출연진/제작진 각각 최대 60명, 각 목록에서 인물당 8개 역할, 참여작 최대 40개.
+  제한 때문에 누락된 데이터가 있으면 `truncated:true`다. 목록 순서는 공급자
+  순서이며, 인기 순위나 전체 필모그래피라고 표현하지 않는다.
+- 배역의 `(voice)` 등 원문 표기를 유지하지만 더빙 언어·판본을 추측하지 않는다.
+  TV aggregate credits는 시즌/회차 전용 크레딧이 아니다.
+- 키즈 프로필은 참여작 전체의 등급을 판정할 수 없어 외부 호출 없이 제한한다.
+  일반 회원은 자신이 접근 가능한 프로필로 사용할 수 있다.
+
+SDK가 호출하는 HTTP 경로는 `POST /api/plugin-runtime/:pluginId/metadata/credits`
+및 `/metadata/person`이다. 본문은 `{revision,mediaId}` 및
+`{revision,mediaId,person:{provider,id}}`다. 관리자 경로 `/api/plugins/:pluginId/…`도
+같은 계약을 사용한다. JSON의 ID 타입을 강제로 변환하지 않는다. HTTP 경로는
+현재 페이지를 입증하는 토큰이 아니므로, 권한은 현재 프로필이 볼 수 있는
+연결된 작품 메타데이터를 읽는 것으로 해석해야 한다. 임의 외부 ID 조회는
+제공하지 않으며 참여작 요청의 인물은 해당 작품 크레딧에 있어야 한다.
+
+각 요청에 계정/프로필·활성화·패키지 revision·권한을 검사하고, 외부 응답 후에도
+권한·프로필 정책·작품 연결·공급자 설정을 다시 확인한다. SDK는 상세 화면 이동
+또는 프로필 전환 뒤 도착한 결과도 전달하지 않는다. 응답은 `private, no-store`.
+
+내부 `PeopleProvider`는 연결 읽기·크레딧·참여작만 제공하는 작은 계약이다.
+현재 구현은 TMDB 하나이고, 키나 임의 URL/헤더는 플러그인에 노출하지 않는다.
+공개 공급자 응답만 6시간, 최대 128개 메모리 캐시에 보관한다. 동일 요청은
+합치고 동시 공급자 요청은 최대 4개, 실패는 60초 뒤 재시도한다. 만료된 자료는
+실패 시 재사용하지 않는다. 계정 기록·시청기록·관심목록은 읽지 않는다.
+공급자/설정 변경 시 캐시를 무효화한다. 새로운 상주 프로세스나 DB 테이블은 없다.
+
+공급자 자료: [영화 크레딧](https://developer.themoviedb.org/reference/movie-credits),
+[TV 시리즈 전체 크레딧](https://developer.themoviedb.org/reference/tv-series-aggregate-credits),
+[인물의 영화·TV 참여작](https://developer.themoviedb.org/reference/person-combined-credits).
+
+
+### 기존 출연진 UI 확장: `title.people`
+
+인물 플러그인은 별도 출연진 iframe 패널을 중복해서 그리지 않는다. 기존
+`PeopleRow`와 MOA 컴포넌트로 렌더링되는 상세 시트에 데이터를 제공한다.
+패키지는 `hooks:["title.people"]`, `permissions:["metadata.read"]`,
+`placements:["app"]`, API 2 이상을 선언하고 아래처럼 등록한다.
+
+```js
+moa.hooks.register('title.people', request => request.action === 'credits'
+  ? moa.metadata.credits()
+  : moa.metadata.person(request.person));
+```
+
+요청은 `{action:'credits',mediaId}` 또는
+`{action:'person',mediaId,person:{provider,id}}`다. 반환 계약은 위 API와 같다.
+플러그인에는 화면에 임의 HTML을 삽입하는 권한을 주지 않는다. MOA가 문자열,
+ID, 현재 작품, 지원 공급자, 목록 수와 이미지 URL을 검증해 기존 UI로 렌더링한다.
+현재 렌더러는 TMDB 출처·이미지 규칙만 지원한다. 타 공급자는 조용히 TMDB로
+표시하지 않고 명시적으로 거부하며, 추후 해당 공급자의 표시 규칙도 추가해야 한다.
+
+인물 패키지는 자체 UI·네트워크·이미지 다운로드가 없어 `ui`, `app.navigate`,
+`connect` 권한이 필요 없다. 검색은 사용자가 네이티브 참여작 링크를 선택할 때만
+일어난다. 사진/포스터는 기존 MOA 이미지 표시 경로를 사용하며 iframe CSP는
+완화하지 않는다. API 키와 원본 공급자 응답은 여전히 서버 경계 안에 있다.
+
+등록된 공급 기능이 없으면 기존 출연진 행을 유지한다. 네이티브 `Person`에
+선택적 `identity:{provider,id}`가 있으면 인물 탐색으로 연결할 수 있다.
+예전 캐시에 ID가 없으면 이름으로 추측하지 않고 전체 크레딧 진입을 사용한다.
+외부 ID는 메타데이터가 정상 갱신될 때 함께 저장되며, 이번 작업 때문에 기존
+캐시를 일괄 무효화하거나 사이트 요청을 실행하지 않는다.
+
+활성 프로필에서 여러 패키지가 등록되면 플러그인 ID 순 첫 번째를 사용한다.
+등록 해제·프로필 변경·취소·20초 제한에 걸린 응답은 버린다. 결과는 최대
+262,144자이며, 캐시나 영구 저장을 하지 않는다. 요청 전후에 활성화·revision·
+권한을 확인하고 현재 상세 작품과 다른 응답을 거부한다.

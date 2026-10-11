@@ -1,10 +1,12 @@
-import { Check, Search, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, ChevronRight, Search, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MediaDetail, MetadataCandidate, MetadataLink, Person } from "@moa/shared";
 import { api } from "../lib/api";
 import { useMe } from "../api/queries";
+import { usePeopleSource, type PersonIdentity } from "../lib/people-hooks";
+import { PeopleSheet, linkableIdentity } from "./TitlePeople";
 import { cx } from "../lib/format";
 import { Artwork } from "./Artwork";
 import { Button, IconButton } from "./ui";
@@ -27,16 +29,37 @@ export function TrailerDialog({ videoKey, title, onClose }: { videoKey: string; 
   </div>;
 }
 
-export function PeopleRow({ people }: { people: Person[] }) {
+export function PeopleRow({ people, mediaId, linked }: { people: Person[]; mediaId: string; linked: boolean }) {
+  // With an enabled `title.people` plugin the same row gains a full credits sheet; otherwise it stays as before.
+  // Linked titles without native cast (crew-only works, older cached details) still get an entry to the sheet.
+  const source = usePeopleSource();
+  const [sheet, setSheet] = useState<{ start?: PersonIdentity & { name: string } } | null>(null);
+  const close = useCallback(() => setSheet(null), []);
+  // A sheet belongs to the source that opened it: disabling or replacing the plugin closes it for good.
+  const [owner, setOwner] = useState(source);
+  if (owner !== source) { setOwner(source); setSheet(null); }
+  const entry = source && (people.length || linked);
+  if (!people.length && !entry) return null;
   return <section className="title-section" aria-labelledby="people-title">
-    <h2 id="people-title">출연</h2>
-    <ul className="people no-scrollbar">
-      {people.map((p, i) => <li key={`${p.name}-${i}`} className="person">
-        <span className="person-photo">{p.photo ? <img src={p.photo} alt="" loading="lazy" draggable={false} /> : <span aria-hidden="true">{p.name.slice(0, 1)}</span>}</span>
-        <b>{p.name}</b>
-        {p.role && <small>{p.role}</small>}
-      </li>)}
-    </ul>
+    <div className="title-section-head">
+      <h2 id="people-title">{people.length ? "출연" : "출연·제작진"}</h2>
+      {entry && <button type="button" className="text-btn" onClick={() => setSheet({})}>{people.length ? "출연·제작진 전체" : "목록 보기"}<ChevronRight size={16} aria-hidden="true" /></button>}
+    </div>
+    {!people.length && <p className="people-empty">이 화면에 표시할 출연 정보가 없어요. 목록에서 TMDB에 등록된 출연진과 제작진을 확인해 보세요.</p>}
+    {!!people.length && <ul className="people no-scrollbar">
+      {people.map((p, i) => {
+        const identity = source ? linkableIdentity(p.identity) : null;
+        const content = <>
+          <span className="person-photo">{p.photo ? <img src={p.photo} alt="" loading="lazy" draggable={false} /> : <span aria-hidden="true">{p.name.slice(0, 1)}</span>}</span>
+          <b>{p.name}</b>
+          {p.role && <small>{p.role}</small>}
+        </>;
+        return <li key={`${p.name}-${i}`} className="person">
+          {identity ? <button type="button" className="person-link" aria-label={`${p.name}${p.role ? `, ${p.role}` : ""}. 참여 작품 보기`} onClick={() => setSheet({ start: { ...identity, name: p.name } })}>{content}</button> : content}
+        </li>;
+      })}
+    </ul>}
+    {sheet && source && <PeopleSheet mediaId={mediaId} source={source} start={sheet.start} onClose={close} />}
   </section>;
 }
 

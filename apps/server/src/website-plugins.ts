@@ -1,3 +1,4 @@
+import type { PluginPeople } from './plugin-people.js';
 import type { PluginDiscovery } from './plugin-discovery.js';
 import { compatibilityHttp } from '@moa/extensions';
 import { safeZipPath } from '@moa/subtitles-ko';
@@ -35,8 +36,8 @@ export function pluginPackage(value: unknown): WebsitePluginPackage {
     !Number.isSafeInteger(p.apiVersion) || p.apiVersion < 1 || p.apiVersion > 1000 || p.minMoaVersion !== undefined && (typeof p.minMoaVersion !== 'string' || p.minMoaVersion.length > 80 || !semver.test(p.minMoaVersion)) || typeof p.id !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(p.id) || typeof p.name !== 'string' || !p.name.trim() || p.name.length > 80 ||
     typeof p.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(p.version) || p.version.length > 40 ||
     typeof p.description !== 'string' || p.description.length > 500 || !list(p.placements, ['app', 'settings', 'player', 'home', 'detail']) || !p.placements.length ||
-    !list(p.permissions, ['app.context', 'app.navigate', 'ui', 'player.context', 'player.control', 'subtitles.import', 'storage', 'notifications', 'catalog.modify', 'discovery.read']) || !Array.isArray(p.connect) || p.connect.length > 10 || new Set(p.connect).size !== p.connect.length ||
-    p.hooks !== undefined && (!list(p.hooks, ['catalog.transform']) || !p.permissions.includes('catalog.modify') || !p.script || p.apiVersion < 2) || p.placements.includes('detail') && p.apiVersion < 2 ||
+    !list(p.permissions, ['app.context', 'app.navigate', 'ui', 'player.context', 'player.control', 'subtitles.import', 'storage', 'notifications', 'catalog.modify', 'discovery.read', 'metadata.read']) || !Array.isArray(p.connect) || p.connect.length > 10 || new Set(p.connect).size !== p.connect.length ||
+    p.hooks !== undefined && (!list(p.hooks, ['catalog.transform', 'title.people']) || p.hooks.includes('catalog.transform') && !p.permissions.includes('catalog.modify') || p.hooks.includes('title.people') && !p.permissions.includes('metadata.read') || !p.script || p.apiVersion < 2) || p.placements.includes('detail') && p.apiVersion < 2 ||
     (p.html !== undefined && typeof p.html !== 'string') || (p.script !== undefined && typeof p.script !== 'string') || (typeof p.html === 'string') === (typeof p.script === 'string') || typeof (p.html ?? p.script) !== 'string' || !(p.html ?? p.script)!.trim() || Buffer.byteLength((p.html ?? p.script)!) > 200 * 1024 ||
     p.actions !== undefined && (!p.script || !Array.isArray(p.actions) || p.actions.length > 8 || new Set(p.actions.map(action => action?.id)).size !== p.actions.length || p.actions.some(action => !action || Object.keys(action).some(key => !['id', 'label'].includes(key)) || typeof action.id !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(action.id) || typeof action.label !== 'string' || !action.label.trim() || action.label.length > 60))) throw new ApiFailure(400, 'invalid-plugin');
   for (const origin of p.connect) {
@@ -120,7 +121,7 @@ export async function unpackPlugin(value: unknown): Promise<WebsitePluginPackage
   }
 }
 
-export function registerWebsitePlugins(app: FastifyInstance, db: Store, discovery?: PluginDiscovery) {
+export function registerWebsitePlugins(app: FastifyInstance, db: Store, discovery?: PluginDiscovery, people?: PluginPeople) {
   db.db.exec('CREATE TABLE IF NOT EXISTS website_plugins(id TEXT PRIMARY KEY,package TEXT NOT NULL,enabled INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS website_plugin_data(plugin_id TEXT REFERENCES website_plugins(id) ON DELETE CASCADE,profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,value TEXT NOT NULL,PRIMARY KEY(plugin_id,profile_id))');
   const metadata = (row: Record<string, any>): WebsitePlugin => { const { html, script, ...p } = JSON.parse(row.package) as WebsitePluginPackage; return { ...p, kind: script === undefined ? 'html' : 'script', revision: hash(row.package), enabled: Boolean(row.enabled), compatibility: pluginCompatibility(p) }; };
   const get = (id: string, enabled = true) => {
@@ -149,6 +150,31 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
   });
   app.delete('/api/admin/plugins/:id', async (req, reply) => { db.run('DELETE FROM website_plugins WHERE id=?', (req.params as { id: string }).id); return reply.code(204).send(); });
   for (const base of ['/api/plugins', '/api/plugin-runtime']) {
+    for (const action of ['credits','person'] as const) app.post(`${base}/:id/metadata/${action}`, {
+      bodyLimit:4096,
+      preValidation: async req => {
+        // The app's general validator coerces scalar types; opaque identities must not be coerced.
+        const b = req.body as any;
+        if (typeof b?.revision !== 'string' || typeof b?.mediaId !== 'string' || action === 'person' && (typeof b?.person?.provider !== 'string' || typeof b?.person?.id !== 'string')) throw new ApiFailure(400,'invalid-request');
+      },
+      schema:{body:{type:'object',additionalProperties:false,required:['revision','mediaId',...(action === 'person' ? ['person'] : [])],properties:{
+        revision:{type:'string',pattern:'^[a-f0-9]{32}$'}, mediaId:{type:'string',minLength:1,maxLength:256},
+        ...(action === 'person' ? {person:{type:'object',additionalProperties:false,required:['provider','id'],properties:{provider:{type:'string',minLength:1,maxLength:64},id:{type:'string',minLength:1,maxLength:256}}}} : {})
+      }}}
+    }, async (req,reply) => {
+      const id = (req.params as {id:string}).id, body = req.body as {revision:string;mediaId:string;person:{provider:string;id:string}};
+      const check = () => {
+        const row=get(id), p=JSON.parse(row.package) as WebsitePluginPackage;
+        if (body.revision !== hash(row.package)) throw new ApiFailure(409,'plugin-updated');
+        if (!p.permissions.includes('metadata.read')) throw new ApiFailure(403,'plugin-permission-denied');
+      };
+      check();
+      if (!people) throw new ApiFailure(503,'plugin-metadata-unavailable');
+      const result = action === 'credits' ? await people.credits(req.moaProfile!,body.mediaId) : await people.person(req.moaProfile!,body.mediaId,body.person);
+      check();
+      return reply.header('Cache-Control','private, no-store').send(result);
+    });
+
     app.post(`${base}/:id/discovery/trending`, { bodyLimit: 4096, schema: { body: {
       type: 'object', additionalProperties: false, required: ['revision', 'query'], properties: {
         revision: { type: 'string', pattern: '^[a-f0-9]{32}$' },

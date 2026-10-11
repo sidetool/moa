@@ -876,3 +876,49 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
 .update-details ol { display: grid; gap: 8px; margin: 0 0 14px; padding: 0; list-style: none; font-size: .86rem; }
 .update-details li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .update-details li small { margin-right: auto; color: var(--text-3); }
+
+/* Title people: the native cast row gains a full credits sheet when a `title.people` plugin is enabled. */
+.title-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.title-section-head h2 { margin-bottom: 0; }
+.people:has(.person-link) { padding-top: 3px; padding-inline: 3px; }
+.person-link { display: grid; justify-items: center; gap: 2px; width: 100%; min-width: 0; color: inherit; text-align: center; }
+.person-link .person-photo { transition: box-shadow .15s; }
+.person-link:hover .person-photo, .person-link:focus-visible .person-photo { box-shadow: 0 0 0 2px var(--text); }
+.person-link:hover b, .person-link:focus-visible b { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.person-link:focus-visible { outline: none; }
+.people-empty { color: var(--text-3); font-size: .9rem; }
+.people-sheet { width: min(640px, 100%); }
+.people-sheet-head { gap: 8px; }
+.people-sheet-head:has(> .icon-btn:first-child) { padding-left: 10px; }
+.people-sheet-head h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
+.people-sheet-body { display: grid; gap: 12px; align-content: start; padding: 4px 22px 16px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.people-scope { color: var(--text-3); font-size: .84rem; line-height: 1.45; }
+.people-scope b { margin-right: 6px; color: var(--text-2); font-weight: 700; }
+.people-tabs { display: flex; gap: 8px; }
+.people-tabs .chip small { margin-left: 6px; color: inherit; opacity: .6; font-weight: 600; font-variant-numeric: tabular-nums; }
+.credit-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 2px 8px; margin: 0 -8px; padding: 0; list-style: none; }
+.credit-person { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; align-items: center; width: 100%; padding: 8px; border-radius: var(--radius-s); text-align: left; }
+.credit-person:hover, .credit-person:focus-visible { background: var(--surface-1); }
+.credit-person .person-photo { width: 48px; height: 48px; margin: 0; font-size: 1.1rem; }
+.credit-text { display: grid; min-width: 0; }
+.credit-text b { font-size: .92rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.credit-text small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-3); font-size: .82rem; line-height: 1.35; overflow-wrap: anywhere; }
+.credit-text small.is-empty { opacity: .7; }
+.people-fine { color: var(--text-3); font-size: .78rem; line-height: 1.45; }
+.people-notice { display: grid; justify-items: center; gap: 12px; padding: 22px 8px; color: var(--text-2); font-size: .9rem; text-align: center; }
+.person-profile { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 18px; align-items: center; }
+.person-photo.is-large { width: 88px; height: 88px; margin: 0; }
+.person-roles { display: grid; gap: 4px; margin: 0 0 6px; }
+.person-roles div { display: flex; gap: 8px; font-size: .9rem; line-height: 1.45; }
+.person-roles dt { flex: none; color: var(--text-3); font-weight: 600; }
+.person-roles dd { margin: 0; overflow-wrap: anywhere; }
+.person-works-title { margin-top: 8px; font-size: 1.05rem; font-weight: 800; }
+.person-works-title small { margin-left: 6px; color: var(--text-3); font-size: .86rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.similar-grid.person-works { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 18px 10px; }
+.people-sheet-foot { display: flex; align-items: center; gap: 12px; padding: 12px 22px 16px; border-top: 1px solid var(--hairline); color: var(--text-3); font-size: .74rem; }
+.people-sheet-foot img { width: 72px; flex: none; }
+@media (max-width: 600px) {
+  .person-profile { grid-template-columns: 72px minmax(0, 1fr); gap: 14px; }
+  .person-photo.is-large { width: 72px; height: 72px; }
+  .similar-grid.person-works { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
