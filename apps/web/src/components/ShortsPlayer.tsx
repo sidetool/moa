@@ -1,6 +1,6 @@
 import { AlertCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { markShortSeen, shortsTrailers } from "../api/shorts";
+import { markShortFailed, markShortSeen, shortsTrailers } from "../api/shorts";
 import { isVideoUnavailable, loadYouTubeApi, trailerKeys, youtubeEmbedUrl, YOUTUBE_ENDED, YOUTUBE_PLAYING, type YouTubePlayer } from "../lib/youtube";
 import { Spinner } from "./ui";
 
@@ -17,6 +17,17 @@ export interface ShortsSession {
   reported: Set<string>;
   /** Works whose trailers currently can't play here; moving on from them isn't a choice about the work. */
   failed: Set<string>;
+  failureReports?: Map<string, "unavailable" | "temporary">;
+}
+
+/** Report only failures presented by an active player, never speculative preparation or autoplay denial. */
+export function reportShortFailure(itemKey: string, session: ShortsSession, reason: "unavailable" | "temporary") {
+  session.failed.add(itemKey);
+  const reports = session.failureReports ??= new Map();
+  const previous = reports.get(itemKey);
+  if (previous === "unavailable" || previous === reason) return;
+  reports.set(itemKey, reason);
+  markShortFailed(itemKey, reason).catch(() => {});
 }
 
 /** Foreground playing time for one work. `since` is set while it plays; `flush` banks it. Reports seen
@@ -146,7 +157,8 @@ export function ShortsPlayer({ itemKey, title, session, control, muted, onMuted,
 
   useEffect(() => {
     callbacks.current.onBlocked(phase === "blocked");
-    if (phase === "none" || phase === "env" || phase === "list-error") session.failed.add(itemKey);
+    if (phase === "none") reportShortFailure(itemKey, session, "unavailable");
+    else if (phase === "env" || phase === "list-error") reportShortFailure(itemKey, session, "temporary");
   }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     control.current = { play: () => { player.current?.playVideo(); setPhase(old => old === "blocked" ? "ready" : old); } };

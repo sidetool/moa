@@ -260,6 +260,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   app.post('/api/shorts/:key/seen', {schema:{params:shortsKey}}, async req => { shorts.seen(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
+  app.post('/api/shorts/:key/failed', {schema:{params:shortsKey,body:object({reason:{type:'string',enum:['unavailable','temporary']}},['reason'])}}, async req => { shorts.failed(profile(req),params(req).key,(req.body as {reason:'unavailable'|'temporary'}).reason); return {ok:true}; });
   app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
   registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });

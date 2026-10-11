@@ -400,6 +400,7 @@ const mockShorts: ShortsItem[] = [
 ];
 const shortsTrailerKeys: Record<string, string[]> = { "movie:101": ["aaaaaaaaaa1", "aaaaaaaaaa2"], "tv:201": ["bbbbbbbbbb1"], "tv:202": ["cccccccccc1"], "movie:102": [], "tv:203": ["dddddddddd1"], "tv:204": ["eeeeeeeeee1"] };
 const shortsSeen = new Set<string>();
+const shortsFailures = new Map<string, number>();
 
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -675,13 +676,24 @@ export function installMockApi() {
       const hide = !replay && settings.shortsRepeatDays !== 0;
       // Like the server, the cursor walks the unfiltered pool so a fresh view never shifts later pages.
       const pool = mockShorts.filter(item => picked.includes(item.category!));
-      const start = Number(url.searchParams.get("cursor") ?? 0), end = start + 4;
-      return json({ status: "ready", items: pool.slice(start, end).filter(item => !hide || !shortsSeen.has(item.key)), nextCursor: end < pool.length ? String(end) : null });
+      let end = Number(url.searchParams.get("cursor") ?? 0);
+      const selected: ShortsItem[] = [];
+      for (; end < pool.length && selected.length < 4; end++) {
+        const item = pool[end];
+        if ((shortsFailures.get(item.key) ?? 0) <= Date.now() && (!hide || !shortsSeen.has(item.key))) selected.push(item);
+      }
+      return json({ status: "ready", items: selected, nextCursor: end < pool.length ? String(end) : null });
     }
-    if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); return json({ ok: true }); }
-    const short = /^\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
+    if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); shortsFailures.clear(); return json({ ok: true }); }
+    const short = /^\/shorts\/([^/]+)\/(trailers|seen|skip|failed)$/.exec(path);
     if (short) {
       const key = decodeURIComponent(short[1]);
+      if (short[2] === "failed") {
+        if (method !== "POST" || !["unavailable", "temporary"].includes(body.reason)) return json({ error: "invalid-shorts-failure" }, 400);
+        const ttl = body.reason === "unavailable" ? Math.max(1, settings.shortsRepeatDays ?? 7) * 86400_000 : 3600_000;
+        shortsFailures.set(key, Math.max(shortsFailures.get(key) ?? 0, Date.now() + ttl));
+        return json({ ok: true });
+      }
       if (short[2] !== "trailers") { if (method !== "POST") return json({ error: "not-found" }, 404); shortsSeen.add(key); return json({ ok: true }); }
       return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
     }

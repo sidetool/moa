@@ -26,7 +26,12 @@ export class Shorts {
       profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
       external_key TEXT NOT NULL,seen_at INTEGER NOT NULL,
       PRIMARY KEY(profile_id,external_key));
-      CREATE INDEX IF NOT EXISTS shorts_seen_time ON shorts_seen(seen_at);`);
+      CREATE INDEX IF NOT EXISTS shorts_seen_time ON shorts_seen(seen_at);
+      CREATE TABLE IF NOT EXISTS shorts_failures(
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        external_key TEXT NOT NULL,expires_at INTEGER NOT NULL,
+        PRIMARY KEY(profile_id,external_key));
+      CREATE INDEX IF NOT EXISTS shorts_failures_expiry ON shorts_failures(expires_at);`);
   }
   private state(profile:string):ShortsFeed['status'] {
     const row=this.db.get('SELECT kids FROM profiles WHERE id=?',profile);
@@ -37,7 +42,7 @@ export class Shorts {
     return 'ready';
   }
   private assert(profile:string){const state=this.state(profile);if(state!=='ready')throw new ApiFailure(state==='unconfigured'?503:403,`shorts-${state}`);}
-  private cleanup(){this.db.run('DELETE FROM shorts_seen WHERE seen_at<=?',this.now()-30*DAY);}
+  private cleanup(){this.db.run('DELETE FROM shorts_seen WHERE seen_at<=?',this.now()-30*DAY);this.db.run('DELETE FROM shorts_failures WHERE expires_at<=?',this.now());}
   private checkRevision(){
     if(this.revision!==this.tmdb.configurationRevision){
       this.videoCache.clear();this.pending.clear();this.popularCache.clear();this.popularPending.clear();this.popularRetry.clear();this.revision=this.tmdb.configurationRevision;
@@ -103,6 +108,8 @@ export class Shorts {
     });
     const repeatDays=settings.shortsRepeatDays??7;
     const excluded=new Set<string>(!replay&&repeatDays>0?this.db.all('SELECT external_key FROM shorts_seen WHERE profile_id=? AND seen_at>?',profile,this.now()-repeatDays*DAY).map(row=>row.external_key):[]);
+    // Unplayable trailers are not watched/disliked. Even replay mode must not recycle failures.
+    for(const row of this.db.all('SELECT external_key FROM shorts_failures WHERE profile_id=? AND expires_at>?',profile,this.now()))excluded.add(row.external_key);
     // Honor existing "not interested" feedback, including the popular side of a mixed feed.
     for(const row of this.db.all('SELECT external_key FROM recommendation_feedback WHERE profile_id=?',profile))excluded.add(row.external_key);
     if(settings.shortsHideWatched!==false){
@@ -160,6 +167,14 @@ export class Shorts {
     // Bound the feature's persistent footprint even for very active viewers.
     this.db.run('DELETE FROM shorts_seen WHERE profile_id=? AND external_key NOT IN (SELECT external_key FROM shorts_seen WHERE profile_id=? ORDER BY seen_at DESC LIMIT 2000)',profile,profile);
   }
-  reset(profile:string){this.db.run('DELETE FROM shorts_seen WHERE profile_id=?',profile);}
+  failed(profile:string,key:string,reason:'unavailable'|'temporary'){
+    this.assert(profile);
+    if(!validKey.test(key)||!['unavailable','temporary'].includes(reason))throw new ApiFailure(400,'invalid-shorts-failure');
+    this.cleanup();
+    const ttl=reason==='unavailable'?Math.max(1,this.db.settings(profile).shortsRepeatDays??7)*DAY:3600_000;
+    this.db.run('INSERT INTO shorts_failures VALUES(?,?,?) ON CONFLICT(profile_id,external_key) DO UPDATE SET expires_at=MAX(shorts_failures.expires_at,excluded.expires_at)',profile,key,this.now()+ttl);
+    this.db.run('DELETE FROM shorts_failures WHERE profile_id=? AND external_key NOT IN (SELECT external_key FROM shorts_failures WHERE profile_id=? ORDER BY expires_at DESC LIMIT 2000)',profile,profile);
+  }
+  reset(profile:string){this.db.transaction(()=>{this.db.run('DELETE FROM shorts_seen WHERE profile_id=?',profile);this.db.run('DELETE FROM shorts_failures WHERE profile_id=?',profile);});}
   close(){this.closed=true;this.videoCache.clear();this.pending.clear();this.popularCache.clear();this.popularPending.clear();this.popularRetry.clear();}
 }
