@@ -1,6 +1,7 @@
 // Bounded synthetic smoke for experimental direct (native) Shorts playback. Locally generated video,
 // fake YouTube API for the inline fallback, routed API, no external network.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
@@ -56,9 +57,9 @@ const POOL = [
   item('movie:3', '늦은 응답', 'movie', { poster: '/mock-art/2.svg' })
 ];
 const TRAILERS = { 'movie:1': ['okaaaaaaaaa'], 'tv:2': ['okbbbbbbbbb'], 'movie:3': ['okccccccccc'] };
-let nativeAvailable = false, fixture, busy = true;
+let nativeAvailable = false, fixture, fixtureType = 'video/webm', busy = true;
 let settings, kids, log;
-const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [], prepare: [], closed: [], media: 0 }; };
+const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [], prepare: [], closed: [], media: 0, warm: [], translate: [], cancelled: [] }; };
 const route = async context => {
   await context.route(url => !['127.0.0.1', 'localhost'].includes(url.hostname), r => {
     const url = new URL(r.request().url());
@@ -71,7 +72,17 @@ const route = async context => {
     const url = new URL(r.request().url()), path = url.pathname, method = r.request().method();
     if (path === '/api/settings') { if (method === 'PATCH') { log.patches.push(r.request().postDataJSON()); settings = { ...settings, ...r.request().postDataJSON() }; } return r.fulfill({ json: settings }); }
     if (path === '/api/home') return r.fulfill({ json: { hero: [], rows: [] } });
-    if (path === '/api/me') return r.fulfill({ json: { id: 'u', username: '테스트', role: 'member' } });
+    if (path === '/api/me') return r.fulfill({ json: { id: 'u', username: '테스트', role: 'member', permissions: ['video.watch', 'subtitles.translate'] } });
+    if (path === '/api/translation/config') return r.fulfill({ json: { provider: 'openai', baseUrl: '', configured: true, enabled: true, model: 'mock', batchSize: 120, requestIntervalMs: 0, retryCount: 0, keys: [] } });
+    const vtt = (text) => `WEBVTT\n\n00:00:00.000 --> 00:01:00.000\n${text}\n`;
+    if (path === '/api/test-subs/en.vtt') return r.fulfill({ contentType: 'text/vtt', body: vtt('Mock original caption') });
+    if (path === '/api/test-subs/ko.vtt') return r.fulfill({ contentType: 'text/vtt', body: vtt('모의 번역 자막') });
+    const job = { id: 'j1', episodeId: 'shorts', state: 'running', partial: true, revision: 1, translatedRanges: [{ start: 0, end: 60 }], done: 1, total: 2, model: 'mock', cached: false, track: { id: 'tr', label: '한국어', lang: 'ko', format: 'vtt', url: '/api/test-subs/ko.vtt', source: 'translation' } };
+    const tr = /^\/api\/shorts\/native\/([^/]+)\/subtitles\/([^/]+)\/translate$/.exec(path);
+    if (tr && method === 'POST') { log.translate.push(`${tr[1]}:${tr[2]}`); return r.fulfill({ json: job }); }
+    if (path === '/api/translations/j1') { if (method === 'DELETE') { log.cancelled.push('j1'); return r.fulfill({ status: 204, body: '' }); } return r.fulfill({ json: job }); }
+    const warmed = /^\/api\/shorts\/native\/([^/]+)\/warm$/.exec(path);
+    if (warmed && method === 'POST') { log.warm.push(warmed[1]); return r.fulfill({ json: { ready: true } }); }
     if (path === '/api/profiles') return r.fulfill({ json: [{ id: 'test', name: '테스트', color: 'blue', kids }] });
     if (path === '/api/shorts') {
       log.feed.push(url.search);
@@ -84,13 +95,21 @@ const route = async context => {
     if (path === '/api/shorts/native') return r.fulfill({ json: { available: nativeAvailable } });
     const closed = /^\/api\/shorts\/native\/([^/]+)$/.exec(path);
     if (closed && method === 'DELETE') { log.closed.push(closed[1]); return r.fulfill({ json: { ok: true } }); }
-    if (path.startsWith('/api/playback/')) { log.media++; return r.fulfill({ status: 200, contentType: 'video/webm', body: fixture }); }
+    if (path.startsWith('/api/playback/')) {
+      // Range support like the real media route, so the clip is seekable.
+      log.media++;
+      const range = /bytes=(\d+)-(\d*)/.exec(r.request().headers().range ?? '');
+      if (!range) return r.fulfill({ status: 200, contentType: fixtureType, headers: { 'Accept-Ranges': 'bytes' }, body: fixture });
+      const from = Number(range[1]), to = range[2] ? Math.min(Number(range[2]), fixture.length - 1) : fixture.length - 1;
+      return r.fulfill({ status: 206, contentType: fixtureType, headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${from}-${to}/${fixture.length}` }, body: fixture.subarray(from, to + 1) });
+    }
     const prep = /^\/api\/shorts\/([^/]+)\/native$/.exec(path);
     if (prep && method === 'POST') {
       const key = decodeURIComponent(prep[1]); log.prepare.push(key);
       if (key === 'tv:2' && busy) return r.fulfill({ status: 503, json: { error: 'shorts-native-busy' } });
       const id = { 'movie:1': 's1', 'tv:2': 's2', 'movie:3': 's3' }[key];
-      return new Promise(resolve => setTimeout(resolve, key === 'movie:3' ? 2000 : 300)).then(() => r.fulfill({ json: { sessionId: id, url: `/api/playback/${id}/shorts/a1`, mime: 'video/mp4' } })).catch(() => {});
+      const subtitles = key === 'movie:1' ? [{ id: 'en', label: 'English', lang: 'en', auto: false, url: '/api/test-subs/en.vtt' }] : undefined;
+      return new Promise(resolve => setTimeout(resolve, key === 'movie:3' ? 2000 : 300)).then(() => r.fulfill({ json: { sessionId: id, url: `/api/playback/${id}/shorts/a1`, mime: 'video/mp4', subtitles } })).catch(() => {});
     }
     const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
     if (m) { const key = decodeURIComponent(m[1]); if (m[2] !== 'trailers') { assert.equal(method, 'POST'); (m[2] === 'seen' ? log.seen : log.skips).push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
@@ -157,13 +176,29 @@ const makeFixture = async () => {
     return btoa(text);
   });
   await page.close();
-  return Buffer.from(data, 'base64');
+  return withDuration(Buffer.from(data, 'base64'), 7000);
 };
+// MediaRecorder WebM has no Duration; add one to the Info element so the seek bar has a finite length.
+function withDuration(buf, ms) {
+  const at = buf.indexOf(Buffer.from([0x15, 0x49, 0xa9, 0x66]));
+  if (at < 0) return buf;
+  const first = buf[at + 4]; let len = 1; while (len <= 8 && !(first & (0x80 >> (len - 1)))) len++;
+  let size = first & (0xff >> len); for (let i = 1; i < len; i++) size = size * 256 + buf[at + 4 + i];
+  const start = at + 4 + len, body = buf.subarray(start, start + size);
+  if (body.includes(Buffer.from([0x44, 0x89]))) return buf;
+  const duration = Buffer.alloc(11); duration[0] = 0x44; duration[1] = 0x89; duration[2] = 0x88; duration.writeDoubleBE(ms, 3);
+  const next = size + 11, header = Buffer.alloc(len); let v = next;
+  for (let i = len - 1; i >= 0; i--) { header[i] = v & 0xff; v = Math.floor(v / 256); }
+  header[0] |= 0x80 >> (len - 1);
+  return Buffer.concat([buf.subarray(0, at + 4), header, body, duration, buf.subarray(start + size)]);
+}
 const nativeState = page => page.evaluate(() => { const v = document.querySelector('.shorts-slide.is-active video'); return v ? { time: v.currentTime, src: Boolean(v.getAttribute('src')), muted: v.muted, fit: getComputedStyle(v).objectFit } : null; });
 
 try {
-  fixture = await makeFixture();
-  assert.ok(fixture.length > 10_000, 'fixture recorded');
+  // MOA_NATIVE_FIXTURE: optional local synthetic MP4 (seekable); otherwise a clip recorded in the browser.
+  if (process.env.MOA_NATIVE_FIXTURE) { fixture = readFileSync(process.env.MOA_NATIVE_FIXTURE); fixtureType = 'video/mp4'; }
+  else fixture = await makeFixture();
+  assert.ok(fixture.length > 1_000, 'fixture ready');
 
   // Settings: the option stays off and disabled until the server is configured.
   reset(); settings.shortsEnabled = true;
@@ -179,19 +214,61 @@ try {
   await page.screenshot({ path: verificationPath('native-settings.png') });
 
   // Direct playback of the settled work only; cover by default.
+  settings.translationMode = 'auto';
   await page.goto(`${base}shorts`);
   await page.locator('.shorts-slide.is-active.is-native').waitFor();
   await until(async () => ((await nativeState(page))?.time ?? 0) > .8, 'native playing', 10000);
-  await until(() => log.prepare.includes('tv:2'), 'next prefetched after playing');
-  assert.deepEqual([...new Set(log.prepare)], ['movie:1', 'tv:2'], 'current first, then only the next one');
+  await until(() => log.prepare.includes('movie:3'), 'two ahead prefetched after playing');
+  assert.deepEqual(log.prepare, ['movie:1', 'tv:2', 'movie:3'], 'current first, then next, then the one after');
+  await until(() => log.warm.includes('s3'), 'prefetched lease warmed');
+  assert.ok(!log.warm.includes('s1'), 'the playing work is not warmed');
+
   assert.equal(await page.locator('iframe').count(), 0, 'no YouTube iframe in direct mode');
   assert.equal((await nativeState(page)).fit, 'cover');
   await page.screenshot({ path: verificationPath('native-mobile.png') });
   await until(() => log.seen.includes('movie:1'), 'seen after 5s', 9000);
 
-  // Leaving releases the lease. A busy server waits for the person, then the inline YouTube fallback.
-  await page.locator('.shorts-slide.is-active').getByRole('button', { name: '다음 작품' }).click();
-  await until(async () => (await activeTitle(page)) === '준비 실패', 'to failure');
+  // Paused for the checks below (the synthetic clip is only 7s long).
+  await page.locator('.shorts-slide.is-active video').click();
+  await until(async () => page.locator('.shorts-slide.is-active video').evaluate(v => v.paused), 'paused');
+
+  // Captions: no Korean track, so auto mode translates the original once and shows it; CC can turn it off.
+  const captions = page.locator('.shorts-slide.is-active .shorts-captions');
+  await until(async () => (await captions.textContent().catch(() => '')).includes('모의 번역 자막'), 'translated caption shown', 8000);
+  assert.deepEqual(log.translate, ['s1:en'], 'one translation request');
+  const cue = await captions.boundingBox(), title = await page.locator('.shorts-slide.is-active .shorts-info').boundingBox();
+  assert.ok(cue.y + cue.height <= title.y, 'captions stay above the title');
+  await page.screenshot({ path: verificationPath('native-captions.png') });
+  await page.locator('.shorts-slide.is-active').getByRole('button', { name: '자막' }).click();
+  const menu = page.getByRole('menu');
+  assert.deepEqual(await menu.getByRole('menuitemradio').allTextContents(), ['끄기', 'English', '한국어 번역 50%']);
+  await page.screenshot({ path: verificationPath('native-cc-menu.png') });
+  await menu.getByRole('menuitemradio', { name: '끄기' }).click();
+  await until(async () => !(await captions.count()), 'captions off');
+  await until(() => log.cancelled.includes('j1'), 'turning captions off stops the translation');
+  await wait(1800);
+  assert.deepEqual(log.translate, ['s1:en'], 'no automatic restart');
+
+  // Seek: a real range; paused stays paused, the position is clamped, and a touch on it is not a feed swipe.
+  await page.evaluate(() => { window.__feedTouch = 0; document.querySelector('.shorts').addEventListener('touchstart', () => window.__feedTouch++, { passive: true }); });
+  const setSeek = value => page.locator('.shorts-slide.is-active .shorts-seek').evaluate((el, v) => {
+    el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [], changedTouches: [] }));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(v));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+  await setSeek(3);
+  await until(async () => Math.abs((await nativeState(page)).time - 3) < .3, 'seeked to 3s');
+  assert.equal(await page.locator('.shorts-slide.is-active video').evaluate(v => v.paused), true, 'still paused after seek');
+  await setSeek(999);
+  const clip = await page.locator('.shorts-slide.is-active video').evaluate(v => v.duration);
+  assert.ok((await nativeState(page)).time <= clip, 'clamped to duration');
+  assert.equal(await page.evaluate(() => window.__feedTouch), 0, 'seek touch stays out of the feed');
+  await setSeek(1);
+  await page.locator('.shorts-slide.is-active video').click();
+  await until(async () => !(await page.locator('.shorts-slide.is-active video').evaluate(v => v.paused)), 'resumed');
+
+  // The end advances and releases the lease. A busy server waits for the person, then the inline YouTube fallback.
+  await until(async () => (await activeTitle(page)) === '준비 실패', 'ended advances', 12000);
   await until(() => log.closed.includes('s1'), 'lease closed on leave');
   await page.getByText('재생하지 못했어요').waitFor();
   await wait(2000);
@@ -204,16 +281,14 @@ try {
   await assertPlayerClear(page, 'fallback');
   await page.screenshot({ path: verificationPath('native-fallback.png') });
 
-  // Moving on while preparing aborts the request (the server cancels extraction and frees the lease).
-  const aborted = [];
-  page.on('requestfailed', request => { if (/\/native$/.test(new URL(request.url()).pathname)) aborted.push(new URL(request.url()).pathname); });
+  // The work two ahead was kept through the hand-over and is consumed as is; leaving it releases it.
   await page.keyboard.press('ArrowDown');
-  await until(async () => (await activeTitle(page)) === '늦은 응답', 'to late');
-  await until(() => log.prepare.includes('movie:3'), 'late prepare sent');
+  await until(async () => (await activeTitle(page)) === '늦은 응답', 'to two-ahead');
+  await until(async () => ((await nativeState(page))?.time ?? 0) > .3, 'two-ahead plays', 10000);
+  assert.equal(log.prepare.filter(key => key === 'movie:3').length, 1, 'two-ahead lease reused');
   await page.keyboard.press('ArrowDown');
   await page.getByText('새 예고편을 다 봤어요').waitFor();
-  await until(() => aborted.some(path => path.includes('movie%3A3') || path.includes('movie:3')), 'pending prepare aborted', 5000);
-  await wait(2200);
+  await until(() => log.closed.includes('s3'), 'released after leaving');
   assert.ok(!log.skips.includes('movie:1'), 'seen work not skipped');
 
   // Leaving the page stops media.
