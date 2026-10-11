@@ -110,3 +110,61 @@ test('prepared media checks its account and PIN even when a video tag supplies n
   assert.equal((await app.inject({url:lease.url,headers:account})).json().error,'shorts-native-disabled');
   assert.equal((await app.inject({url:lease.url,headers:account})).statusCode,410);
 });
+
+test('prepared references are briefly reused only within the same profile, proxy and candidate list',async()=>{
+  let now=1,calls=0;
+  const native=new NativeShorts(async()=>{calls++;return selected;},undefined,()=>now);
+  try{
+    const a=await native.prepare('a',[id],new AbortController().signal);
+    native.release(a.sessionId);
+    await native.prepare('a',[id],new AbortController().signal);assert.equal(calls,1);
+    await native.prepare('b',[id],new AbortController().signal);assert.equal(calls,2);
+    await native.prepare('a',[id],new AbortController().signal,'http://proxy.invalid');assert.equal(calls,3);
+    now+=120_001;await native.prepare('a',[id],new AbortController().signal);assert.equal(calls,4);
+  }finally{native.close();}
+});
+
+test('connection and extraction failures are not mislabeled unsupported media',async()=>{
+  const {extractorFailure}=await import('../src/shorts-native.js');
+  assert.equal(extractorFailure('Video unavailable').statusCode,422);
+  assert.equal(extractorFailure('Sign in to confirm you are not a bot').error,'shorts-native-auth-required');
+  assert.equal(extractorFailure('connection timed out at secret-url').statusCode,504);
+  assert.ok(!extractorFailure('secret-url').message.includes('secret-url'));
+  const native=new NativeShorts(async()=>{throw extractorFailure('connection timed out');});
+  try{await assert.rejects(native.prepare('a',[id],new AbortController().signal),{statusCode:504});}finally{native.close();}
+});
+
+test('split HLS resolves through its master and retains compatible video plus matching audio',async()=>{
+  const {selectTrailerMaster}=await import('../src/shorts-native.js');
+  const master='https://example.googlevideo.com/master.m3u8';
+  const result=selectNativeTrailer(data([{...format,protocol:'m3u8_native',acodec:'none',manifest_url:master}]),id);
+  assert.equal(result.url,master);assert.equal(result.master,true);
+  const body=['#EXTM3U','#EXT-X-VERSION:6',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aac",NAME="Default",DEFAULT=YES,URI="audio.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="opus",NAME="Other",URI="unused.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1280x720,AUDIO="aac"','video.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=2000000,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080,AUDIO="aac"','large.m3u8',
+    '#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="vp09.00.21.08,opus",RESOLUTION=1280x720,AUDIO="opus"','vp9.m3u8'].join('\n');
+  const selected=selectTrailerMaster(body);assert.match(selected,/audio.m3u8/);assert.match(selected,/video.m3u8/);
+  assert.doesNotMatch(selected,/large.m3u8|unused.m3u8|vp9.m3u8/);
+  assert.throws(()=>selectTrailerMaster(body.replaceAll('avc1.','av01.')));
+  assert.throws(()=>selectTrailerMaster(body.replaceAll('AUDIO="aac"','AUDIO="missing"')));
+});
+
+test('segment paths containing playlist/index.m3u8 are still binary segments',async()=>{
+  const transport:any=async(url:string)=>{
+    const playlist=url.endsWith('/root.m3u8');
+    const response:any=Readable.from([Buffer.from(playlist?'#EXTM3U\n#EXTINF:5,\nhttps://example.googlevideo.com/playlist/index.m3u8/sq/0/seg.ts\n#EXT-X-ENDLIST':'binary segment')]);
+    response.statusCode=200;response.headers={'content-type':playlist?'application/vnd.apple.mpegurl':'application/octet-stream'};
+    return {url,response};
+  };
+  const native=new NativeShorts(async()=>({...selected,url:'https://example.googlevideo.com/root.m3u8',mime:'application/vnd.apple.mpegurl'}),transport);
+  try{
+    const s=await native.prepare('p',[id],new AbortController().signal),r=reply();
+    await native.stream({headers:{}} as any,r.reply,s.sessionId,s.url.split('/').at(-1)!);
+    const asset=r.sent().split('\n').find((line:string)=>line.startsWith('/api/')).split('/').at(-1);
+    const media=reply();await native.stream({headers:{}} as any,media.reply,s.sessionId,asset);
+    const chunks=[];for await(const chunk of media.sent())chunks.push(chunk);
+    assert.equal(Buffer.concat(chunks).toString(),'binary segment');
+  }finally{native.close();}
+});

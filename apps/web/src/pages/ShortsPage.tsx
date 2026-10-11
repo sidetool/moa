@@ -6,7 +6,7 @@ import type { MediaCard, ShortsItem } from "@moa/shared";
 import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
 import { useShortsNative, markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
-import { ShortsNativePlayer } from "../components/ShortsNativePlayer";
+import { NativePool, ShortsNativePlayer } from "../components/ShortsNativePlayer";
 import { ShortsPlayer, type ShortsControl, type ShortsSession } from "../components/ShortsPlayer";
 import { Button, ButtonLink, EmptyState, IconButton, Spinner } from "../components/ui";
 import { api, currentProfileId, sized } from "../lib/api";
@@ -54,6 +54,8 @@ export function ShortsPage() {
 
 function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; native: boolean; onReplay: () => void }) {
   const [embedded, setEmbedded] = useState<ReadonlySet<string>>(() => new Set()); // works switched to the YouTube player by hand
+  const pool = useRef<NativePool | null>(null);
+  pool.current ??= new NativePool();
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [shownKey, setShownKey] = useState<string | null>(null); // only this work has a mostly visible stage
@@ -130,6 +132,10 @@ function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: Sho
     return () => { window.clearTimeout(timer); el.removeEventListener("scroll", onScroll); el.removeEventListener("touchstart", onInput); el.removeEventListener("wheel", onInput); window.removeEventListener("resize", onResize); document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("pagehide", onHide); window.removeEventListener("pageshow", onVisibility); };
   }, [markIntent]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The prepared next work belongs to this feed while it is visible and in direct mode only.
+  useEffect(() => { if (!visible || !native) pool.current?.release(); }, [visible, native]);
+  useEffect(() => { pool.current?.open(); return () => pool.current?.dispose(); }, []);
+
   // Mid-scroll the player goes as soon as its stage is half off screen, before the slide itself is.
   useEffect(() => {
     const stage = scroller.current?.querySelector(".shorts-slide.is-active .shorts-stage");
@@ -173,8 +179,8 @@ function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: Sho
       blocked={index === active && blocked} onPlay={() => control.current?.play()} native={native && !embedded.has(item.key)}
       onStep={step} onSound={() => setMuted(old => !old)}>
       {index === active && shownKey === item.key && visible && (native && !embedded.has(item.key)
-        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
-            onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
+        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
+            onPlaying={() => { setAutoSkips(0); const next = items[index + 1]; if (next && !embedded.has(next.key)) pool.current?.prefetch(next.key); }} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
         : <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
         onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)}
         autoNext={autoSkips < AUTO_SKIP_LIMIT} onAutoNext={() => { setAutoSkips(old => old + 1); goTo(index + 1, true); }} />)}

@@ -56,7 +56,7 @@ const POOL = [
   item('movie:3', '늦은 응답', 'movie', { poster: '/mock-art/2.svg' })
 ];
 const TRAILERS = { 'movie:1': ['okaaaaaaaaa'], 'tv:2': ['okbbbbbbbbb'], 'movie:3': ['okccccccccc'] };
-let nativeAvailable = false, fixture;
+let nativeAvailable = false, fixture, busy = true;
 let settings, kids, log;
 const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [], prepare: [], closed: [], media: 0 }; };
 const route = async context => {
@@ -88,8 +88,8 @@ const route = async context => {
     const prep = /^\/api\/shorts\/([^/]+)\/native$/.exec(path);
     if (prep && method === 'POST') {
       const key = decodeURIComponent(prep[1]); log.prepare.push(key);
-      if (key === 'tv:2') return r.fulfill({ status: 503, json: { error: 'shorts-native-busy' } });
-      const id = key === 'movie:1' ? 's1' : 's3';
+      if (key === 'tv:2' && busy) return r.fulfill({ status: 503, json: { error: 'shorts-native-busy' } });
+      const id = { 'movie:1': 's1', 'tv:2': 's2', 'movie:3': 's3' }[key];
       return new Promise(resolve => setTimeout(resolve, key === 'movie:3' ? 2000 : 300)).then(() => r.fulfill({ json: { sessionId: id, url: `/api/playback/${id}/shorts/a1`, mime: 'video/mp4' } })).catch(() => {});
     }
     const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
@@ -182,7 +182,8 @@ try {
   await page.goto(`${base}shorts`);
   await page.locator('.shorts-slide.is-active.is-native').waitFor();
   await until(async () => ((await nativeState(page))?.time ?? 0) > .8, 'native playing', 10000);
-  assert.deepEqual([...new Set(log.prepare)], ['movie:1'], 'only the active work is prepared');
+  await until(() => log.prepare.includes('tv:2'), 'next prefetched after playing');
+  assert.deepEqual([...new Set(log.prepare)], ['movie:1', 'tv:2'], 'current first, then only the next one');
   assert.equal(await page.locator('iframe').count(), 0, 'no YouTube iframe in direct mode');
   assert.equal((await nativeState(page)).fit, 'cover');
   await page.screenshot({ path: verificationPath('native-mobile.png') });
@@ -195,7 +196,7 @@ try {
   await page.getByText('재생하지 못했어요').waitFor();
   await wait(2000);
   assert.equal(await activeTitle(page), '준비 실패', 'no automatic advance');
-  assert.equal(log.prepare.filter(key => key === 'tv:2').length <= 2, true, 'no retry stampede'); // dev StrictMode may repeat once
+  assert.equal(log.prepare.filter(key => key === 'tv:2').length, 1, 'the failed prefetch is shown, not repeated');
   await page.getByRole('button', { name: 'YouTube로 재생' }).click();
   await until(async () => (await yt(page)).live === 1, 'inline fallback player');
   assert.equal(await page.locator('.shorts-slide.is-active.is-native').count(), 0, 'fallback uses the unobscured layout');
@@ -220,11 +221,27 @@ try {
   await until(async () => !(await page.locator('video').count()), 'video gone');
   await context.close();
 
-  // Desktop, contain mode: plain black letterbox.
-  log.seen = []; log.skips = []; settings.shortsScreenFit = false;
+  // Desktop, contain mode: plain black letterbox. A ready prefetch is consumed, not requested again.
+  reset(); settings.shortsEnabled = true; settings.shortsPlayback = 'native'; settings.shortsScreenFit = false; busy = false;
   ({ context, page } = await open(1280, 800));
   await page.goto(`${base}shorts`);
   await until(async () => ((await nativeState(page))?.time ?? 0) > .5, 'desktop native playing', 10000);
+  await until(() => log.prepare.includes('tv:2'), 'desktop prefetch');
+  await wait(500); // let the prefetch answer arrive
+  const mediaBefore = log.media;
+  await page.keyboard.press('ArrowDown');
+  await until(async () => (await activeTitle(page)) === '준비 실패', 'to prefetched');
+  await until(async () => ((await nativeState(page))?.time ?? 0) > .3, 'prefetched plays', 10000);
+  assert.equal(log.prepare.filter(key => key === 'tv:2').length, 1, 'prefetched lease reused');
+  assert.ok(log.media > mediaBefore && log.closed.includes('s1') && !log.closed.includes('s2'), 'old released, new kept');
+  await until(() => log.prepare.includes('movie:3'), 'following prefetch');
+  const dropped = [];
+  page.on('requestfailed', request => { if (/movie(%3A|:)3\/native$/.test(new URL(request.url()).pathname)) dropped.push(1); });
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await until(() => dropped.length > 0 || log.closed.includes('s3'), 'hidden drops the pending prefetch', 4000);
+  await until(() => log.closed.includes('s2'), 'hidden releases the playing lease');
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await until(async () => ((await nativeState(page))?.time ?? 0) > .3, 'back to playing', 10000);
   const desk = await nativeState(page);
   assert.equal(desk.fit, 'contain');
   assert.equal(await page.locator('.shorts-slide.is-active video').evaluate(v => getComputedStyle(v).backgroundColor), 'rgb(0, 0, 0)');
