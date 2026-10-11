@@ -1,5 +1,7 @@
 import { open, writeFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import type { DownloadQuality } from '@moa/shared';
+import { preferredQuality } from './download-quality.js';
 import type { SourceVideo } from '@moa/extensions';
 import { runCommand } from '@moa/skip-markers';
 import type { Config } from './config.js';
@@ -11,7 +13,7 @@ const fail=(code:string):never=>{throw new ApiFailure(422,code);};
 const attributes=(s:string)=>Object.fromEntries([...s.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)].map(m=>[m[1],m[2].replace(/^"|"$/g,'')]));
 
 /** Materialize a finite playlist first. ffmpeg/ffprobe never receive an upstream URL. */
-export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetcher:DownloadTransport,signal:AbortSignal,account:(bytes:number,total?:number)=>Promise<void>,finalizing:()=>void){
+export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetcher:DownloadTransport,signal:AbortSignal,account:(bytes:number,total?:number)=>Promise<void>,finalizing:()=>void,quality:DownloadQuality='best'){
   let sequence=0,requests=0,expectedDuration=0,omittedSubtitles=false; const files:string[]=[];
   const request=async(url:string,range?:string)=>{
     signal.throwIfAborted();if(++requests>12000)fail('download-request-limit');
@@ -21,10 +23,10 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
       if(!received||received[1]!==expected[1]||received[2]!==expected[2]){r.response.destroy();fail('download-range-invalid');}}
     return r;
   };
-  const consume=async(r:Awaited<ReturnType<typeof request>>,limit:number,file?:string)=>{
+  const consume=async(r:Awaited<ReturnType<typeof request>>,limit:number,file?:string,reportTotal=false)=>{
     const chunks:Buffer[]=[];let bytes=0;const declared=Number(r.response.headers['content-length']);
     let target:Awaited<ReturnType<typeof open>>|undefined;
-    try { target=file?await open(path.join(dir,file),'wx',0o600):undefined;for await(const chunk of r.response){signal.throwIfAborted();const b=Buffer.from(chunk);bytes+=b.length;if(bytes>limit)fail('download-response-limit');await account(b.length);if(target)await target.writeFile(b);else chunks.push(b);}
+    try { target=file?await open(path.join(dir,file),'wx',0o600):undefined;if(reportTotal&&Number.isSafeInteger(declared)&&declared>0)await account(0,declared);for await(const chunk of r.response){signal.throwIfAborted();const b=Buffer.from(chunk);bytes+=b.length;if(bytes>limit)fail('download-response-limit');await account(b.length);if(target)await target.writeFile(b);else chunks.push(b);}
       if(Number.isFinite(declared)&&declared>0&&bytes!==declared)fail('download-truncated');
     }finally{r.response.destroy();await target?.close();}
     if(!bytes)fail('download-empty');return file?Buffer.alloc(0):Buffer.concat(chunks);
@@ -39,7 +41,7 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
     if(lines.some(s=>s.startsWith('#EXT-X-MEDIA:')&&attributes(s).TYPE==='SUBTITLES'))omittedSubtitles=true;
     const variants=lines.map((s,i)=>({s,i})).filter(x=>x.s.startsWith('#EXT-X-STREAM-INF:'));
     if(variants.length){
-      const v=variants.sort((a,b)=>Number(attributes(b.s).BANDWIDTH||0)-Number(attributes(a.s).BANDWIDTH||0))[0];
+      const v=preferredQuality(variants.sort((a,b)=>Number(attributes(b.s).BANDWIDTH||0)-Number(attributes(a.s).BANDWIDTH||0)),quality,x=>{const resolution=/^\d+x(\d+)$/i.exec(attributes(x.s).RESOLUTION||'');return resolution?Number(resolution[1]):undefined;})!;
       const uri=lines[v.i+1];if(!uri||uri.startsWith('#'))fail('download-playlist-invalid');
       const video=await playlist(new URL(uri,base).href,depth+1),attrs=attributes(v.s),videoDuration=expectedDuration;
       const audio=lines.filter(s=>s.startsWith('#EXT-X-MEDIA:')).map(attributes).filter(a=>a.TYPE==='AUDIO'&&a['GROUP-ID']===attrs.AUDIO&&a.URI).sort((a,b)=>Number(b.DEFAULT==='YES')-Number(a.DEFAULT==='YES'))[0];
@@ -80,7 +82,7 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
   const first=await request(item.url),mime=String(first.response.headers['content-type']||'');
   let input:string;
   if(/mpegurl/i.test(mime)||/\.m3u8(?:\?|$)/i.test(first.url))input=await playlist(first.url,0,(await consume(first,2*1024*1024)).toString('utf8'));
-  else {input='input.mp4';await consume(first,20*1024**3,input);files.push(input);}
+  else {input='input.mp4';await consume(first,20*1024**3,input,true);files.push(input);}
   signal.throwIfAborted();finalizing();
   const target=path.join(dir,'video.mp4.part');
   if(input.endsWith('.m3u8')){

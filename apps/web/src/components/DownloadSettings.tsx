@@ -1,20 +1,40 @@
-import { ChevronDown, ChevronUp, HardDriveDownload, RotateCw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Download, RotateCw, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import type { DownloadJob } from "@moa/shared";
-import { ACTIVE_DOWNLOAD, DOWNLOAD_STATE_LABEL, GIB, RETRYABLE_DOWNLOAD, downloadErrorText, downloadRatio, useDownloadActions, useDownloadStatus, useRemoveDownloads } from "../api/downloads";
+import type { DownloadJob, DownloadQuality, DownloadStatus } from "@moa/shared";
+import { ACTIVE_DOWNLOAD, DOWNLOAD_QUALITY_OPTIONS, DOWNLOAD_STATE_LABEL, GIB, RETRYABLE_DOWNLOAD, downloadErrorText, downloadRatio, useDownloadActions, useDownloadStatus, useRemoveDownloads } from "../api/downloads";
 import { ApiError } from "../lib/api";
 import { cx, fileSize } from "../lib/format";
-import { Button, ConfirmDialog, EmptyState, IconButton, ProgressBar, Skeleton } from "./ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, ProgressBar, Select, Skeleton, Toggle } from "./ui";
 
 const gib = (bytes: number) => Number((bytes / GIB).toFixed(bytes % GIB ? 1 : 0));
 
-/** Admin: storage quota and the queue of episodes saved on the server. */
+/** Readiness items that must all pass before downloads can be turned on. */
+function DownloadReadiness({ data }: { data: DownloadStatus }) {
+  const items = [
+    { ok: data.allowed, label: "서버 허용", hint: "서버 환경 설정(MOA_DOWNLOADS_ENABLED)에서 다운로드를 막아 두었어요." },
+    { ok: data.storageReady, label: "저장 폴더", hint: "/downloads 볼륨을 연결하고 다시 시작해 주세요." },
+    { ok: data.quotaBytes > 0, label: "저장 한도", hint: "아래에서 저장 한도를 정해 주세요." }
+  ];
+  return <ul className="download-readiness" aria-label="다운로드 준비 상태">
+    {items.map(item => <li key={item.label} className={item.ok ? "is-ok" : "is-missing"}>
+      <span className="download-readiness-mark" aria-hidden="true">{item.ok ? <Check size={14} /> : <X size={14} />}</span>
+      <span><b>{item.label}</b><small>{item.ok ? "준비됨" : item.hint}</small></span>
+    </li>)}
+  </ul>;
+}
+
+const configError = (cause: unknown, fallback: string) => cause instanceof ApiError && cause.code.startsWith("download-") ? downloadErrorText(cause.code)! : fallback;
+
+/** Admin: the on/off switch, preferred quality, storage quota and the list of episodes saved on the server. */
 export function DownloadSettings() {
   const status = useDownloadStatus();
   const actions = useDownloadActions();
   const [quota, setQuota] = useState("");
   const [quotaState, setQuotaState] = useState<"idle" | "saving" | "error">("idle");
+  const [quotaError, setQuotaError] = useState<string | null>(null);
+  const [config, setConfig] = useState<{ busy: "enabled" | "quality" | null; error: string | null }>({ busy: null, error: null });
+  const [confirmOff, setConfirmOff] = useState(false);
   const [removing, setRemoving] = useState<DownloadJob | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,8 +51,20 @@ export function DownloadSettings() {
     event.preventDefault();
     if (!quotaValid) return;
     setQuotaState("saving");
-    try { await actions.setQuota(quotaBytes); setQuotaState("idle"); } catch { setQuotaState("error"); }
+    try { await actions.configure({ quotaBytes }); setQuotaState("idle"); }
+    catch (cause) { setQuotaError(configError(cause, "한도를 저장하지 못했어요.")); setQuotaState("error"); }
   };
+  const ready = data.allowed && data.storageReady && data.quotaBytes > 0;
+  const runningCount = data.jobs.filter(job => ACTIVE_DOWNLOAD.includes(job.state)).length;
+  const patch = async (key: "enabled" | "quality", body: { enabled?: boolean; quality?: DownloadQuality }) => {
+    setConfig({ busy: key, error: null });
+    try { await actions.configure(body); setConfig({ busy: null, error: null }); setConfirmOff(false); }
+    catch (cause) { setConfig({ busy: null, error: configError(cause, key === "enabled" ? "다운로드 설정을 바꾸지 못했어요." : "화질을 저장하지 못했어요.") }); setConfirmOff(false); }
+  };
+  const setEnabled = (value: boolean) => value || !runningCount ? void patch("enabled", { enabled: value }) : setConfirmOff(true);
+  const switchHint = !data.allowed ? "서버 설정에서 다운로드를 허용해야 켤 수 있어요."
+    : data.enabled ? (ready ? "작품·회차의 다운로드 버튼을 누르면 아래 화질로 바로 받아요." : "준비가 끝나지 않아 지금은 다운로드 버튼을 숨겼어요.")
+    : ready ? "켜면 작품·회차에 다운로드 버튼이 생겨요. 끄면 버튼을 숨기고 받아 둔 영상은 그대로 재생해요." : "저장 폴더와 저장 한도를 준비하면 켤 수 있어요.";
   const act = async (job: DownloadJob, action: "cancel" | "retry" | "remove") => {
     setBusy(job.id); setError(null);
     try { await actions[action](job); if (action === "remove") setRemoving(null); }
@@ -46,11 +78,19 @@ export function DownloadSettings() {
 
   return <>
     <section className="settings-group">
-      <h2>저장 공간</h2>
+      <h2>사용 설정</h2>
       <div className="settings-card">
-        {!data.configured && <div className="setting download-unavailable" role="status">
-          <div><b>서버 저장을 사용할 수 없어요</b><small>{data.reason || "저장 폴더와 저장 한도를 설정하면 사용할 수 있어요."}</small></div>
-        </div>}
+        <div className={cx("setting download-switch", data.configured && "is-on")}>
+          <div><b>서버 다운로드 사용</b><small>{switchHint}</small>
+            {config.error && <small className="settings-error" role="alert">{config.error}</small>}</div>
+          <Toggle label="서버 다운로드 사용" checked={data.enabled} disabled={config.busy === "enabled" || (!data.enabled && !ready)} onChange={setEnabled} />
+        </div>
+        {!ready && <div className="setting"><DownloadReadiness data={data} /></div>}
+        <div className="setting">
+          <div><b>다운로드 화질</b><small>이 화질 이하에서 가장 높은 화질로 받고, 없으면 제공되는 가장 낮은 화질로 받아요. 새로 시작하는 다운로드부터 적용돼요.</small></div>
+          <Select className="setting-select" aria-label="다운로드 화질" value={data.quality} options={DOWNLOAD_QUALITY_OPTIONS} disabled={config.busy === "quality"}
+            onChange={value => value !== data.quality && void patch("quality", { quality: value as DownloadQuality })} />
+        </div>
         {data.quotaBytes > 0 && <div className="setting download-usage">
           <div><b>사용량</b><small>{fileSize(data.usedBytes)} / {fileSize(data.quotaBytes)} · 남은 한도 {fileSize(Math.max(0, data.quotaBytes - data.usedBytes))}</small></div>
           <ProgressBar ratio={usage} className={cx("download-usage-bar", usage > .9 && "is-full")} />
@@ -59,7 +99,7 @@ export function DownloadSettings() {
           <div>
             <b>저장 한도</b>
             <small>{quotaValid ? `${quotaValue.toLocaleString("ko-KR")} GiB = ${quotaBytes.toLocaleString("ko-KR")}바이트. ` : ""}한도를 넘는 저장은 시작하지 않아요. 저장된 영상은 자동으로 지우지 않아요.</small>
-            {quotaState === "error" && <small className="settings-error" role="alert">한도를 저장하지 못했어요.</small>}
+            {quotaState === "error" && <small className="settings-error" role="alert">{quotaError}</small>}
           </div>
           <span className="download-quota-input">
             <input type="number" inputMode="decimal" min={0.1} step="any" aria-label="저장 한도 (GiB)" value={quota} onChange={event => { setQuota(event.target.value); setQuotaState("idle"); }} />
@@ -71,16 +111,19 @@ export function DownloadSettings() {
       <p className="settings-hint">저장 영상은 <code>/downloads</code> 볼륨에 따로 보관하며 업데이트 백업에는 포함되지 않아요. 앱 밖으로 내보내거나 오프라인으로 보는 기능은 아니에요.</p>
     </section>
     <section className="settings-group">
-      <h2>저장 목록</h2>
+      <h2>다운로드 목록</h2>
       {error && <p className="settings-error" role="alert">{error}</p>}
       {!jobs.length ? <div className="settings-card"><div className="setting download-empty">
-        <span className="setting-icon"><HardDriveDownload size={20} /></span>
-        <div><b>아직 저장한 영상이 없어요</b><small>{data.configured ? "작품 상세의 회차 옆 저장 버튼으로 소스 영상을 서버에 저장해요." : "저장 공간을 사용할 수 있게 되면 작품 상세에서 저장할 수 있어요."}</small></div>
+        <span className="setting-icon"><Download size={20} /></span>
+        <div><b>아직 다운로드한 영상이 없어요</b><small>{data.configured ? "작품 상세의 회차 옆 다운로드 버튼을 누르면 서버에 바로 받아요." : "다운로드를 켜면 작품 상세에서 회차를 받을 수 있어요."}</small></div>
       </div></div>
-      : <DownloadLibrary jobs={jobs} total={data.totalJobs} busy={busy} onAction={(job, action) => action === "remove" && job.state === "ready" ? setRemoving(job) : void act(job, action)}
+      : <DownloadLibrary jobs={jobs} total={data.totalJobs} busy={busy} canRetry={data.configured} onAction={(job, action) => action === "remove" && job.state === "ready" ? setRemoving(job) : void act(job, action)}
           more={status.hasNextPage ? <Button className="download-more" disabled={status.isFetchingNextPage} onClick={() => void status.fetchNextPage()}>{status.isFetchingNextPage ? "불러오는 중…" : status.isFetchNextPageError ? "다시 불러오기" : `이전 항목 더 보기 (${jobs.length.toLocaleString("ko-KR")}/${data.totalJobs.toLocaleString("ko-KR")})`}</Button> : null} />}
       <p className="settings-hint">저장본은 이 회차를 볼 수 있는 모든 프로필에서 먼저 재생돼요. 원본 소스로 보려면 재생 화면의 설정에서 바꿀 수 있어요. 지워도 작품과 시청 기록은 그대로예요.</p>
     </section>
+    {confirmOff && <ConfirmDialog title="다운로드 끄기" confirmLabel="끄기" busy={config.busy === "enabled"} onClose={() => setConfirmOff(false)} onConfirm={() => void patch("enabled", { enabled: false })}>
+      진행·대기 중인 {runningCount.toLocaleString("ko-KR")}개는 중단돼요. 받아 둔 영상은 그대로 재생하고 이 목록에서 지울 수 있어요.
+    </ConfirmDialog>}
     {removing && <ConfirmDialog title="저장본 삭제" confirmLabel="삭제" busy={busy === removing.id} onClose={() => setRemoving(null)} onConfirm={() => void act(removing, "remove")}>
       ‘{[removing.title, removing.episodeTitle].filter(Boolean).join(" · ")}’ 저장본{removing.totalBytes ? `(${fileSize(removing.totalBytes)})` : ""}을 서버에서 지울까요? 이후에는 원본 소스로 재생해요.
     </ConfirmDialog>}
@@ -100,7 +143,7 @@ const removeQuestion = (saved: DownloadJob[], records: number) => {
 const byEpisode = (a: DownloadJob, b: DownloadJob) => a.episodeTitle.localeCompare(b.episodeTitle, "ko", { numeric: true }) || b.createdAt.localeCompare(a.createdAt);
 
 /** Loaded entries grouped by title. Selection only ever covers rows loaded on this screen. */
-function DownloadLibrary({ jobs, total, busy, more, onAction }: { jobs: DownloadJob[]; total: number; busy: string | null; more: React.ReactNode; onAction: (job: DownloadJob, action: Action) => void }) {
+function DownloadLibrary({ jobs, total, busy, canRetry, more, onAction }: { jobs: DownloadJob[]; total: number; busy: string | null; canRetry: boolean; more: React.ReactNode; onAction: (job: DownloadJob, action: Action) => void }) {
   const removeMany = useRemoveDownloads();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -152,7 +195,7 @@ function DownloadLibrary({ jobs, total, busy, more, onAction }: { jobs: Download
       </div>
       {notice && <p className={cx("download-notice", notice.warn && "is-warn")} role="status">{notice.text}</p>}
       <ul className="download-groups">
-        {groups.map(group => <DownloadGroup key={group.mediaId} group={group} open={isOpen(group)} selected={selected} failures={failures} busy={busy} locked={progress !== null}
+        {groups.map(group => <DownloadGroup key={group.mediaId} group={group} canRetry={canRetry} open={isOpen(group)} selected={selected} failures={failures} busy={busy} locked={progress !== null}
           onOpen={value => setOpen(old => ({ ...old, [group.mediaId]: value }))} onSelect={toggle} onAction={onAction} />)}
       </ul>
     </div>
@@ -165,11 +208,11 @@ function DownloadLibrary({ jobs, total, busy, more, onAction }: { jobs: Download
   </>;
 }
 
-function DownloadGroup({ group, open, selected, failures, busy, locked, onOpen, onSelect, onAction }: {
-  group: { mediaId: string; title: string; jobs: DownloadJob[] }; open: boolean; selected: Set<string>; failures: Map<string, RemoveFailure>; busy: string | null; locked: boolean;
+function DownloadGroup({ group, canRetry, open, selected, failures, busy, locked, onOpen, onSelect, onAction }: {
+  group: { mediaId: string; title: string; jobs: DownloadJob[] }; canRetry: boolean; open: boolean; selected: Set<string>; failures: Map<string, RemoveFailure>; busy: string | null; locked: boolean;
   onOpen: (open: boolean) => void; onSelect: (ids: string[], on: boolean) => void; onAction: (job: DownloadJob, action: Action) => void;
 }) {
-  const row = (job: DownloadJob, full: boolean) => <DownloadRow key={job.id} job={job} full={full} checked={selected.has(job.id)} failure={failures.get(job.id)} busy={busy === job.id} locked={locked}
+  const row = (job: DownloadJob, full: boolean) => <DownloadRow key={job.id} job={job} full={full} canRetry={canRetry} checked={selected.has(job.id)} failure={failures.get(job.id)} busy={busy === job.id} locked={locked}
     onCheck={value => onSelect([job.id], value)} onAction={action => onAction(job, action)} />;
   const toggleRef = useRef<HTMLButtonElement>(null);
   if (group.jobs.length === 1) return <li className="download-group is-single"><ul>{row(group.jobs[0], true)}</ul></li>;
@@ -206,7 +249,7 @@ function DownloadGroup({ group, open, selected, failures, busy, locked, onOpen, 
   </li>;
 }
 
-function DownloadRow({ job, full, checked, failure, busy, locked, onCheck, onAction }: { job: DownloadJob; full: boolean; checked: boolean; failure?: RemoveFailure; busy: boolean; locked: boolean; onCheck: (value: boolean) => void; onAction: (action: Action) => void }) {
+function DownloadRow({ job, full, canRetry, checked, failure, busy, locked, onCheck, onAction }: { job: DownloadJob; full: boolean; canRetry: boolean; checked: boolean; failure?: RemoveFailure; busy: boolean; locked: boolean; onCheck: (value: boolean) => void; onAction: (action: Action) => void }) {
   const active = ACTIVE_DOWNLOAD.includes(job.state), ratio = downloadRatio(job);
   const name = [job.title, job.episodeTitle].filter(Boolean).join(" · ");
   const size = job.state === "ready" ? fileSize(job.totalBytes ?? job.bytes) : job.state === "downloading" ? `${fileSize(job.bytes)}${job.totalBytes ? ` / ${fileSize(job.totalBytes)}` : ""}` : null;
@@ -220,8 +263,8 @@ function DownloadRow({ job, full, checked, failure, busy, locked, onCheck, onAct
       {failure && <small className="download-error">{failure.inUse ? "재생 중이라 지우지 못했어요." : "지우지 못했어요."}</small>}
     </div>
     <span className="download-actions">
-      {active && <IconButton label={`${name} 저장 취소`} disabled={busy} onClick={() => onAction("cancel")}><X size={18} /></IconButton>}
-      {RETRYABLE_DOWNLOAD.includes(job.state) && <IconButton label={`${name} 다시 시도`} disabled={busy || locked} onClick={() => onAction("retry")}><RotateCw size={18} /></IconButton>}
+      {active && <IconButton label={`${name} 다운로드 취소`} disabled={busy} onClick={() => onAction("cancel")}><X size={18} /></IconButton>}
+      {canRetry && RETRYABLE_DOWNLOAD.includes(job.state) && <IconButton label={`${name} 다시 시도`} disabled={busy || locked} onClick={() => onAction("retry")}><RotateCw size={18} /></IconButton>}
       {!active && <IconButton label={job.state === "ready" ? `${name} 저장본 삭제` : `${name} 목록에서 지우기`} disabled={busy || locked} onClick={() => onAction("remove")}><Trash2 size={18} /></IconButton>}
     </span>
   </li>;

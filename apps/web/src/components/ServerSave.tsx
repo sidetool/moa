@@ -1,86 +1,126 @@
-import { AlertCircle, Check, HardDriveDownload } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertCircle, CircleCheck, Clock3, Download } from "lucide-react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import type { DownloadJob } from "@moa/shared";
-import { ACTIVE_DOWNLOAD, DOWNLOAD_STATE_LABEL, downloadErrorText, downloadRatio, fetchDownloadChoices, useDownloadActions } from "../api/downloads";
+import { DOWNLOAD_STATE_LABEL, downloadErrorText, downloadRatio, useDownloadActions } from "../api/downloads";
 import { ApiError } from "../lib/api";
-import { cx } from "../lib/format";
-import { Button, ConfirmDialog, Spinner } from "./ui";
+import { cx, fileSize } from "../lib/format";
+import { Button, ProgressBar } from "./ui";
 
 const SETTINGS_PATH = "/settings#downloads";
 
+/** What one episode shows. `pending` covers the tap until the server answers with a job. */
+type View =
+  | { kind: "idle"; cancelled?: boolean }
+  | { kind: "pending" }
+  | { kind: "queued" | "resolving" | "finalizing"; job: DownloadJob }
+  | { kind: "downloading"; job: DownloadJob; ratio: number | null }
+  | { kind: "ready"; job: DownloadJob }
+  | { kind: "failed"; message: string };
+
+export type DownloadEntry = { job?: DownloadJob; pending: boolean; error?: string };
+
+export function downloadView({ job, pending, error }: DownloadEntry): View {
+  if (job?.state === "ready") return { kind: "ready", job };
+  if (job?.state === "downloading") return { kind: "downloading", job, ratio: downloadRatio(job) };
+  if (job && (job.state === "queued" || job.state === "resolving" || job.state === "finalizing")) return { kind: job.state, job };
+  if (pending) return { kind: "pending" };
+  if (error) return { kind: "failed", message: error };
+  if (job && (job.state === "failed" || job.state === "interrupted")) return { kind: "failed", message: downloadErrorText(job.error) ?? "다운로드하지 못했어요." };
+  return { kind: "idle", cancelled: job?.state === "cancelled" };
+}
+
 function startError(error: unknown) {
-  if (!(error instanceof ApiError)) return "저장을 시작하지 못했어요.";
-  if (error.code.startsWith("download-") && error.code !== "download-failed") return downloadErrorText(error.code)!;
+  if (!(error instanceof ApiError)) return "다운로드를 시작하지 못했어요. 다시 시도해 주세요.";
+  if (error.code.startsWith("download-")) return downloadErrorText(error.code)!;
   if (error.status === 422) return downloadErrorText("download-stream-unsupported")!;
-  if (error.status === 409) return "이 회차는 이미 저장 중이거나 저장돼 있어요.";
-  if (error.status === 507 || /quota|space|storage/.test(error.code)) return "저장 한도나 디스크 공간이 부족해요.";
-  if (error.status === 410 || /selection|token|expired/.test(error.code)) return "선택 시간이 지났어요. 목록을 새로 불러왔으니 다시 골라 주세요.";
-  return error.message && error.message !== error.code ? error.message : "저장을 시작하지 못했어요.";
+  return "다운로드를 시작하지 못했어요. 다시 시도해 주세요.";
 }
 
-/** Pick a quality/server for one episode. Choices are short-lived; nothing but their opaque id goes back. */
-export function SaveDialog({ episodeId, title, onClose }: { episodeId: string; title: string; onClose: () => void }) {
+/** One-tap starts for a title page: per-episode pending marks and the last start error. */
+export function useOneTapDownload() {
   const actions = useDownloadActions();
-  const choices = useQuery({ queryKey: ["download-choices", episodeId], queryFn: ({ signal }) => fetchDownloadChoices(episodeId, signal), retry: false, staleTime: 0, gcTime: 0 });
-  const [picked, setPicked] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const list = choices.data?.choices ?? [];
-  useEffect(() => { if (!list.some(choice => choice.id === picked)) setPicked(list[0]?.id); }, [choices.data]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const start = async () => {
-    if (!picked || !choices.data) return;
-    setBusy(true); setError(undefined);
-    try { await actions.start(episodeId, choices.data.selectionToken, picked); onClose(); }
-    catch (cause) { setError(startError(cause)); void choices.refetch(); }
-    finally { setBusy(false); }
+  const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const inFlight = useRef(new Set<string>()); // synchronous guard against double taps before the re-render
+  const start = async (episodeId: string) => {
+    if (inFlight.current.has(episodeId)) return;
+    inFlight.current.add(episodeId);
+    setPending(old => new Set(old).add(episodeId));
+    setErrors(old => { if (!old.has(episodeId)) return old; const next = new Map(old); next.delete(episodeId); return next; });
+    try { await actions.enqueue(episodeId); }
+    catch (cause) {
+      // Already running or saved elsewhere: the refreshed list shows that state, no error needed.
+      if (!(cause instanceof ApiError && cause.code === "download-already-exists")) setErrors(old => new Map(old).set(episodeId, startError(cause)));
+    } finally { inFlight.current.delete(episodeId); setPending(old => { const next = new Set(old); next.delete(episodeId); return next; }); }
   };
-  const loadError = !(choices.error instanceof ApiError) ? "저장할 영상을 확인하지 못했어요."
-    : choices.error.status === 422 || choices.error.code.startsWith("download-") ? downloadErrorText(choices.error.status === 422 && !choices.error.code.startsWith("download-") ? "download-stream-unsupported" : choices.error.code)!
-    : choices.error.message !== choices.error.code ? choices.error.message : "저장할 영상을 확인하지 못했어요.";
-  const unsupported = choices.error instanceof ApiError && choices.error.status === 422;
-
-  return <ConfirmDialog className="save-dialog" title="서버에 저장" confirmLabel="저장 시작" busy={busy} confirmDisabled={!picked || choices.isFetching || choices.isError} onConfirm={() => void start()} onClose={onClose}>
-    <p className="save-dialog-title">{title}</p>
-    {choices.isPending ? <div className="save-dialog-state"><Spinner size={20} /><span>저장할 수 있는 영상을 찾는 중…</span></div>
-      : choices.isError ? <p className={unsupported ? "settings-hint" : "settings-error"}>{loadError}{!unsupported && <> <button className="text-btn" onClick={() => void choices.refetch()}>다시 시도</button></>}</p>
-      : !list.length ? <p className="settings-hint">이 회차는 서버에 저장할 수 있는 영상 형식이 없어요. 기존 재생은 그대로 사용할 수 있어요.</p>
-      : <div className="save-choices" role="radiogroup" aria-label="저장할 영상">
-          {list.map(choice => <button key={choice.id} type="button" role="radio" aria-checked={picked === choice.id} className={cx("save-choice", picked === choice.id && "is-active")} onClick={() => setPicked(choice.id)}>
-            <span className="save-choice-dot" aria-hidden="true" /><span>{choice.label}</span>
-          </button>)}
-        </div>}
-    {error && <p className="settings-error" role="alert">{error}</p>}
-    <p className="settings-hint">저장이 끝나면 이 회차를 볼 수 있는 모든 프로필에서 저장본을 먼저 재생해요.</p>
-  </ConfirmDialog>;
+  return { entry: (episodeId: string, job?: DownloadJob): DownloadEntry => ({ job, pending: pending.has(episodeId), error: errors.get(episodeId) }), start };
 }
 
-/** Compact per-episode control for admins: save, progress, or done. */
-export function EpisodeSaveButton({ job, title, onSave }: { job?: DownloadJob; title: string; onSave: () => void }) {
-  if (job && (ACTIVE_DOWNLOAD.includes(job.state) || job.state === "ready")) {
-    const ratio = downloadRatio(job), ready = job.state === "ready";
-    const label = `${title} ${ready ? "서버에 저장됨" : `${DOWNLOAD_STATE_LABEL[job.state]}${ratio !== null ? ` ${Math.round(ratio * 100)}%` : ""}`} · 저장 목록 보기`;
-    return <Link to={SETTINGS_PATH} className={cx("icon-btn icon-btn-s episode-save", ready ? "is-ready" : "is-active")} data-remote-secondary aria-label={label} title={label}>
-      {ready ? <Check size={16} /> : <span className="save-ring" style={{ "--ratio": ratio ?? 0.15 } as React.CSSProperties} aria-hidden="true" />}
-    </Link>;
+const percent = (ratio: number | null) => ratio === null ? "" : ` ${Math.round(ratio * 100)}%`;
+
+/** Short spoken/visible state, shared by the icon label and the status line. */
+function stateText(view: View) {
+  switch (view.kind) {
+    case "idle": return "다운로드";
+    case "pending": return "다운로드 요청 중";
+    case "queued": return "다운로드 대기 중";
+    case "resolving": return "영상 확인 중";
+    case "finalizing": return "마무리 중";
+    case "downloading": return `다운로드 중${percent(view.ratio)}`;
+    case "ready": return "다운로드됨";
+    case "failed": return "다운로드 실패";
   }
-  const failed = job && job.state === "failed";
-  const label = failed ? `${title} 저장 실패 · 다시 저장` : `${title} 서버에 저장`;
-  return <button className={cx("icon-btn icon-btn-s episode-save", failed && "is-failed")} data-remote-secondary aria-label={label} title={failed && job.error ? `${label}: ${downloadErrorText(job.error)}` : label} onClick={onSave}>
-    {failed ? <AlertCircle size={16} /> : <HardDriveDownload size={16} />}
+}
+
+function StateIcon({ view, size }: { view: View; size: number }) {
+  if (view.kind === "ready") return <CircleCheck size={size} />;
+  if (view.kind === "failed") return <AlertCircle size={size} />;
+  if (view.kind === "queued") return <Clock3 size={size} />;
+  if (view.kind === "downloading" && view.ratio !== null) return <span className="save-ring" style={{ "--ratio": view.ratio, "--size": `${size}px` } as React.CSSProperties} aria-hidden="true" />;
+  if (view.kind === "idle") return <Download size={size} />;
+  return <span className="save-ring is-spin" style={{ "--size": `${size}px` } as React.CSSProperties} aria-hidden="true" />;
+}
+
+const opensList = (view: View) => view.kind !== "idle" && view.kind !== "failed" && view.kind !== "pending";
+
+/** Per-episode icon: tap downloads (or retries); while running or done it opens the download list. */
+export function EpisodeDownloadButton({ entry, title, onStart }: { entry: DownloadEntry; title: string; onStart: () => void }) {
+  const view = downloadView(entry);
+  const className = cx("icon-btn icon-btn-s episode-save", `is-${view.kind}`);
+  if (opensList(view)) {
+    const label = `${title} ${stateText(view)} · 다운로드 목록 보기`;
+    return <Link to={SETTINGS_PATH} className={className} data-remote-secondary aria-label={label} title={label}><StateIcon view={view} size={20} /></Link>;
+  }
+  const label = view.kind === "failed" ? `${title} 다시 다운로드` : view.kind === "pending" ? `${title} 다운로드 요청 중` : `${title} 다운로드`;
+  return <button type="button" className={className} data-remote-secondary aria-label={label} title={label} aria-busy={view.kind === "pending"} disabled={view.kind === "pending"} onClick={onStart}>
+    <StateIcon view={view} size={20} />
   </button>;
 }
 
+/** One-line state under the episode (or below the movie actions), readable without hovering. */
+export function DownloadStatusLine({ entry, className }: { entry: DownloadEntry; className?: string }) {
+  const view = downloadView(entry);
+  if (view.kind === "idle" && !view.cancelled) return null;
+  const detail = view.kind === "failed" ? view.message
+    : view.kind === "downloading" ? (view.job.totalBytes ? `${fileSize(view.job.bytes)} / ${fileSize(view.job.totalBytes)}` : view.job.bytes ? fileSize(view.job.bytes) : "")
+    : view.kind === "ready" ? [view.job.quality, fileSize(view.job.totalBytes ?? view.job.bytes)].filter(Boolean).join(" · ")
+    : view.kind === "queued" ? "곧 시작해요" : "";
+  const text = view.kind === "idle" ? `다운로드 ${DOWNLOAD_STATE_LABEL.cancelled}` : stateText(view);
+  return <span className={cx("download-status", `is-${view.kind}`, className)}>
+    <span className="download-status-text"><b>{text}</b>{detail && <span> · {detail}</span>}</span>
+    {view.kind === "downloading" && <ProgressBar ratio={view.ratio ?? 0} className={cx("download-progress", view.ratio === null && "is-indeterminate")} />}
+  </span>;
+}
+
 /** Hero action for a movie (single episode). */
-export function MovieSaveButton({ job, onSave }: { job?: DownloadJob; onSave: () => void }) {
-  if (job && (ACTIVE_DOWNLOAD.includes(job.state) || job.state === "ready")) {
-    const ratio = downloadRatio(job);
-    return <Link to={SETTINGS_PATH} className="btn btn-secondary btn-l">
-      {job.state === "ready" ? <Check size={20} /> : <Spinner size={18} />}
-      <span>{job.state === "ready" ? "서버에 저장됨" : `${DOWNLOAD_STATE_LABEL[job.state]}${ratio !== null ? ` ${Math.round(ratio * 100)}%` : ""}`}</span>
-    </Link>;
-  }
-  return <Button variant="secondary" size="l" icon={job?.state === "failed" ? <AlertCircle size={20} /> : <HardDriveDownload size={20} />} title={downloadErrorText(job?.error) ?? undefined} onClick={onSave}>{job?.state === "failed" ? "다시 저장" : "서버에 저장"}</Button>;
+export function MovieDownloadButton({ entry, onStart }: { entry: DownloadEntry; onStart: () => void }) {
+  const view = downloadView(entry);
+  const className = cx("movie-download", `is-${view.kind}`);
+  if (opensList(view)) return <Link to={SETTINGS_PATH} className={cx("btn btn-secondary btn-l", className)} aria-label={`${stateText(view)} · 다운로드 목록 보기`}>
+    <StateIcon view={view} size={20} /><span>{stateText(view)}</span>
+  </Link>;
+  return <Button variant="secondary" size="l" className={className} icon={<StateIcon view={view} size={20} />} aria-busy={view.kind === "pending"} disabled={view.kind === "pending"} onClick={onStart}>
+    {view.kind === "failed" ? "다시 다운로드" : view.kind === "pending" ? "요청 중…" : "다운로드"}
+  </Button>;
 }

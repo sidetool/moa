@@ -1,6 +1,6 @@
 // Development-only API stand-in (VITE_MOCK=1). It answers the same contract
 // as apps/server so screens can be built before the server lands.
-import type { DownloadJob, DownloadStatus, RecommendationItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
+import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
@@ -315,9 +315,12 @@ const recommendations: RecommendationItem[] = [
 ];
 const dismissed = new Set<string>();
 
-/* Server saves: `moa.mockDownloads=off` previews the unconfigured state. Progress advances with time. */
+/* Server saves: `moa.mockDownloads=off` previews missing storage, `moa.mockDownloadsAllowed=0` the env block.
+   Downloads start OFF like a fresh server. Progress advances with time; even episode numbers act like HLS (no total size). */
 const GiB = 1024 ** 3;
 let downloadQuota = 50 * GiB;
+let downloadEnabled = localStorage.getItem("moa.mockDownloadsEnabled") === "1";
+let downloadQuality: DownloadQuality = "1080p";
 const downloadJobs: DownloadJob[] = [
   { id: "dl-1", episodeId: "demo-1-e1", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "1화", state: "ready", bytes: 1.4 * GiB, totalBytes: 1.4 * GiB, error: "download-subtitles-incomplete", createdAt: ago(86_400_000), updatedAt: ago(86_000_000), quality: "1080p" },
   { id: "dl-2", episodeId: "demo-1-e3", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "3화", state: "failed", bytes: 0, totalBytes: null, error: "download-auth-expired", createdAt: ago(7_200_000), updatedAt: ago(7_000_000), quality: "720p" }
@@ -332,13 +335,15 @@ if (localStorage.getItem("moa.mockManyDownloads") === "1") {
   downloadJobs.push(...many("long-a", "긴 연재 시리즈 (예시)", 48, 20_000_000), ...many("long-b", "두 번째 예시 시리즈", 14, 40_000_000), ...many("demo-3", "스테이지 뒤편", 3, 60_000_000));
 }
 const downloadStarted = new Map<string, number>();
+const hlsDownloads = new Set<string>(); // total size stays unknown; only bytes grow
 function tickDownloads() {
   for (const job of downloadJobs) {
     const started = downloadStarted.get(job.id);
     if (started === undefined || !["queued", "resolving", "downloading", "finalizing"].includes(job.state)) continue;
     const t = (Date.now() - started) / 1000, total = job.totalBytes ?? 0.9 * GiB;
     job.state = t < 2 ? "queued" : t < 4 ? "resolving" : t < 16 ? "downloading" : t < 18 ? "finalizing" : "ready";
-    job.totalBytes = t < 4 ? null : total;
+    const hls = hlsDownloads.has(job.id);
+    job.totalBytes = t < 4 || (hls && job.state !== "ready") ? null : total;
     job.bytes = job.state === "downloading" ? Math.round(total * (t - 4) / 12) : job.state === "queued" || job.state === "resolving" ? 0 : total;
     job.updatedAt = new Date().toISOString();
   }
@@ -354,8 +359,9 @@ function downloadStatus(cursor = "", mediaId = ""): DownloadStatus {
   return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
 }
 function downloadSummary() {
-  const off = localStorage.getItem("moa.mockDownloads") === "off";
-  return { configured: !off, reason: off ? "저장 폴더(/downloads)가 연결되지 않았어요. 설치 안내에 따라 볼륨을 추가한 뒤 다시 시작해 주세요." : null, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0) };
+  const storageReady = localStorage.getItem("moa.mockDownloads") !== "off", allowed = localStorage.getItem("moa.mockDownloadsAllowed") !== "0";
+  const reason = !storageReady ? "download-storage-unconfigured" : !allowed || !downloadEnabled ? "download-disabled" : downloadQuota <= 0 ? "download-quota-unconfigured" : null;
+  return { enabled: downloadEnabled, allowed, storageReady, quality: downloadQuality, configured: !reason, reason, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0) };
 }
 const savedEpisode = (episodeId: string) => { tickDownloads(); return downloadJobs.some(job => job.episodeId === episodeId && job.state === "ready"); };
 
@@ -568,17 +574,37 @@ export function installMockApi() {
     if (episodeDownload) { const id = decodeURIComponent(episodeDownload[1]), job = downloadJobs.find(item => item.episodeId === id && item.state === "ready"); return json({ saved: Boolean(job), ...(job ? { job } : {}) }); }
     if (path.startsWith("/admin/downloads") && localStorage.getItem("moa.mockRole") === "member") return json({ error: "admin-required" }, 403);
     if (path === "/admin/downloads" && method === "GET") return json(downloadStatus(url.searchParams.get("cursor") ?? "", url.searchParams.get("mediaId") ?? ""));
-    if (path === "/admin/downloads/config" && method === "PUT") { if (!Number.isSafeInteger(body.quotaBytes) || body.quotaBytes <= 0) return json({ error: "invalid-request" }, 400); downloadQuota = body.quotaBytes; return json(downloadStatus()); }
+    if (path === "/admin/downloads/config" && method === "PUT") {
+      const keys = Object.keys(body ?? {});
+      if (!keys.length || keys.some(key => !["enabled", "quality", "quotaBytes"].includes(key)) || (body.enabled !== undefined && typeof body.enabled !== "boolean")
+        || (body.quality !== undefined && !["best", "1080p", "720p", "480p"].includes(body.quality)) || (body.quotaBytes !== undefined && (!Number.isSafeInteger(body.quotaBytes) || body.quotaBytes <= 0))) return json({ error: "download-config-invalid" }, 400);
+      const summary = downloadSummary();
+      if (body.enabled === true && !summary.allowed) return json({ error: "download-disabled" }, 503);
+      if (body.enabled === true && !summary.storageReady) return json({ error: "download-storage-unconfigured" }, 503);
+      if (body.enabled === true && !(body.quotaBytes ?? downloadQuota)) return json({ error: "download-quota-unconfigured" }, 503);
+      await delay(300);
+      if (body.quotaBytes !== undefined) downloadQuota = body.quotaBytes;
+      if (body.quality !== undefined) downloadQuality = body.quality;
+      if (body.enabled !== undefined) downloadEnabled = body.enabled;
+      if (body.enabled === false) for (const job of downloadJobs) if (["queued", "resolving", "downloading", "finalizing"].includes(job.state)) {
+        tickDownloads(); downloadStarted.delete(job.id); job.state = "interrupted"; job.error = "download-disabled"; job.updatedAt = new Date().toISOString();
+      }
+      return json(downloadStatus());
+    }
     if (path === "/admin/downloads/choices") {
       const id = url.searchParams.get("episodeId") ?? "";
       return json({ selectionToken: `sel-${Date.now()}`, choices: id.startsWith("demo-4") ? [] : [{ id: "c-1080", label: "1080p · 서버 A" }, { id: "c-720", label: "720p · 서버 A" }, { id: "c-720b", label: "720p · 서버 B (자막 포함)" }] });
     }
     if (path === "/admin/downloads" && method === "POST") {
       tickDownloads();
-      if (downloadJobs.some(job => job.episodeId === body.episodeId && !["failed", "cancelled", "interrupted"].includes(job.state))) return json({ error: "download-exists" }, 409);
+      if (!downloadSummary().configured) return json({ error: "download-disabled" }, 503);
+      if (downloadJobs.some(job => job.episodeId === body.episodeId && !["failed", "cancelled", "interrupted"].includes(job.state))) return json({ error: "download-already-exists" }, 409);
+      if (String(body.episodeId).startsWith("demo-4")) return json({ error: "download-stream-unsupported" }, 422);
+      await delay(700); // lets the tap's pending state show
       const episode = byId.get(String(body.episodeId).replace(/-(m|e\d+)$/, "")) ?? (String(body.episodeId).startsWith("oshi") ? byId.get("oshi") : undefined);
-      const job: DownloadJob = { id: `dl-${Date.now()}`, episodeId: body.episodeId, mediaId: episode?.id ?? "", title: episode?.title ?? "작품", episodeTitle: episode?.type === "movie" ? "" : `${/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1}화`, state: "queued", bytes: 0, totalBytes: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), quality: body.choiceId === "c-1080" ? "1080p" : "720p" };
+      const job: DownloadJob = { id: `dl-${Date.now()}`, episodeId: body.episodeId, mediaId: episode?.id ?? "", title: episode?.title ?? "작품", episodeTitle: episode?.type === "movie" ? "" : `${/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1}화`, state: "queued", bytes: 0, totalBytes: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), quality: body.choiceId ? (body.choiceId === "c-1080" ? "1080p" : "720p") : downloadQuality === "best" || downloadQuality === "1080p" ? "1080p" : "720p" };
       downloadJobs.unshift(job); downloadStarted.set(job.id, Date.now());
+      if (Number(/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1) % 2 === 0) hlsDownloads.add(job.id);
       return json(job, 201);
     }
     const downloadAction = /^\/admin\/downloads\/([^/]+)(?:\/(cancel|retry))?$/.exec(path);
@@ -587,7 +613,7 @@ export function installMockApi() {
       if (!job) return json({ error: "not-found" }, 404);
       if (method === "DELETE") { if ((localStorage.getItem("moa.mockDownloadInUse") ?? "").split(",").includes(job.id)) return json({ error: "download-in-use" }, 409); downloadJobs.splice(downloadJobs.indexOf(job), 1); return json(null, 204); }
       if (downloadAction[2] === "cancel") { downloadStarted.delete(job.id); job.state = "cancelled"; job.bytes = 0; }
-      if (downloadAction[2] === "retry") { job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
+      if (downloadAction[2] === "retry") { if (!downloadSummary().configured) return json({ error: "download-disabled" }, 503); job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
       job.updatedAt = new Date().toISOString();
       return json({ ...job });
     }

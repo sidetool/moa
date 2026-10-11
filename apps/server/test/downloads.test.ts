@@ -13,6 +13,7 @@ import { Catalog } from '../src/catalog.js';
 import { Sources } from '../src/sources.js';
 import { Playback } from '../src/playback.js';
 import { Downloads } from '../src/downloads.js';
+import { preferredQuality, qualityHeight } from '../src/download-quality.js';
 import { transferVideo } from '../src/download-transfer.js';
 import { config } from '../src/config.js';
 import { buildApp } from '../src/app.js';
@@ -68,7 +69,7 @@ async function fixture(t: TestContext, transport: Transport, item: SourceVideo =
   sources.videos = async () => Object.assign([{ ...item }], { apkLease: `lease-${++extractions}` });
   sources.apk.release = async lease => { released.push(lease); };
   const downloads = new Downloads(db, cfg, sources, playback, transport);
-  await downloads.initialize(); downloads.configure(1024 ** 3);
+  await downloads.initialize(); await downloads.configureSettings({quotaBytes:1024 ** 3,enabled:true});
   t.after(async () => { await downloads.close(); await playback.close(); await sources.close(); db.close(); await rm(dir, { recursive: true, force: true }); });
   const create = async () => {
     const choices = await downloads.choices('ep', 'viewer');
@@ -316,4 +317,82 @@ test('selected removals can succeed independently while a playing copy stays pro
     assert.ok(db.get('SELECT 1 FROM download_assets WHERE job_id=?',playing));
     assert.equal(db.get('SELECT 1 FROM download_jobs WHERE id=?',removable),undefined);
   }finally{playback.sessions.delete('active');}
+});
+
+test('saving stays opt-in even with an existing quota; enable validates storage, preserves assets and respects host override',async t=>{
+  const {db,cfg,downloads}=await fixture(t,async url=>({url,response:incoming('bytes')}));
+  db.run("DELETE FROM admin_settings WHERE key='downloadEnabled'");
+  const status=await downloads.status();assert.equal(status.enabled,false);assert.equal(status.storageReady,true);assert.equal(status.configured,false);assert.equal(status.quality,'1080p');
+  await assert.rejects(downloads.createPreferred('ep','viewer'),{error:'download-disabled'});
+  await downloads.configureSettings({quality:'720p'});assert.equal(downloads.enabled(),false);
+  const root=cfg.downloadRoot;cfg.downloadRoot=undefined;
+  await assert.rejects(downloads.configureSettings({enabled:true}),{error:'download-storage-unconfigured'});
+  assert.equal(downloads.enabled(),false);cfg.downloadRoot=root;
+  cfg.downloadsEnabled=false;await assert.rejects(downloads.configureSettings({enabled:true}),{error:'download-disabled'});cfg.downloadsEnabled=true;
+  await downloads.configureSettings({enabled:true});assert.equal((await downloads.status()).configured,true);
+  await saved(db,root!);await downloads.configureSettings({enabled:false});assert.ok(await downloads.asset('ep'));
+  await assert.rejects(downloads.configureSettings({enabled:true,quotaBytes:-1,quality:'best'}),{error:'download-quota-invalid'});
+  assert.equal(downloads.enabled(),false);assert.equal(downloads.quality(),'720p');
+});
+
+test('preferred quality handles ceilings, source-order ties and unknown labels',()=>{
+  const values=['server 2160p','720p first','1080p','720p second'];
+  assert.equal(preferredQuality(values,'720p',qualityHeight),'720p first');
+  assert.equal(preferredQuality(values,'best',qualityHeight),'server 2160p');
+  assert.equal(preferredQuality(['1080p','2160p'],'480p',qualityHeight),'1080p');
+  assert.equal(preferredQuality(['Auto','Default'],'720p',qualityHeight),'Auto');
+  assert.equal(qualityHeight('1920x1080'),1080);assert.equal(qualityHeight('4K'),2160);assert.equal(qualityHeight('FHD'),1080);
+});
+
+test('one-click queues before extraction, uses one APK lease and captures preference for that job',async t=>{
+  const fetched:string[]=[];const f=await fixture(t,async url=>{fetched.push(url);return{url,response:incoming('auto bytes')};});
+  let finish!:()=>void,notify!:()=>void;const started=new Promise<void>(r=>notify=r),hold=new Promise<void>(r=>finish=r);t.after(()=>finish());let extractions=0;
+  f.sources.videos=async()=>{extractions++;notify();await hold;return Object.assign([{url:'https://source.test/high.mp4',quality:'1080p'},{url:'https://source.test/low.mp4',quality:'720p'}],{apkLease:'auto-lease'});};
+  await f.downloads.configureSettings({quality:'720p'});
+  const job=await f.downloads.createPreferred('ep','viewer');assert.ok(['queued','resolving'].includes(job.state));await started;
+  await f.downloads.configureSettings({quality:'best'});
+  await assert.rejects(f.downloads.createPreferred('ep','viewer'),{error:'download-already-exists'});
+  finish();const done=await settled(f.downloads,job.id);assert.equal(done.state,'ready');assert.equal(done.quality,'720p');
+  assert.equal(extractions,1);assert.deepEqual(fetched,['https://source.test/low.mp4']);assert.deepEqual(f.released,['auto-lease']);
+});
+
+test('turning off interrupts active and queued jobs without auto-resuming or deleting saved copies',async t=>{
+  let notify!:()=>void;const started=new Promise<void>(r=>notify=r);
+  const f=await fixture(t,async(url,_headers,signal)=>{
+    const response=new IncomingMessage(new Socket());response.statusCode=200;response.headers={'content-type':'video/mp4','content-length':'1024'};response._read=()=>{};response.on('error',()=>{});
+    const abort=()=>response.destroy(new Error('abort'));signal?.addEventListener('abort',abort,{once:true});response.once('close',()=>signal?.removeEventListener('abort',abort));notify();return{url,response};
+  });
+  const job=await f.downloads.createPreferred('ep','viewer');await started;
+  for(const [id,n] of [['queued',2],['saved',3]] as const){f.db.run("INSERT INTO episodes VALUES(?,'m',1,?,'Episode',1200,NULL)",id,n);f.db.run('INSERT INTO source_episodes VALUES(?,?)',id,'/'+id);}
+  await saved(f.db,f.cfg.downloadRoot!,'saved');const waiting=await f.downloads.createPreferred('queued','viewer');
+  // MP4 publishes content length before any bytes arrive, without inventing a total for HLS.
+  assert.equal((await f.downloads.status()).jobs.find(j=>j.id===job.id)!.totalBytes,1024);
+  await f.downloads.configureSettings({enabled:false});
+  const jobs=(await f.downloads.status()).jobs;assert.equal(jobs.find(j=>j.id===job.id)!.state,'interrupted');assert.equal(jobs.find(j=>j.id===waiting.id)!.state,'interrupted');
+  assert.ok(await f.downloads.asset('saved'));assert.equal(f.downloads.busy,false);assert.deepEqual(f.released,['lease-1']);
+  await assert.rejects(f.downloads.createPreferred('ep','viewer'),{error:'download-disabled'});
+  await f.downloads.configureSettings({enabled:true});assert.equal(f.downloads.busy,false);
+});
+
+test('automatic quality applies inside HLS master playlists too',async t=>{
+  const {dir,cfg}=await layout();t.after(()=>rm(dir,{recursive:true,force:true}));
+  const fetched:string[]=[];const out=path.join(cfg.downloadRoot!,'hls');await mkdir(out);
+  const master='#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1920x1080\nhigh.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=1280x720\nlow.m3u8\n';
+  await transferVideo(cfg,out,{url:'https://source.test/master.m3u8'},async url=>{fetched.push(url);return{url,response:incoming(url.endsWith('master.m3u8')?master:url.endsWith('low.m3u8')?'#EXTM3U\n#EXTINF:1200,\nsegment.ts\n#EXT-X-ENDLIST\n':'segment',url.endsWith('.m3u8')?'application/vnd.apple.mpegurl':'video/mp2t')};},new AbortController().signal,async()=>{},()=>{},'720p');
+  assert.deepEqual(fetched,['https://source.test/master.m3u8','https://source.test/low.m3u8','https://source.test/segment.ts']);
+});
+
+test('config and one-click HTTP contracts retain explicit selection compatibility and reject partial selections',async t=>{
+  const {dir,cfg}=await layout();const {app,db,downloads}=await buildApp(cfg,false,{tmdb:{token:'',key:''}});
+  t.after(async()=>{await app.close();await rm(dir,{recursive:true,force:true});});seed(db);
+  const before=(await app.inject('/api/admin/downloads')).json();assert.equal(before.enabled,false);assert.equal(before.allowed,true);assert.equal(before.storageReady,true);
+  const headers={'x-moa-profile':'viewer'};
+  assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads',headers,payload:{episodeId:'ep'}})).json().error,'download-disabled');
+  const enabled=await app.inject({method:'PUT',url:'/api/admin/downloads/config',payload:{enabled:true,quality:'720p',quotaBytes:1024**3}});assert.equal(enabled.statusCode,200,enabled.body);assert.equal(enabled.json().configured,true);
+  for(const payload of [{},{quality:'4k'},{enabled:'maybe'},{quotaBytes:0}])assert.equal((await app.inject({method:'PUT',url:'/api/admin/downloads/config',payload})).statusCode,400);
+  let preferred=0,manual=0;downloads.createPreferred=async()=>{preferred++;return{} as never;};downloads.create=async()=>{manual++;return{} as never;};
+  assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads',headers,payload:{episodeId:'ep'}})).statusCode,200);
+  assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads',headers,payload:{episodeId:'ep',selectionToken:'t',choiceId:'c'}})).statusCode,200);
+  for(const key of ['selectionToken','choiceId'])assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads',headers,payload:{episodeId:'ep',[key]:'partial'}})).statusCode,400);
+  assert.equal(preferred,1);assert.equal(manual,1);
 });

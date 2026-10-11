@@ -538,7 +538,9 @@ export interface DownloadJob {
   state: DownloadState; bytes: number; totalBytes: number | null; error: string | null;
   createdAt: string; updatedAt: string; quality: string | null;
 }
+export type DownloadQuality = 'best' | '1080p' | '720p' | '480p';
 export interface DownloadStatus {
+  enabled: boolean; allowed: boolean; storageReady: boolean; quality: DownloadQuality;
   configured: boolean; reason: string | null; quotaBytes: number; usedBytes: number;
   jobs: DownloadJob[];
   totalJobs?: number; nextCursor?: string | null;

@@ -186,7 +186,7 @@ export function SettingsPage() {
       { value: "library", label: "소스와 라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "plugins", label: "플러그인", group: "서버 관리", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "translation", label: "번역 서비스", group: "서버 관리", icon: <Languages size={18} />, scope: "모든 프로필의 AI 자막 번역에 쓰여요." },
-      { value: "downloads", label: "서버 저장", group: "서버 관리", icon: <HardDriveDownload size={18} />, scope: "소스 영상을 서버에 저장해요. 저장·삭제는 관리자만, 재생은 볼 수 있는 모든 프로필이 할 수 있어요." },
+      { value: "downloads", label: "서버 다운로드", group: "서버 관리", icon: <HardDriveDownload size={18} />, scope: "소스 영상을 서버에 받아 둬요. 켜기·다운로드·삭제는 관리자만, 재생은 볼 수 있는 모든 프로필이 할 수 있어요." },
       { value: "network", label: "네트워크", group: "서버 관리", icon: <Network size={18} />, scope: "모든 프로필에 적용돼요." }
     ] : []),
     { value: "about", label: "정보", group: "", icon: <Info size={18} />, scope: "버전, 업데이트와 크레딧" }

@@ -893,22 +893,36 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
 
 /* ---------- Server saves ---------- */
 .episode-list li.has-save { position: relative; }
-.episode-list li.has-save > .episode { padding-right: 52px; }
-.episode-save { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); color: var(--text-3); }
+.episode-list li.has-save > .episode { padding-right: 56px; }
+.episode-save { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); width: 44px; height: 44px; color: var(--text-2); }
+.episode-save:hover { color: var(--text); }
+.episode-save.is-pending, .episode-save.is-resolving, .episode-save.is-finalizing, .episode-save.is-downloading { color: var(--accent-strong); }
+.episode-save.is-queued { color: var(--text-2); }
 .episode-save.is-ready { color: var(--success); }
 .episode-save.is-failed { color: var(--warning); }
-.save-ring { width: 16px; height: 16px; border-radius: 50%; background: conic-gradient(var(--accent-strong) calc(var(--ratio) * 360deg), rgba(255, 255, 255, .18) 0); -webkit-mask: radial-gradient(circle, transparent 4.5px, #000 5px); mask: radial-gradient(circle, transparent 4.5px, #000 5px); }
-.save-dialog .confirm-dialog-body { display: grid; gap: 12px; }
-.save-dialog .confirm-dialog-body p { margin: 0; }
-.save-dialog-title { color: var(--text-2); font-weight: 600; }
-.save-dialog-state { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: .9rem; }
-.save-choices { display: grid; gap: 6px; max-height: 280px; overflow-y: auto; }
-.save-choice { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 8px 14px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-m); color: var(--text-2); text-align: left; transition: border-color .12s, background-color .12s; }
-.save-choice:hover { background: var(--surface-1); }
-.save-choice.is-active { border-color: var(--accent); background: rgba(123, 97, 255, .12); color: var(--text); font-weight: 650; }
-.save-choice-dot { width: 16px; height: 16px; flex: none; border: 2px solid var(--text-3); border-radius: 50%; }
-.save-choice.is-active .save-choice-dot { border: 5px solid var(--accent); }
-.download-unavailable b { color: var(--warning); }
+.episode-save[disabled] { opacity: 1; cursor: progress; }
+.save-ring { --size: 18px; width: var(--size); height: var(--size); border-radius: 50%; background: conic-gradient(var(--accent-strong) calc(var(--ratio, .25) * 360deg), rgba(255, 255, 255, .18) 0); -webkit-mask: radial-gradient(circle, transparent calc(var(--size) / 2 - 3px), #000 calc(var(--size) / 2 - 2.5px)); mask: radial-gradient(circle, transparent calc(var(--size) / 2 - 3px), #000 calc(var(--size) / 2 - 2.5px)); }
+.save-ring.is-spin { animation: spin .9s linear infinite; }
+/* State line under the episode title: always visible, no hover needed on phones. */
+.download-status { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: .82rem; color: var(--text-3); }
+.download-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download-status b { font-weight: 650; color: var(--text-2); }
+.download-status.is-pending b, .download-status.is-resolving b, .download-status.is-downloading b, .download-status.is-finalizing b { color: var(--accent-strong); }
+.download-status.is-ready b { color: var(--success); }
+.download-status.is-failed b { color: var(--warning); }
+.download-status .download-progress { flex: 0 0 72px; margin-top: 0; }
+.hero-download-status { margin-top: 10px; font-size: .88rem; }
+.movie-download.is-ready { color: var(--success); }
+.movie-download.is-failed { color: var(--warning); }
+.movie-download.is-pending, .movie-download.is-resolving, .movie-download.is-downloading, .movie-download.is-finalizing { color: var(--accent-strong); }
+.movie-download[disabled] { opacity: 1; cursor: progress; }
+.download-switch.is-on b { color: var(--text); }
+.download-readiness { display: grid; gap: 10px; width: 100%; margin: 0; padding: 0; list-style: none; }
+.download-readiness li { display: flex; align-items: flex-start; gap: 10px; }
+.download-readiness li > span:last-child { display: grid; gap: 2px; }
+.download-readiness-mark { display: grid; place-items: center; flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: rgba(245, 184, 75, .16); color: var(--warning); }
+.download-readiness li.is-ok .download-readiness-mark { background: rgba(63, 207, 142, .16); color: var(--success); }
+.download-readiness li.is-ok small { color: var(--success); }
 .download-usage { flex-wrap: wrap; }
 .download-usage-bar { flex: 1 1 180px; max-width: 240px; height: 6px; }
 .download-usage-bar.is-full i { background: var(--warning); }
@@ -933,8 +947,8 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
 .pf-location b { display: block; font-size: .97rem; }
 .pf-location small { color: var(--text-3); font-size: .84rem; line-height: 1.45; }
 @media (max-width: 760px) {
-  .episode-list li.has-save > .episode { padding-right: 40px; }
-  .episode-save { right: -4px; }
+  .episode-list li.has-save > .episode { padding-right: 44px; }
+  .episode-save { right: -6px; }
   .download-quota { flex-wrap: wrap; }
 }
 
