@@ -37,6 +37,7 @@ import { randomUUID } from 'node:crypto';
 import { OnlineSubtitles, type OnlineClient } from './online.js';
 import { Enrichment, type EnrichmentOptions } from './enrichment.js';
 import { Tmdb } from './tmdb.js';
+import { YouTubeTrailers } from './youtube-trailers.js';
 import { ProfilePins, hashPin } from './profile-pin.js';
 
 declare module 'fastify' { interface FastifyRequest { moaProfile?: string; moaAccount: Account } }
@@ -72,7 +73,7 @@ export async function sendFile(reply: FastifyReply, file: string, mime: string, 
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
   return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
 }
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -98,6 +99,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const imageCache = new ImageCache(path.join(cfg.dataDir,'images'),undefined,Date.now,()=>app.log.warn({event:'image-cache-io-error'}));
   const cacheStatsTimer = setInterval(()=>app.log.info({event:'cache-stats',...sources.stats.snapshot()}),5*60_000); cacheStatsTimer.unref();
   const tmdb = new Tmdb(db, value => app.log.info(value), services.tmdb);
+  const youtube = new YouTubeTrailers(db, services.youtube);
   catalog.metadata = tmdb.enabled;
   const recommendations = new Recommendations(db, tmdb);
   const groups = new TitleGroups(catalog);
@@ -191,6 +193,11 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
   app.get('/api/admin/tmdb/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(tmdb.status()));
+  app.get('/api/admin/youtube/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.status()));
+  app.patch('/api/admin/youtube/config', { schema: { body: object({
+    apiKey: { type: 'string', minLength: 20, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' },
+    regionCode: { type: 'string', pattern: '^[A-Z]{2}$' }, clear: { type: 'boolean' }
+  }) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.configure(req.body as Parameters<YouTubeTrailers['configure']>[0])));
   app.patch('/api/admin/tmdb/config', { schema: { body: object({
     token: { type: 'string', minLength: 16, maxLength: 4096, pattern: '^[A-Za-z0-9._-]+$' },
     apiKey: { type: 'string', pattern: '^[a-fA-F0-9]{32}$' }, clear: { type: 'boolean' }
@@ -315,6 +322,11 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.get('/api/episodes/:id/context', {schema:{params:idParams()}}, async req=>{const e=db.get('SELECT media_id,season,number FROM episodes WHERE id=?',params(req).id);if(!e)throw new ApiFailure(404,'episode-not-found');return {mediaId:e.media_id,season:e.season,number:e.number};});
   app.get('/api/media/:id/franchise', { schema: { params: idParams() } }, async req => franchises.get(params(req).id, profile(req)));
   app.get('/api/media/:id', { schema: { params: idParams() } }, async req => { catalog.kids.assert(params(req).id, profile(req)); await sources.detail(params(req).id); await tmdb.ensureDetail(params(req).id, 5000); return catalog.detail(params(req).id, profile(req)); });
+  app.get('/api/media/:id/trailers', { schema: { params: idParams() } }, async (req, reply) => {
+    // Read existing metadata only; do not re-run source extraction or title matching for a precheck.
+    const detail = catalog.detail(params(req).id, profile(req));
+    return reply.header('Cache-Control', 'private, no-store').send(await youtube.check([...(detail.trailers ?? []), detail.trailer]));
+  });
   app.get('/api/metadata/status', async () => ({ tmdb: tmdb.enabled }));
   app.get('/api/media/:id/metadata/search', { schema: { params: idParams(), querystring: object({ q: { ...string } }, ['q']) } }, async req => catalog.kids.candidates(await tmdb.search(query(req).q), profile(req)));
   app.patch('/api/media/:id/metadata', { schema: { params: idParams(), body: object({ action: { type: 'string', enum: ['link', 'off', 'auto'] }, kind: { type: 'string', enum: ['tv', 'movie'] }, tmdbId: { type: 'integer', minimum: 1 }, season: { type: 'integer', minimum: 1, maximum: 200 } }, ['action']) } }, async req => tmdb.change(params(req).id, req.body as any));
@@ -568,6 +580,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

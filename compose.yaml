@@ -20,6 +20,7 @@ services:
       MOA_MAX_TRANSCODES: "${MOA_MAX_TRANSCODES:-2}"
       MOA_TMDB_TOKEN: ${MOA_TMDB_TOKEN:-}
       MOA_TMDB_API_KEY: ${MOA_TMDB_API_KEY:-}
+      MOA_YOUTUBE_API_KEY: ${MOA_YOUTUBE_API_KEY:-}
     depends_on:
       moa-apk: {condition: service_healthy}
     volumes:

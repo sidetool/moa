@@ -293,7 +293,7 @@ export function TitlePage() {
         )}
         <MetadataCredit media={m} />
       </div>
-      {trailer && trailers.length > 0 && <TrailerDialog key={`${m.id}:${trailers.join(",")}`} keys={trailers} title={m.title} onClose={closeTrailer} />}
+      {trailer && trailers.length > 0 && <TrailerDialog key={`${m.id}:${trailers.join(",")}`} mediaId={m.id} keys={trailers} title={m.title} onClose={closeTrailer} />}
     </div>
   );
 }

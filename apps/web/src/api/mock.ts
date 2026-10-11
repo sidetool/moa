@@ -101,15 +101,26 @@ function history(): HistoryEntry[] {
 }
 
 /* Placeholder trailer keys (valid shape, not real videos). A fake IFrame API in the smoke test reads the prefix:
-   `ok` plays, `e101`/`e150` are per-video errors, `e153` an embedder-identity error, `blk` blocks autoplay.
+   `ok` plays, `e101`/`e150` are per-video errors, `rgn` stands for a region-blocked video, `e153` an embedder-identity error, `blk` blocks autoplay.
    demo-2 also carries a duplicate and an invalid key to exercise client-side cleanup. */
 const mockTrailers: Record<string, Pick<MediaDetail, "trailer" | "trailers">> = {
   "demo-2": { trailers: ["e101xxxxxxx", "okxxxxxxxxx", "e101xxxxxxx", "bad key"], trailer: "okxxxxxxxxx" },
   "demo-6": { trailers: ["e101yyyyyyy", "e150yyyyyyy"] },
-  "lalaland": { trailer: "okzzzzzzzzz" },
+  "lalaland": { trailers: ["rgnzzzzzzzz"], trailer: "okzzzzzzzzz" },
   "oshi": { trailers: ["e153zzzzzzz", "okyyyyyyyyy"] },
   "demo-1": { trailers: ["blkzzzzzzzz"] }
 };
+
+/* Optional YouTube precheck. With a saved key, `e101`/`e150` keys count as embedding-disabled (dropped) and
+   `rgn` keys as region-blocked (moved to the end). `moa.mockTrailerPreflight=error|slow` previews failures. */
+let youtubeConfig = { configured: false, source: "none" as "environment" | "database" | "none", hasSavedCredential: false, regionCode: "KR" };
+function trailerPreflight(id: string) {
+  const d = mockTrailers[id] ?? {};
+  const keys = [...new Set([...(d.trailers ?? []), d.trailer].filter((key): key is string => typeof key === "string" && /^[A-Za-z0-9_-]{11}$/.test(key)))].slice(0, 5);
+  if (!youtubeConfig.configured) return { trailers: keys, checked: false };
+  const usable = keys.filter(key => !/^e1(01|50)/.test(key));
+  return { trailers: [...usable.filter(key => !key.startsWith("rgn")), ...usable.filter(key => key.startsWith("rgn"))], checked: true };
+}
 
 function detail(id: string): MediaDetail | null {
   const card = byId.get(id);
@@ -438,6 +449,22 @@ export function installMockApi() {
     const selectedProfile = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get('X-Moa-Profile');
     if (selectedProfile && profilePins.has(selectedProfile) && unlockedProfile !== selectedProfile) return json({ error: 'profile-locked' }, 401);
     if (path === "/home") return json(home(url.searchParams.get("type") ?? undefined));
+    const trailerCheck = /^\/media\/([^/]+)\/trailers$/.exec(path);
+    if (trailerCheck) {
+      (window as { __mockTrailerChecks?: number }).__mockTrailerChecks = ((window as { __mockTrailerChecks?: number }).__mockTrailerChecks ?? 0) + 1;
+      const mode = localStorage.getItem("moa.mockTrailerPreflight");
+      if (mode === "error") return json({ error: "youtube-unavailable" }, 503);
+      await delay(mode === "slow" ? 8000 : 400);
+      return json(trailerPreflight(decodeURIComponent(trailerCheck[1])));
+    }
+    if (path === "/admin/youtube/config") {
+      if (method === "PATCH") {
+        if (typeof body.regionCode === "string") { if (!/^[A-Z]{2}$/.test(body.regionCode)) return json({ error: "youtube-region-invalid" }, 400); youtubeConfig = { ...youtubeConfig, regionCode: body.regionCode }; }
+        if (body.clear === true) youtubeConfig = { ...youtubeConfig, configured: false, source: "none", hasSavedCredential: false };
+        else if (typeof body.apiKey === "string") { if (body.apiKey.trim().length < 20) return json({ error: "youtube-key-invalid" }, 400); youtubeConfig = { ...youtubeConfig, configured: true, source: "database", hasSavedCredential: true }; }
+      }
+      return json(youtubeConfig);
+    }
     if (path.startsWith("/media/")) { const d = detail(decodeURIComponent(path.slice(7))); return d ? json(d) : json({ error: "not-found" }, 404); }
     if (path === "/media") { const type = url.searchParams.get("type"); const items = cards.filter(card => !type || card.type === type); return json({ items, page: 1, hasNextPage: false, total: items.length }); }
     if (path === "/genres") return json(["드라마", "로맨스", "뮤지컬", "미스터리", "음악", "코미디", "스릴러"]);

@@ -771,6 +771,11 @@
 
 /* TMDB credential, under the 작품 정보 row */
 .setting + .tmdb-setting { border-top: 1px solid var(--hairline); }
+.tmdb-setting + .tmdb-setting { border-top: 1px solid var(--hairline); }
+.youtube-setting .tmdb-key { gap: 16px; }
+.youtube-region-row { align-items: center; }
+.tmdb-key-row input.youtube-region { flex: 0 0 64px; text-align: center; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.youtube-region-name { flex: 1; min-width: 0; overflow: hidden; color: var(--text-3); font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
 .tmdb-setting .setting > div { flex: 1; }
 .tmdb-key { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0 18px 16px 78px; }
 .tmdb-key-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }

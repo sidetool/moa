@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
 import { NetworkSettings } from "../components/NetworkSettings";
 import { TmdbSettings } from "../components/TmdbSettings";
+import { YouTubeSettings } from "../components/YouTubeSettings";
 import { TranslationSettings } from "../components/TranslationSettings";
 import { DownloadSettings } from "../components/DownloadSettings";
 import { recommendationsKey, useResetDismissals } from "../api/recommendations";
@@ -282,6 +283,7 @@ export function SettingsPage() {
           {link("/sources", <Tv size={20} />, "영상 소스", "확장 저장소, 소스 설치·업데이트·설정")}
           {link("/library", <FolderOpen size={20} />, "로컬 라이브러리", "영상 폴더 추가와 스캔")}
           <TmdbSettings />
+          <YouTubeSettings />
         </div>
         <p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
       </section>}
