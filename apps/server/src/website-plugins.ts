@@ -134,7 +134,7 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
   };
   const history = new HistoryReader(db);
   const pending = new Set<string>(), abort = new AbortController();
-  app.addHook('onClose', async () => abort.abort());
+  app.addHook('onClose', async () => {abort.abort();reviews?.close();});
   app.get('/api/plugins', async () => db.all('SELECT * FROM website_plugins ORDER BY id').map(metadata));
   app.get('/api/plugin-runtime', async (): Promise<WebsitePluginRuntime[]> => db.all('SELECT * FROM website_plugins WHERE enabled=1 ORDER BY id').map(metadata).filter(p => p.compatibility!.supported).map(({ id, name, revision, kind, placements, permissions, actions, hooks, enabled }) => ({ id, name, revision, kind, placements, permissions, actions, hooks, enabled })));
   app.get('/api/plugins/:id', async req => { const row = get((req.params as { id: string }).id); return { ...JSON.parse(row.package), revision: hash(row.package) }; });
@@ -164,10 +164,10 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
 
     app.post(`${base}/:id/reviews`, {bodyLimit:4096}, async (req,reply) => {
       const body=req.body as any,id=(req.params as {id:string}).id;
-      if(!body||Object.keys(body).some(k=>!['revision','mediaId','provider'].includes(k))||typeof body.revision!=='string'||typeof body.mediaId!=='string'||!body.mediaId||body.mediaId.length>256||!['naver','kakao','tmdb'].includes(body.provider))throw new ApiFailure(400,'invalid-review-request');
+      if(!body||Object.keys(body).some(k=>!['revision','mediaId','provider','selection'].includes(k))||typeof body.revision!=='string'||typeof body.mediaId!=='string'||!body.mediaId||body.mediaId.length>256||!['tmdb','anilist'].includes(body.provider)||body.selection!==undefined&&(typeof body.selection!=='string'||!/^[1-9][0-9]{0,8}$/.test(body.selection)||body.provider!=='anilist'))throw new ApiFailure(400,'invalid-review-request');
       const check=()=>{const row=get(id),p=JSON.parse(row.package) as WebsitePluginPackage;if(body.revision!==hash(row.package))throw new ApiFailure(409,'plugin-updated');if(!p.permissions.includes('reviews.read'))throw new ApiFailure(403,'plugin-permission-denied');};
       check();if(!reviews)throw new ApiFailure(503,'reviews-unavailable');
-      const result=await reviews.list(req.moaProfile!,body.mediaId,body.provider);check();
+      const result=await reviews.list(req.moaProfile!,body.mediaId,body.provider,body.selection);check();
       return reply.header('Cache-Control','private, no-store').send(result);
     });
 

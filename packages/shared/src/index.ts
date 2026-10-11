@@ -588,6 +588,7 @@ export interface PersonWorksResponse {
 }
 
 /** Reviews are public provider data; article snippets are not verified viewer ratings. */
-export type ReviewProvider = 'naver' | 'kakao' | 'tmdb';
+export type ReviewProvider = 'tmdb' | 'anilist';
+export interface ReviewCandidate { id:string; title:string; alternative:string; year:number|null; format:string; }
 export interface ReviewItem { title:string; excerpt:string; author:string; date:string; url:string; kind:'article'|'review'; language:'unknown'|'en'; }
-export interface ReviewResponse { mediaId:string; provider:ReviewProvider; status:'ready'|'unconfigured'|'unlinked'|'restricted'|'unavailable'; query:string; items:ReviewItem[]; }
+export interface ReviewResponse { mediaId:string; provider:ReviewProvider; status:'ready'|'select'|'unconfigured'|'unlinked'|'restricted'|'unavailable'; query:string; items:ReviewItem[]; candidates:ReviewCandidate[]; }

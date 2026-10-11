@@ -157,7 +157,8 @@ export class Tmdb {
   }
   async reviewItems(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').ReviewItem[]> {
     if (!this.enabled || title.provider !== 'tmdb' || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new Error('invalid-review-title');
-    const data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'en-US',page:'1'});
+    let data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'ko-KR',page:'1'});
+    if (Array.isArray(data?.results) && !data.results.length) data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'en-US',page:'1'});
     if (!Array.isArray(data?.results)) throw new Error('invalid-reviews');
     return data.results.slice(0,8).flatMap((r:any) => {
       if (typeof r.url !== 'string' || !/^https:\/\/(?:www\.)?themoviedb\.org\/review\/[a-zA-Z0-9]+$/.test(r.url) || typeof r.content !== 'string') return [];

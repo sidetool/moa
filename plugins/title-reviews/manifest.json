@@ -3,7 +3,7 @@
   "id": "title-reviews",
   "name": "리뷰 모아보기",
   "version": "0.1.0",
-  "description": "작품 상세에서 한국어 블로그 리뷰를 찾아보고 해외 사용자 리뷰의 원문·번역 페이지로 이동합니다.",
+  "description": "작품 상세에서 TMDB·AniList 사용자 리뷰를 읽고 원문·번역 페이지로 이동합니다.",
   "minMoaVersion": "0.1.2-beta.2",
   "placements": ["app"],
   "permissions": ["reviews.read"],

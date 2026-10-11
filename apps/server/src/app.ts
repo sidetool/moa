@@ -187,7 +187,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
   app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
   app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb), new PluginPeople(db, tmdb), new PluginReviews(db, tmdb, services.reviews ?? {naverId:process.env.MOA_NAVER_CLIENT_ID,naverSecret:process.env.MOA_NAVER_CLIENT_SECRET,kakaoKey:process.env.MOA_KAKAO_REST_KEY}));
+  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb), new PluginPeople(db, tmdb), new PluginReviews(db, tmdb, services.reviews));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));

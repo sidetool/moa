@@ -17,7 +17,7 @@ const usePlugins = () => {
 const catalogQueries = ['home', 'media', 'media-list', 'search', 'watchlist', 'source-page', 'source-browse', 'tab-source', 'tab-source-latest', 'grouped-cards'];
 const path = (id: string) => `/plugins/${encodeURIComponent(id)}`;
 const runtimePath = (id: string) => `/plugin-runtime/${encodeURIComponent(id)}`;
-const permissionLabels = { 'reviews.read':'현재 작품의 리뷰·블로그 검색 결과 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
+const permissionLabels = { 'reviews.read':'현재 작품의 공개 리뷰·애니 후보 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
 type Player = { episodeId: string; title: string; getTime: () => number; onImport: (files: File[]) => Promise<boolean>; control: (action: string, seconds?: number) => Promise<void> };
 const act = (pluginId: string, actionId?: string) => window.dispatchEvent(new CustomEvent('moa:plugin-action', { detail: { pluginId, actionId } }));
 const sdk = `
@@ -70,7 +70,7 @@ const sdk = `
     ui: Object.freeze({ open: () => call('ui', true), close: () => call('ui', false), resize: height => call('ui.resize', height) }),
     player: Object.freeze({ play: () => call('player.control', { action: 'play' }), pause: () => call('player.control', { action: 'pause' }), seek: seconds => call('player.control', { action: 'seek', seconds }) }),
     history: Object.freeze({ list: query => call('history.read', query || {}) }),
-    reviews: Object.freeze({ list: provider => call('reviews.list', provider || 'naver') }),
+    reviews: Object.freeze({ list: (provider, selection) => call('reviews.list', {provider: provider || 'tmdb', ...(selection === undefined ? {} : {selection})}) }),
     metadata: Object.freeze({ credits: () => call('metadata.credits'), person: identity => call('metadata.person', identity) }),
     discovery: Object.freeze({ trending: query => call('discovery.trending', query) }),
     storage: Object.freeze({ get: () => call('storage'), set: value => call('storage', value) }),
@@ -220,8 +220,8 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
           if (page.current.pathname !== pathname) throw new Error('작품이 변경되었어요. 다시 열어 주세요.');
         } else if (data.method === 'reviews.list' && installed.permissions.includes('reviews.read')) {
           const pathname=page.current.pathname,match=/^\/title\/([^/]+)\/?$/.exec(pathname);
-          if(!match||!['naver','kakao','tmdb'].includes(data.value))throw new Error('리뷰 요청을 확인해 주세요.');
-          result=await api(`${runtimePath(plugin.id)}/reviews`,{method:'POST',body:{revision:plugin.revision,mediaId:decodeURIComponent(match[1]),provider:data.value}});
+          if(!match||!['tmdb','anilist'].includes(data.value?.provider))throw new Error('리뷰 요청을 확인해 주세요.');
+          result=await api(`${runtimePath(plugin.id)}/reviews`,{method:'POST',body:{revision:plugin.revision,mediaId:decodeURIComponent(match[1]),provider:data.value.provider,...(data.value.selection===undefined?{}:{selection:data.value.selection})}});
           if(page.current.pathname!==pathname)throw new Error('작품이 변경되었어요.');
         } else if (data.method === 'discovery.trending' && installed.permissions.includes('discovery.read')) {
           result = await api(`${runtimePath(plugin.id)}/discovery/trending`, { method: 'POST', body: { revision: plugin.revision, query: data.value } });

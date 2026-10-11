@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { currentProfileId } from './api';
 
 /** Optional title.reviews data hook. MOA owns presentation and validates every response. */
-export type ReviewRequest = {mediaId:string;provider:import('@moa/shared').ReviewProvider};
+export type ReviewRequest = {mediaId:string;provider:import('@moa/shared').ReviewProvider;selection?:string};
 export type ReviewHook = { profile: string; name: string; run: (value: ReviewRequest, signal: AbortSignal) => Promise<unknown> };
 export type ReviewSource = { id: string; name: string; request: (value: ReviewRequest, signal: AbortSignal) => Promise<unknown> };
 
