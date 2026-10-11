@@ -20,7 +20,7 @@ Do not replace that worktree with this branch.
   receives the new `PluginDiscovery` instance as its optional third argument.
 - Keep the current API version unless the integrating branch intentionally bumps
   it. Update the manifest minimum release to the release actually containing this
-  SDK; the provisional target is `0.2.0-beta.1`. Do not lower it to v0.1.1.
+  SDK; the provisional target is `0.1.2-beta.1`. Do not lower it to v0.1.1.
 
 ## Validation and deployment boundary
 

@@ -248,7 +248,7 @@ No history mutation API is exposed. A plugin with both history and external-netw
 The `discovery.read` permission enables
 `moa.discovery.trending({ kind: 'movie' | 'tv', window: 'day' | 'week' })`.
 This additive SDK is integrated into `feat/next-media-features`; it is not present in v0.1.1.
-Packages using it currently declare `minMoaVersion: "0.2.0-beta.1"` as the proposed
+Packages using it currently declare `minMoaVersion: "0.1.2-beta.1"` as the proposed
 integration target. Confirm the actual release before distributing the ZIP.
 
 The result is `{ provider, status, items, updatedAt, stale }`. `status` is `ready`,
@@ -296,7 +296,7 @@ The POST transport is `/api/plugin-runtime/:id/discovery/trending` with
 
 `feat/people-plugin`은 기존 `feat/discovery-plugin` 위에 추가된 기능이다.
 현재 정식 v0.1.1에는 없으며, 제공 버전이 확정되기 전의 최소 버전 후보는
-`0.2.0-beta.1`이다. 패키지에 `metadata.read` 권한을 명시해야 한다.
+`0.1.2-beta.1`이다. 패키지에 `metadata.read` 권한을 명시해야 한다.
 
 ```js
 const credits = await moa.metadata.credits();

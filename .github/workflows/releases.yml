@@ -31,6 +31,10 @@ jobs:
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts
       - name: Source playback integration
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-identity.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
+      - name: Media features and plugin contracts
+        run: |
+          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/recommendations.test.ts test/general-markers.test.ts test/downloads.test.ts test/plugin-discovery.test.ts test/plugin-people.test.ts
+          node --test plugins/title-people/test/plugin.test.mjs
   image:
     needs: check
     runs-on: ubuntu-latest
@@ -132,6 +136,18 @@ jobs:
           if gh release view "$TAG" --json isDraft > existing-release.json 2>/dev/null; then
             node -e "if(!require('./existing-release.json').isDraft) throw Error('Published releases are immutable');"
           fi
+      - name: Package optional public plugins
+        run: |
+          mkdir -p release-output
+          node plugins/template/build.mjs ../title-people
+          node plugins/template/build.mjs ../trending-titles
+          node --input-type=module - <<'JS'
+          import {readFileSync,copyFileSync} from 'node:fs';
+          for (const id of ['title-people','trending-titles']) {
+            const pkg=JSON.parse(readFileSync(`plugins/${id}/manifest.json`));
+            copyFileSync(`plugins/template/dist/${id}.zip`,`release-output/${id}-${pkg.version}.zip`);
+          }
+          JS
       - name: Prepare signed artifacts
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -140,7 +156,7 @@ jobs:
         run: |
           node scripts/publish-release.mjs
           cd release-output
-          sha256sum release.json release.json.sig moa-release.json moa-install.tar.gz moa-install.tar.gz.sig > SHA256SUMS
+          sha256sum release.json release.json.sig moa-release.json moa-install.tar.gz moa-install.tar.gz.sig *.zip > SHA256SUMS
       - name: Publish complete release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -153,7 +169,7 @@ jobs:
           if ! gh release view "$TAG" --json isDraft >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --draft --notes-file "docs/releases/$TAG.md" "${args[@]}"
           fi
-          gh release upload "$TAG" release-output/release.json release-output/release.json.sig release-output/moa-release.json release-output/moa-install.tar.gz release-output/moa-install.tar.gz.sig release-output/SHA256SUMS --clobber
+          gh release upload "$TAG" release-output/release.json release-output/release.json.sig release-output/moa-release.json release-output/moa-install.tar.gz release-output/moa-install.tar.gz.sig release-output/SHA256SUMS release-output/*.zip --clobber
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$TAG\") | .id")
           test -n "$id"
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -F prerelease="$prerelease" -f make_latest="$latest" > /dev/null

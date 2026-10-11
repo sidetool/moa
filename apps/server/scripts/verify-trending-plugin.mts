@@ -13,7 +13,7 @@ const {createServer}=await import(require.resolve('vite'));
 const {chromium}=require(process.env.MOA_PLAYWRIGHT_PATH||'playwright');
 const out=process.env.MOA_VERIFY_DIR||path.join(tmpdir(),'moa-trending-verify');await mkdir(out,{recursive:true});
 const dir=await mkdtemp(path.join(tmpdir(),'moa-trending-app-'));
-process.env.MOA_VERSION='0.2.0-beta.1';process.env.VITE_MOCK='0';
+process.env.MOA_VERSION='0.1.2-beta.1';process.env.VITE_MOCK='0';
 let providerCalls=0;
 const env=await buildApp({dataDir:dir,mediaRoot:dir,webDir:path.join(dir,'web'),requireAccount:false},false,{tmdb:{token:'synthetic-provider-token',fetch:async(input)=>{
   const u=new URL(String(input));assert.match(u.pathname,/^\/3\/trending\/(movie|tv)\/(day|week)$/);providerCalls++;

@@ -4,7 +4,7 @@
   "name": "요즘 인기 영화·TV",
   "version": "0.1.0",
   "description": "홈에서 TMDB 일간·주간 인기 영화와 TV 작품을 보고 MOA에서 검색함.",
-  "minMoaVersion": "0.2.0-beta.1",
+  "minMoaVersion": "0.1.2-beta.1",
   "placements": ["home"],
   "permissions": ["discovery.read", "app.navigate", "ui"],
   "connect": ["https://image.tmdb.org"]
