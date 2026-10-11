@@ -35,7 +35,7 @@ interface Run {
   peakSpeed: number;
 }
 export interface Session {
-  response: PlaybackSession; profile: string; file: string; probe: Probe; audio?: StreamInfo; caps: ClientCapabilities;
+  response: PlaybackSession; root: string; profile: string; file: string; probe: Probe; audio?: StreamInfo; caps: ClientCapabilities;
   touched: number; dir: string; timeline: number[]; hardware: boolean; run?: Run; generation: number;
   segments: Map<number, string>; lock: Promise<void>; deleted: boolean; cursor: number;
   init?: Buffer; maxAheadSeconds: number;
@@ -53,10 +53,11 @@ export class Playback {
       for (const [id, s] of this.sessions) if (Date.now() - s.touched > config.sessionTtlMs) void this.remove(id).catch(error => this.log({ event: 'session-cleanup-error', error: String(error) }));
     }, 60_000); this.janitor.unref();
   }
-  async create(profile: string, episodeId: string, caps: ClientCapabilities, audioTrackId?: string, startPosition?: number): Promise<PlaybackSession> {
-    const record = this.db.get('SELECT * FROM files WHERE episode_id=?', episodeId);
+  async create(profile: string, episodeId: string, caps: ClientCapabilities, audioTrackId?: string, startPosition?: number, saved?: {root:string;path:string;probe:string;subtitles:string;size:number;mtime:number}): Promise<PlaybackSession> {
+    const record = saved ?? this.db.get('SELECT * FROM files WHERE episode_id=?', episodeId);
+    const root = saved?.root ?? this.config.mediaRoot;
     if (!record) throw new ApiFailure(404, 'episode-not-found');
-    const file = await safePath(this.config.mediaRoot, record.path);
+    const file = await safePath(root, record.path);
     const probe: Probe = JSON.parse(record.probe);
     const audioStreams = probe.streams.filter(s => s.codec_type === 'audio');
     const audio = audioTrackId !== undefined ? audioStreams.find(a => String(a.index) === audioTrackId) : audioStreams.find(a => a.disposition?.default) || audioStreams[0];
@@ -78,10 +79,10 @@ export class Playback {
       subtitleSources.set(id, { file, stream: sub.index, format });
       subtitles.push({ id, label: sub.tags?.title || sub.tags?.language || `자막 ${sub.index}`, lang: sub.tags?.language, format, url: `${base}/subtitles/${id}.${format}`, default: !subtitles.length && Boolean(sub.disposition?.default), embedded: true, source: 'embedded' });
     }
-    const saved = this.online?.saved(episodeId) || [];
-    if (saved.length) for (const track of subtitles) track.default = false;
+    const savedSubtitles = this.online?.saved(episodeId) || [];
+    if (savedSubtitles.length) for (const track of subtitles) track.default = false;
     const onlineTracks: SubtitleTrack[] = [];
-    for (const [i, row] of saved.entries()) {
+    for (const [i, row] of savedSubtitles.entries()) {
       subtitleSources.set(row.id, { file: '', format: row.format, onlineId: row.id });
       onlineTracks.push({ ...this.online!.track(row, `${base}/subtitles/${row.id}.${row.format}`), default: i === 0 });
     }
@@ -93,7 +94,7 @@ export class Playback {
     const next = episode.type === 'movie' ? undefined : episodes[index + 1];
     const audioTracks: AudioTrack[] = audioStreams.map(a => ({ id: String(a.index), label: a.tags?.title || `${a.tags?.language || '오디오'} · ${a.codec_name} ${a.channels || 0}ch`, lang: a.tags?.language, default: a.index === audio?.index }));
     const markers = await this.enrichment?.markers(episodeId);
-    const response: PlaybackSession = { sessionId, episodeId, mediaId: episode.media_id, mediaTitle: this.db.displayTitle(episode.media_id, episode.media_title, episode.season), mediaType: playbackMediaType(this.db, episode.media_id, episode.type),
+    const response: PlaybackSession = { ...(saved ? {saved:true} : {}), sessionId, episodeId, mediaId: episode.media_id, mediaTitle: this.db.displayTitle(episode.media_id, episode.media_title, episode.season), mediaType: playbackMediaType(this.db, episode.media_id, episode.type),
       ...(episode.type !== 'movie' ? { episodeTitle: episode.title, episodeLabel: `S${episode.season}:E${episode.number}` } : {}),
       mode, url: mode === 'direct' ? `${base}/original` : `${base}/index.m3u8`, mime: mode === 'direct' ? path.extname(file).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4' : 'application/vnd.apple.mpegurl', duration: probe.duration, startPosition: position, subtitles, audioTracks,
       next: next ? { episodeId: next.id, title: next.title, label: `S${next.season}:E${next.number}`, thumb: next.thumb } : null,
@@ -107,7 +108,7 @@ export class Playback {
     const dir = path.join(this.config.dataDir, 'sessions', sessionId); await mkdir(dir, { recursive: true });
     const afterPosition = timeline.findIndex(t => t > position);
     const cursor = afterPosition < 0 ? timeline.length - 1 : Math.max(0, afterPosition - 1);
-    this.sessions.set(sessionId, { response, profile, file, probe, audio, caps, touched: Date.now(), dir, timeline, hardware: this.db.settings(profile).hardwareTranscoding, generation: 0, segments: new Map(), lock: Promise.resolve(), deleted: false, cursor, maxAheadSeconds: 0, subtitleSources, fontSources });
+    this.sessions.set(sessionId, { response, root, profile, file, probe, audio, caps, touched: Date.now(), dir, timeline, hardware: this.db.settings(profile).hardwareTranscoding, generation: 0, segments: new Map(), lock: Promise.resolve(), deleted: false, cursor, maxAheadSeconds: 0, subtitleSources, fontSources });
     return response;
   }
   private async keyframes(file: string, probe: Probe, record: Record<string, any>): Promise<number[]> {
@@ -158,7 +159,7 @@ export class Playback {
     if (!Number.isInteger(index) || index < 0 || index >= s.timeline.length) throw new ApiFailure(404, 'segment-not-found');
     await this.exclusive(s, async () => {
       if (s.deleted) throw new ApiFailure(404, 'session-expired');
-      await safePath(this.config.mediaRoot, s.file);
+      await safePath(s.root, s.file);
       s.cursor = index;
       if (s.segments.has(index)) { this.throttle(s); return; }
       const run = s.run;

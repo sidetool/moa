@@ -1,6 +1,6 @@
 // Development-only API stand-in (VITE_MOCK=1). It answers the same contract
 // as apps/server so screens can be built before the server lands.
-import type { VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
+import type { DownloadJob, DownloadStatus, RecommendationItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
@@ -42,7 +42,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
+let settings: Settings = { recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */
@@ -305,6 +305,60 @@ let videoSources: VideoSource[] = [
   { id: "m-live", name: "라이브 채널", lang: "ko", version: "2.0.0", installedVersion: "2.0.0", installed: true, enabled: false, type: "series", live: true, repository: sourceRepo, kind: "mangayomi-js" }
 ];
 
+/* Recommendations: synthetic TMDB-style picks; some link to a MOA title, others to a search. */
+const recommendations: RecommendationItem[] = [
+  { key: "movie:9001", kind: "movie", id: 9001, title: "여름의 끝에서", year: 2023, poster: img("lalaland-b"), reason: "‘라라랜드’를 보셔서", href: "/title/demo-2" },
+  { key: "tv:9002", kind: "tv", id: 9002, title: "레드 카펫", year: 2020, poster: img("oshi-9"), reason: "‘밤의 도시를 걷다’와 비슷해요", href: "/title/demo-8" },
+  { key: "tv:9003", kind: "tv", id: 9003, title: "별빛 오케스트라", year: 2024, reason: "‘예제 시리즈 2기’, ‘스테이지 뒤편’을 보셔서", href: "/search?q=%EB%B3%84%EB%B9%9B" },
+  { key: "movie:9004", kind: "movie", id: 9004, title: "파도 위의 편지", year: 2019, poster: img("oshi-12"), reason: "‘라라랜드’를 보셔서", href: "/search?q=%ED%8C%8C%EB%8F%84" },
+  { key: "tv:9005", kind: "tv", id: 9005, title: "아주 긴 제목을 가진 추천 작품이 카드에서 어떻게 보이는지 확인", year: 2022, poster: img("oshi-7"), reason: "‘밤의 도시를 걷다’, ‘레드 카펫’, ‘스테이지 뒤편’을 보셔서 추천해요", href: "https://example.com/elsewhere" }
+];
+const dismissed = new Set<string>();
+
+/* Server saves: `moa.mockDownloads=off` previews the unconfigured state. Progress advances with time. */
+const GiB = 1024 ** 3;
+let downloadQuota = 50 * GiB;
+const downloadJobs: DownloadJob[] = [
+  { id: "dl-1", episodeId: "demo-1-e1", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "1화", state: "ready", bytes: 1.4 * GiB, totalBytes: 1.4 * GiB, error: "download-subtitles-incomplete", createdAt: ago(86_400_000), updatedAt: ago(86_000_000), quality: "1080p" },
+  { id: "dl-2", episodeId: "demo-1-e3", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "3화", state: "failed", bytes: 0, totalBytes: null, error: "download-auth-expired", createdAt: ago(7_200_000), updatedAt: ago(7_000_000), quality: "720p" }
+];
+// `moa.mockManyDownloads=1` adds long synthetic series to preview grouping, paging and batch delete.
+if (localStorage.getItem("moa.mockManyDownloads") === "1") {
+  const many = (mediaId: string, title: string, count: number, offset: number) => Array.from({ length: count }, (_, i): DownloadJob => ({
+    id: `dl-${mediaId}-${i + 1}`, episodeId: `${mediaId}-e${i + 1}`, mediaId, title, episodeTitle: `${i + 1}화`,
+    state: i % 17 === 5 ? "failed" : i % 23 === 7 ? "cancelled" : "ready", bytes: 0.7 * GiB, totalBytes: i % 17 === 5 || i % 23 === 7 ? null : 0.7 * GiB,
+    error: i % 17 === 5 ? "download-space-low" : null, createdAt: ago(offset + i * 60_000), updatedAt: ago(offset + i * 60_000), quality: "1080p"
+  }));
+  downloadJobs.push(...many("long-a", "긴 연재 시리즈 (예시)", 48, 20_000_000), ...many("long-b", "두 번째 예시 시리즈", 14, 40_000_000), ...many("demo-3", "스테이지 뒤편", 3, 60_000_000));
+}
+const downloadStarted = new Map<string, number>();
+function tickDownloads() {
+  for (const job of downloadJobs) {
+    const started = downloadStarted.get(job.id);
+    if (started === undefined || !["queued", "resolving", "downloading", "finalizing"].includes(job.state)) continue;
+    const t = (Date.now() - started) / 1000, total = job.totalBytes ?? 0.9 * GiB;
+    job.state = t < 2 ? "queued" : t < 4 ? "resolving" : t < 16 ? "downloading" : t < 18 ? "finalizing" : "ready";
+    job.totalBytes = t < 4 ? null : total;
+    job.bytes = job.state === "downloading" ? Math.round(total * (t - 4) / 12) : job.state === "queued" || job.state === "resolving" ? 0 : total;
+    job.updatedAt = new Date().toISOString();
+  }
+}
+/** Newest first, keyset-paged like the server (`moa.mockDownloadPage` shrinks the 200-row page). */
+function downloadStatus(cursor = "", mediaId = ""): DownloadStatus {
+  tickDownloads();
+  const size = Number(localStorage.getItem("moa.mockDownloadPage")) || 200;
+  const sorted = downloadJobs.filter(job => !mediaId || job.mediaId === mediaId).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+  const [at, id] = cursor ? JSON.parse(atob(cursor)) as [string, string] : [];
+  const rest = at ? sorted.filter(job => job.createdAt < at || (job.createdAt === at && job.id < id!)) : sorted;
+  const page = rest.slice(0, size), last = page.at(-1);
+  return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
+}
+function downloadSummary() {
+  const off = localStorage.getItem("moa.mockDownloads") === "off";
+  return { configured: !off, reason: off ? "저장 폴더(/downloads)가 연결되지 않았어요. 설치 안내에 따라 볼륨을 추가한 뒤 다시 시작해 주세요." : null, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0) };
+}
+const savedEpisode = (episodeId: string) => { tickDownloads(); return downloadJobs.some(job => job.episodeId === episodeId && job.state === "ready"); };
+
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -379,7 +433,7 @@ export function installMockApi() {
       progressLog.set(body.episodeId, saved);
       return json(saved);
     }
-    if (path === "/playback" && method === "POST") { const session = playback(body.episodeId); return json({ ...session, subtitles: [...session.subtitles, ...(translatedTracks.get(body.episodeId) ?? [])] }); }
+    if (path === "/playback" && method === "POST") { const session = playback(body.episodeId), saved = body.location !== "source" && savedEpisode(body.episodeId); return json({ ...session, ...(saved ? { saved: true, streams: undefined, streamId: undefined } : {}), subtitles: [...session.subtitles, ...(translatedTracks.get(body.episodeId) ?? [])] }); }
     const sessionFile = /^\/playback\/([^/]+)\/subtitles\/s0\.vtt$/.exec(path);
     if (sessionFile) {
       if (retiredSessions.has(sessionFile[1])) { (window as unknown as { __moaStaleReads?: number }).__moaStaleReads = ((window as unknown as { __moaStaleReads?: number }).__moaStaleReads ?? 0) + 1; return json({ error: "session-expired" }, 410); }
@@ -501,6 +555,41 @@ export function installMockApi() {
       const id = decodeURIComponent(sourceAction[1]);
       videoSources = videoSources.map(item => item.id !== id ? item : sourceAction[2] ? { ...item, installed: true, enabled: true, installedVersion: item.version } : { ...item, ...body });
       return json(videoSources.find(item => item.id === id));
+    }
+    if (path === "/recommendations") {
+      if (settings.recommendationsEnabled === false) return json({ status: "disabled", items: [] });
+      return json({ status: "ready", items: recommendations.filter(item => !dismissed.has(item.key)) });
+    }
+    if (path === "/recommendations/dismissals" && method === "DELETE") { dismissed.clear(); return json(null, 204); }
+    const dismissal = /^\/recommendations\/dismissals\/([^/]+)$/.exec(path);
+    if (dismissal) { const key = decodeURIComponent(dismissal[1]); if (method === "PUT") dismissed.add(key); else if (method === "DELETE") dismissed.delete(key); return json(null, 204); }
+    if (/^\/episodes\/[^/]+\/markers$/.test(path)) return json({ markers: null, status: "none" });
+    const episodeDownload = /^\/episodes\/([^/]+)\/download$/.exec(path);
+    if (episodeDownload) { const id = decodeURIComponent(episodeDownload[1]), job = downloadJobs.find(item => item.episodeId === id && item.state === "ready"); return json({ saved: Boolean(job), ...(job ? { job } : {}) }); }
+    if (path.startsWith("/admin/downloads") && localStorage.getItem("moa.mockRole") === "member") return json({ error: "admin-required" }, 403);
+    if (path === "/admin/downloads" && method === "GET") return json(downloadStatus(url.searchParams.get("cursor") ?? "", url.searchParams.get("mediaId") ?? ""));
+    if (path === "/admin/downloads/config" && method === "PUT") { if (!Number.isSafeInteger(body.quotaBytes) || body.quotaBytes <= 0) return json({ error: "invalid-request" }, 400); downloadQuota = body.quotaBytes; return json(downloadStatus()); }
+    if (path === "/admin/downloads/choices") {
+      const id = url.searchParams.get("episodeId") ?? "";
+      return json({ selectionToken: `sel-${Date.now()}`, choices: id.startsWith("demo-4") ? [] : [{ id: "c-1080", label: "1080p · 서버 A" }, { id: "c-720", label: "720p · 서버 A" }, { id: "c-720b", label: "720p · 서버 B (자막 포함)" }] });
+    }
+    if (path === "/admin/downloads" && method === "POST") {
+      tickDownloads();
+      if (downloadJobs.some(job => job.episodeId === body.episodeId && !["failed", "cancelled", "interrupted"].includes(job.state))) return json({ error: "download-exists" }, 409);
+      const episode = byId.get(String(body.episodeId).replace(/-(m|e\d+)$/, "")) ?? (String(body.episodeId).startsWith("oshi") ? byId.get("oshi") : undefined);
+      const job: DownloadJob = { id: `dl-${Date.now()}`, episodeId: body.episodeId, mediaId: episode?.id ?? "", title: episode?.title ?? "작품", episodeTitle: episode?.type === "movie" ? "" : `${/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1}화`, state: "queued", bytes: 0, totalBytes: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), quality: body.choiceId === "c-1080" ? "1080p" : "720p" };
+      downloadJobs.unshift(job); downloadStarted.set(job.id, Date.now());
+      return json(job, 201);
+    }
+    const downloadAction = /^\/admin\/downloads\/([^/]+)(?:\/(cancel|retry))?$/.exec(path);
+    if (downloadAction && path !== "/admin/downloads/config") {
+      const job = downloadJobs.find(item => item.id === decodeURIComponent(downloadAction[1]));
+      if (!job) return json({ error: "not-found" }, 404);
+      if (method === "DELETE") { if ((localStorage.getItem("moa.mockDownloadInUse") ?? "").split(",").includes(job.id)) return json({ error: "download-in-use" }, 409); downloadJobs.splice(downloadJobs.indexOf(job), 1); return json(null, 204); }
+      if (downloadAction[2] === "cancel") { downloadStarted.delete(job.id); job.state = "cancelled"; job.bytes = 0; }
+      if (downloadAction[2] === "retry") { job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
+      job.updatedAt = new Date().toISOString();
+      return json({ ...job });
     }
     if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);

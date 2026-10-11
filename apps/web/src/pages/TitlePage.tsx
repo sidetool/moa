@@ -3,8 +3,10 @@ import { InlinePlugins } from '../components/WebsitePlugins';
 import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import type { Episode, MediaDetail } from "@moa/shared";
-import { useMedia, useWatchlistToggle } from "../api/queries";
+import type { DownloadJob, Episode, MediaDetail } from "@moa/shared";
+import { useMe, useMedia, useWatchlistToggle } from "../api/queries";
+import { jobsByEpisode, useDownloadStatus } from "../api/downloads";
+import { EpisodeSaveButton, MovieSaveButton, SaveDialog } from "../components/ServerSave";
 import { Artwork, TitleLogo } from "../components/Artwork";
 import { MetaLine } from "../components/Hero";
 import { MetadataCredit, PeopleRow, SimilarRow, TrailerDialog } from "../components/TitleExtras";
@@ -16,14 +18,16 @@ import { devicePrefs } from "../lib/device-prefs";
 import { SeasonPicker, type SeasonChoice } from "../components/SeasonPicker";
 import { TYPE_LABEL, cx, fileSize, humanDuration, episodeTitle } from "../lib/format";
 
+type ServerSaves = { jobs: Map<string, DownloadJob>; open: (episode: Episode) => void };
+
 const watchPath = (episodeId: string, position?: number) =>
   `/watch/${encodeURIComponent(episodeId)}${position !== undefined ? `?t=${Math.floor(position)}` : ""}`;
 
-function EpisodeItem({ episode, highlight }: { episode: Episode; highlight?: boolean }) {
+function EpisodeItem({ episode, highlight, save }: { episode: Episode; highlight?: boolean; save?: React.ReactNode }) {
   const progress = episode.progress;
   const ratio = progress ? progress.position / Math.max(1, progress.duration) : 0;
   return (
-    <li data-episode={episode.id}>
+    <li data-episode={episode.id} className={save ? "has-save" : undefined}>
       <Link to={watchPath(episode.id)} className={cx("episode", progress?.completed && "is-watched", highlight && "is-highlight")}>
         <span className="episode-number">{episode.number}</span>
         <span className="episode-thumb">
@@ -40,13 +44,14 @@ function EpisodeItem({ episode, highlight }: { episode: Episode; highlight?: boo
           {episode.overview && <span className="episode-overview">{episode.overview}</span>}
         </span>
       </Link>
+      {save}
     </li>
   );
 }
 
 const RANGE = 50;
 
-function Episodes({ media }: { media: MediaDetail }) {
+function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves }) {
   const target = media.playTarget?.episodeId;
   const navigate = useNavigate();
   const location = useLocation();
@@ -135,7 +140,8 @@ function Episodes({ media }: { media: MediaDetail }) {
         </div>
       )}
       <ol className="episode-list" ref={list}>
-        {shown.map(episode => <EpisodeItem key={episode.id} episode={episode} highlight={episode.id === highlight} />)}
+        {shown.map(episode => <EpisodeItem key={episode.id} episode={episode} highlight={episode.id === highlight}
+          save={saves && <EpisodeSaveButton job={saves.jobs.get(episode.id)} title={episode.name ? `${episode.number}화 ${episode.name}` : episodeTitle(episode.title)} onSave={() => saves.open(episode)} />} />)}
       </ol>
     </section>
   );
@@ -180,6 +186,10 @@ export function TitlePage() {
   const toggle = useWatchlistToggle();
   const [expanded, setExpanded] = useState(false);
   const [trailer, setTrailer] = useState(false);
+  const admin = useMe().data?.role === "admin";
+  const sourceMedia = Boolean(media.data && media.data.provider.kind !== "local");
+  const downloads = useDownloadStatus(admin && sourceMedia && Boolean(media.data?.id), media.data?.id, true);
+  const [saving, setSaving] = useState<{ id: string; title: string } | null>(null);
 
   const backButton = <button className="title-back" aria-label="이전 화면" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate("/")}><ArrowLeft size={16} /><span>뒤로</span></button>;
   if (media.isPending || (!media.data && media.isFetching)) return <TitleSkeleton back={backButton} />;
@@ -198,6 +208,10 @@ export function TitlePage() {
   const targetEpisode = episodes.find(episode => episode.id === target?.episodeId);
   const resuming = Boolean(target && target.position > 30);
   const ratio = resuming && targetEpisode?.duration ? target!.position / targetEpisode.duration : 0;
+  // Admins of a configured server can save source episodes; everyone else sees nothing new here.
+  const saves: ServerSaves | undefined = admin && m.badge !== "LIVE" && sourceMedia && downloads.data?.configured
+    ? { jobs: jobsByEpisode(downloads.data.jobs), open: episode => setSaving({ id: episode.id, title: isMovie ? m.title : `${m.title} · ${episode.name ? `${episode.number}화 ${episode.name}` : episodeTitle(episode.title)}` }) }
+    : undefined;
   const meta = [
     m.year,
     TYPE_LABEL[m.type],
@@ -239,6 +253,7 @@ export function TitlePage() {
               aria-pressed={Boolean(m.inWatchlist)}
               onClick={() => toggle.mutate({ id: m.id, add: !m.inWatchlist })}
             >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
+            {isMovie && saves && episodes[0] && <MovieSaveButton job={saves.jobs.get(episodes[0].id)} onSave={() => saves.open(episodes[0])} />}
             {m.trailer && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
@@ -252,8 +267,8 @@ export function TitlePage() {
       <div className="title-body">
         <InlinePlugins key={`plugins:${m.id}`} placement="detail" />
         <TitleSources key={m.id} id={m.id} title={m.title}/>
-        {!isMovie && <Episodes media={m} />}
-        {!!m.people?.length && <PeopleRow people={m.people} />}
+        {!isMovie && <Episodes media={m} saves={saves} />}
+        <PeopleRow key={`people:${m.id}`} people={m.people ?? []} mediaId={m.id} linked={Boolean(m.metadata?.id)} />
         {!!m.similar?.length && <SimilarRow items={m.similar} />}
         {m.fileInfo && (
           <section className="file-info" aria-label="파일 정보">
@@ -269,6 +284,7 @@ export function TitlePage() {
         )}
         <MetadataCredit media={m} />
       </div>
+      {saving && <SaveDialog episodeId={saving.id} title={saving.title} onClose={() => setSaving(null)} />}
       {trailer && m.trailer && <TrailerDialog videoKey={m.trailer} title={m.title} onClose={() => setTrailer(false)} />}
     </div>
   );

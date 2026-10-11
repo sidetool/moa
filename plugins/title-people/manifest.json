@@ -1,0 +1,12 @@
+{
+  "apiVersion": 2,
+  "id": "title-people",
+  "name": "출연·제작진",
+  "version": "0.1.0",
+  "description": "작품 화면의 출연 목록에서 TMDB 출연·제작진 전체와 인물별 다른 참여 작품을 보고 MOA에서 검색함.",
+  "minMoaVersion": "0.1.2-beta.1",
+  "placements": ["app"],
+  "permissions": ["metadata.read"],
+  "connect": [],
+  "hooks": ["title.people"]
+}

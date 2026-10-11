@@ -185,7 +185,10 @@ test('apply pins the checked candidate, backs up writers, and preserves user con
     assert.equal(deployed.services[name].build, undefined);
   }
   assert.deepEqual(deployed.services.moa.ports, f.compose.services.moa.ports);
-  assert.deepEqual(deployed.services.moa.volumes, f.compose.services.moa.volumes);
+  assert.deepEqual(deployed.services.moa.volumes.slice(0,-1), f.compose.services.moa.volumes);
+  assert.equal(deployed.services.moa.volumes.at(-1).target, '/downloads');
+  assert.equal(deployed.services.moa.environment.MOA_DOWNLOAD_ROOT, '/downloads');
+  assert.deepEqual(deployed.volumes[deployed.services.moa.volumes.at(-1).source], {});
   assert.equal(deployed.services.moa.environment.FIXTURE_LITERAL, 'cost$$5');
   assert.deepEqual(deployed.services['moa-source-browser'], f.compose.services['moa-source-browser']);
   assert.deepEqual(deployed.networks, f.compose.networks);

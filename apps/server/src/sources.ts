@@ -163,6 +163,9 @@ export class Sources {
   }
   async remove(ids: string[], cleanup: (episodeIds: Set<string>, imageIds: Set<string>) => Promise<void> = async () => {}): Promise<SourceRemovalResult> {
     const unique = this.removalIds(ids);
+    if(this.db.get("SELECT 1 FROM sqlite_master WHERE name='download_jobs'")) {
+      for(const id of unique)if(this.db.get("SELECT 1 FROM download_jobs WHERE source_id=? AND state IN ('queued','resolving','downloading','finalizing','ready') LIMIT 1",id))throw new ApiFailure(409,'source-has-downloads');
+    }
     for (const id of unique) this.removing.add(id);
     try {
       // Drain already accepted work and reject new work until deletion and session cleanup finish.
@@ -177,6 +180,10 @@ export class Sources {
         // Durable cleanup intent survives an unavailable worker and can be retried by removal.
         for (const p of packages) this.db.run('INSERT OR REPLACE INTO source_apk_removals VALUES(?,?,?)',p.id,p.repository,p.pkg);
         for (const id of unique) {
+          if(this.db.get("SELECT 1 FROM sqlite_master WHERE name='download_jobs'")){
+            if(this.db.get("SELECT 1 FROM download_jobs WHERE source_id=? AND state IN ('queued','resolving','downloading','finalizing','ready') LIMIT 1",id))throw new ApiFailure(409,'source-has-downloads');
+            this.db.run("DELETE FROM download_jobs WHERE source_id=? AND state IN ('failed','cancelled','interrupted')",id);
+          }
           this.identities.clear(id);
           for (const e of this.db.all('SELECT e.id FROM episodes e JOIN source_media s ON s.media_id=e.media_id WHERE s.source_id=?', id)) episodes.add(e.id);
           for (const image of this.db.all('SELECT image_id FROM source_image_owners WHERE source_id=?', id)) images.add(image.image_id);

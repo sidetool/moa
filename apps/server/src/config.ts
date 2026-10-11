@@ -2,12 +2,16 @@ import path from 'node:path';
 
 export interface Config {
   requireAccount: boolean;
+  downloadRoot?: string;
+  downloadsEnabled?: boolean;
   dataDir: string; mediaRoot: string; webDir: string; ffmpeg: string; ffprobe: string;
   vaapiDevice: string; maxTranscodes: number; sessionTtlMs: number;
   hlsAheadSeconds: number; hlsBackSeconds: number;
 }
 export function config(overrides: Partial<Config> = {}): Config {
   return {
+    downloadsEnabled: process.env.MOA_DOWNLOADS_ENABLED !== '0',
+    downloadRoot: process.env.MOA_DOWNLOAD_ROOT ? path.resolve(process.env.MOA_DOWNLOAD_ROOT) : undefined,
     requireAccount: process.env.MOA_REQUIRE_ACCOUNT === '1',
     dataDir: path.resolve(process.env.MOA_DATA_DIR || '/data'),
     mediaRoot: path.resolve(process.env.MOA_MEDIA_ROOT || '/media'),

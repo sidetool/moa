@@ -10,6 +10,7 @@ import { Button, ButtonLink, EmptyState, ScrollLoader } from "../components/ui";
 import { TYPE_LABEL, cx } from "../lib/format";
 import { useNavigation, tabPath } from "../lib/navigation";
 import { HomePlugins } from '../components/WebsitePlugins';
+import { RecommendationRow } from '../components/RecommendationRow';
 
 export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
   const admin = useMe().data?.role === "admin";
@@ -38,6 +39,7 @@ export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
         {error && <EmptyState title="구성을 불러오지 못했습니다" action={<Button onClick={() => location.reload()}>다시 시도</Button>} />}
         {!providers.length && !rows.length && !home.isPending && !error && <EmptyState icon={<Settings2 size={40} />} title="이 탭에 표시할 소스가 없어요" body="영상 소스나 로컬 라이브러리를 이 탭에 연결해 주세요." action={<ButtonLink variant="primary" to={`/settings/tabs?edit=${encodeURIComponent(tab.id)}`}>탭 편집</ButtonLink>} />}
         {rows.map((row, i) => <Row key={row.id} row={row} index={i} />)}
+        {!localOnly && tabId === 'home' && <RecommendationRow />}
         {!!installed.length && <TabFeed feed={feed} startIndex={rows.length} />}
         {tab.includeLocal && !installed.length && !home.isPending && !home.isError && !rows.length && <EmptyState title="로컬 라이브러리가 비어 있어요" body={admin ? "영상 폴더를 추가하면 자동으로 정리해 줍니다." : "관리자가 영상 폴더를 추가하면 여기에 보여요."} action={admin ? <ButtonLink variant="primary" to="/library">영상 폴더 추가</ButtonLink> : undefined} />}
         {admin && tab.includeLocal && rows.length > 0 && <p className="feed-note"><Link to="/library">로컬 영상 폴더 관리</Link></p>}

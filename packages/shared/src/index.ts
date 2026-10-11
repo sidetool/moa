@@ -152,7 +152,7 @@ export interface MediaDetail extends MediaCard {
 }
 
 export type MetadataKind = "tv" | "movie";
-export interface Person { name: string; role?: string; photo?: string }
+export interface Person { name: string; role?: string; photo?: string; identity?: { provider: string; id: string } }
 export interface MetadataCandidate { kind: MetadataKind; id: number; title: string; originalTitle?: string; year?: number; poster?: string; overview?: string; seasons?: number }
 export interface MetadataLink { status: "auto" | "manual" | "none" | "off" | "pending"; kind?: MetadataKind; id?: number; season?: number; title?: string }
 // GET   /api/metadata/status -> { tmdb: boolean }
@@ -215,7 +215,7 @@ export const PLUGIN_API_VERSION = 2;
 export interface WebsitePlugin {
   apiVersion: number;
   minMoaVersion?: string;
-  hooks?: Array<'catalog.transform'>;
+  hooks?: Array<'catalog.transform' | 'title.people'>;
   compatibility?: { supported: boolean; apiVersion: number; moaVersion: string | null };
   revision: string;
   id: string;
@@ -223,7 +223,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -312,6 +312,7 @@ export interface OnlineSubtitleSearch {
 export interface AudioTrack { id: string; label: string; lang?: string; default?: boolean }
 
 export interface PlaybackSession {
+  saved?: boolean;
   /** APK process must stay alive; client sends heartbeats while paused and can recreate an expired session once. */
   runtimeDependent?: boolean;
   sessionId: string;
@@ -344,7 +345,8 @@ export interface PlaybackSession {
     creditsStart?: number;
     /** End of the ending song; content after it (post-credits scene) is still part of the episode. */
     creditsEnd?: number;
-    source?: "manual" | "fingerprint" | "aniskip";
+    source?: "manual" | "fingerprint" | "aniskip" | "theintrodb";
+    provenance?: {intro?: "manual" | "fingerprint" | "aniskip" | "theintrodb"; credits?: "manual" | "fingerprint" | "aniskip" | "theintrodb"};
   };
   /** Font URLs for ASS rendering (attachments in MKV). */
   fonts?: string[];
@@ -378,6 +380,8 @@ export interface NavigationTab {
 }
 
 export interface Settings {
+  recommendationsEnabled?: boolean;
+  generalSkipEnabled?: boolean;
   /** Per-profile navigation. Omitted uses source-based defaults. */
   navigation?: NavigationTab[];
   /** Show one history entry per title. Does not merge stored episode records. */
@@ -516,3 +520,69 @@ export interface JimakuSearch {
 }
 
 export type { RemoteAccessMode, RemoteAccessState, RemoteAccessConfig, RemoteAccessConfigure, RemoteAccessStatus } from './remote-access.js';
+
+/* ---------- Recommendations and saved source videos ---------- */
+export interface RecommendationItem extends MetadataCandidate {
+  key: string;
+  reason: string;
+  href: string;
+}
+export interface RecommendationsResponse {
+  refreshAfterMs?: number;
+  items: RecommendationItem[];
+  status: 'ready' | 'disabled' | 'unconfigured' | 'insufficient-history';
+}
+export type DownloadState = 'queued' | 'resolving' | 'downloading' | 'finalizing' | 'ready' | 'failed' | 'cancelled' | 'interrupted';
+export interface DownloadJob {
+  id: string; episodeId: string; mediaId: string; title: string; episodeTitle: string;
+  state: DownloadState; bytes: number; totalBytes: number | null; error: string | null;
+  createdAt: string; updatedAt: string; quality: string | null;
+}
+export interface DownloadStatus {
+  configured: boolean; reason: string | null; quotaBytes: number; usedBytes: number;
+  jobs: DownloadJob[];
+  totalJobs?: number; nextCursor?: string | null;
+}
+export interface DownloadChoice { id: string; label: string }
+export interface EpisodeDownloadStatus {
+  saved: boolean; job?: DownloadJob;
+}
+
+export interface HistoryQuery { cursor?: string; limit?: number; since?: string }
+export interface HistoryRecord { mediaId:string;episodeId:string;title:string;episodeTitle:string;season:number;episode:number;position:number;duration:number;completed:boolean;updatedAt:string;tmdb?:{kind:'tv'|'movie';id:number} }
+export interface HistoryPage { revision:string;items:HistoryRecord[];nextCursor:string|null }
+/** Fixed provider query; no arbitrary URLs or API credentials cross the plugin boundary. */
+export interface TrendingQuery { kind: 'movie' | 'tv'; window: 'day' | 'week' }
+/** External identity is the tuple (provider, kind, id); id is opaque, never a MOA media ID. */
+export interface DiscoveryItem {
+  provider: string;
+  kind: 'movie' | 'tv';
+  id: string;
+  title: string;
+  originalTitle?: string;
+  year?: number;
+  poster?: string;
+  overview?: string;
+}
+export interface TrendingResponse {
+  provider: string;
+  status: 'ready' | 'unconfigured' | 'restricted' | 'unavailable';
+  items: DiscoveryItem[];
+  updatedAt: string | null;
+  stale: boolean;
+}
+
+/** Provider identities are opaque and scoped by provider, kind and id. */
+export interface LinkedPluginTitle {
+  mediaId: string; provider: string; kind: 'movie' | 'tv'; id: string; name: string; scope: 'movie' | 'series';
+}
+export interface PersonCredit { provider: string; id: string; name: string; photo?: string; roles: string[] }
+export interface TitlePeople { cast: PersonCredit[]; crew: PersonCredit[]; truncated: boolean }
+export type PeopleStatus = 'ready' | 'unlinked' | 'unconfigured' | 'restricted' | 'unavailable';
+export interface TitlePeopleResponse extends TitlePeople {
+  provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
+}
+export interface PersonWorksResponse {
+  provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
+  person: PersonCredit | null; items: DiscoveryItem[]; truncated: boolean;
+}

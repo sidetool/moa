@@ -137,13 +137,38 @@ export class Updates {
   }
 }
 
-export function registerUpdates(app: FastifyInstance) {
+export function registerUpdates(app: FastifyInstance, jobs?:{prepare:()=>Promise<void>;resume:()=>void;canResume?:()=>boolean}) {
   const updates = new Updates();
+  // Release the queue gate after a failed/cancelled host operation; successful restart
+  // marks queued jobs interrupted. No automatic retry of partial files.
+  let polling=false, preparing=false, requestedAt=0, observedBusy=false;
+  const timer=jobs?setInterval(()=>{
+    if(polling||!requestedAt||preparing)return;polling=true;
+    void updates.status().then(async s=>{
+      if(['updating','downloading','preflight','backup','applying','verifying','rolling-back'].includes(s.state)){observedBusy=true;return;}
+      if(!observedBusy&&Date.now()-requestedAt<30000)return;
+      try{await readFile(path.join(process.env.MOA_UPDATER_DIR||'','request.json'));return;}catch{}
+      if(jobs.canResume&&!jobs.canResume())return;
+      jobs.resume();requestedAt=0;observedBusy=false;
+    }).catch(()=>{}).finally(()=>{polling=false;});
+  },10000):undefined;
+  timer?.unref();app.addHook('onClose',async()=>{clearInterval(timer);});
   app.get('/api/admin/system', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.system()));
   app.get('/api/admin/updates', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.status()));
   app.patch('/api/admin/updates/settings', async (req, reply) => reply.code(202).header('Cache-Control', 'private, no-store').send(await updates.request('configure', validatePolicy(req.body))));
   for (const action of ['check', 'apply'] as const) app.post(`/api/admin/updates/${action}`, async (req, reply) => {
     if (req.body !== undefined && (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).length)) throw new ApiFailure(400, 'invalid-update-request');
-    return reply.code(202).header('Cache-Control', 'private, no-store').send(await updates.request(action));
+    if(action!=='apply')return reply.code(202).header('Cache-Control','private, no-store').send(await updates.request(action));
+    if(preparing||requestedAt)throw new ApiFailure(409,'update-busy');
+    preparing=true;
+    try{
+      const status=await updates.status();
+      if(!status.connected)throw new ApiFailure(503,'updater-unavailable');
+      if(status.state!=='available')throw new ApiFailure(409,'update-not-available');
+      await jobs?.prepare();
+      const result=await updates.request(action);requestedAt=Date.now();
+      return reply.code(202).header('Cache-Control','private, no-store').send(result);
+    }catch(e){jobs?.resume();throw e;}finally{preparing=false;}
+
   });
 }

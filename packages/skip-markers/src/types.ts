@@ -1,4 +1,4 @@
-export type MarkerSource = "manual" | "fingerprint" | "aniskip";
+export type MarkerSource = "manual" | "fingerprint" | "aniskip" | "theintrodb";
 export interface MarkerInterval { start: number; end: number; source: MarkerSource; confidence: number }
 export interface SkipMarkers {
   introStart?: number;
