@@ -13,8 +13,10 @@ const AUTO_NEXT_DELAY = 1_600;
 export interface ShortsSession {
   /** Foreground playing milliseconds per work, kept across candidates and revisits. */
   watched: Map<string, number>;
-  /** Works already reported as seen. */
+  /** Works already reported as seen or skipped; each is sent at most once. */
   reported: Set<string>;
+  /** Works whose trailers currently can't play here; moving on from them isn't a choice about the work. */
+  failed: Set<string>;
 }
 
 type Phase = "list" | "list-error" | "loading" | "ready" | "blocked" | "none" | "env";
@@ -84,7 +86,7 @@ export function ShortsPlayer({ itemKey, title, session, control, muted, onMuted,
           onStateChange: event => {
             if (!live) return;
             if (event.data === YOUTUBE_PLAYING) {
-              settle(); setPhase("ready"); callbacks.current.onPlaying();
+              settle(); setPhase("ready"); session.failed.delete(itemKey); callbacks.current.onPlaying();
               if (since.current === null && document.visibilityState === "visible") since.current = performance.now();
               return;
             }
@@ -135,7 +137,10 @@ export function ShortsPlayer({ itemKey, title, session, control, muted, onMuted,
     return () => window.clearTimeout(timer);
   }, [phase, autoNext]);
 
-  useEffect(() => { callbacks.current.onBlocked(phase === "blocked"); }, [phase]);
+  useEffect(() => {
+    callbacks.current.onBlocked(phase === "blocked");
+    if (phase === "none" || phase === "env" || phase === "list-error") session.failed.add(itemKey);
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     control.current = { play: () => { player.current?.playVideo(); setPhase(old => old === "blocked" ? "ready" : old); } };
     return () => { control.current = null; callbacks.current.onBlocked(false); };
@@ -145,7 +150,7 @@ export function ShortsPlayer({ itemKey, title, session, control, muted, onMuted,
   return <>
     {key && phase !== "none" && phase !== "env" && <iframe key={`${round}:${index}:${key}`} ref={frame} src={youtubeEmbedUrl(key)} title={`${title} 예고편`}
       referrerPolicy="strict-origin-when-cross-origin" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />}
-    {(phase === "list" || phase === "loading") && <div className="shorts-overlay is-quiet"><Spinner size={28} /></div>}
+    {phase === "list" && <div className="shorts-overlay is-quiet"><Spinner size={28} /></div>}
     {phase === "none" && <div className="shorts-overlay" role="status">
       <b>재생할 수 있는 예고편이 없어요</b>
       <small>{autoNext ? "다음 작품으로 넘어가요" : "아래 화살표로 넘겨 주세요"}</small>

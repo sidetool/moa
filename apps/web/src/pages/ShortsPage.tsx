@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { MediaCard, ShortsItem } from "@moa/shared";
 import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
-import { SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
+import { markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
 import { ShortsPlayer, type ShortsControl, type ShortsSession } from "../components/ShortsPlayer";
 import { Button, ButtonLink, EmptyState, IconButton, Spinner } from "../components/ui";
 import { api, currentProfileId, sized } from "../lib/api";
@@ -12,6 +12,7 @@ import { cx } from "../lib/format";
 
 const SETTLE_MS = 250;
 const AUTO_SKIP_LIMIT = 3;
+const INTENT_MS = 4_000; // a flick and its momentum settle well within this
 const CATEGORY_LABEL = Object.fromEntries(SHORTS_CATEGORIES) as Record<string, string>;
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -43,10 +44,10 @@ export function ShortsPage() {
   if (!items.length && !feed.hasNextPage) return <Centered><EmptyState icon={<Clapperboard size={32} />} title="새로 볼 예고편이 없어요"
     body={replay ? undefined : "본 작품은 설정한 기간 동안 빼고 보여줘요."}
     action={<span className="shorts-state-actions">{!replay && <Button onClick={() => setReplay(true)}>본 것도 보기</Button>}<ButtonLink to="/settings#experimental" variant="ghost">설정</ButtonLink></span>} /></Centered>;
-  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} onReplay={() => setReplay(true)} />;
+  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} onReplay={() => setReplay(true)} />;
 }
 
-function ShortsReel({ items, feed, replay, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; onReplay: () => void }) {
+function ShortsReel({ items, feed, replay, fit, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; onReplay: () => void }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [shownKey, setShownKey] = useState<string | null>(null); // only this work has a mostly visible stage
@@ -56,18 +57,31 @@ function ShortsReel({ items, feed, replay, onReplay }: { items: ShortsItem[]; fe
   const control = useRef<ShortsControl | null>(null);
   const [muted, setMuted] = useState(false);
   const [autoSkips, setAutoSkips] = useState(0);
-  const session = useRef<ShortsSession>({ watched: new Map(), reported: new Set() }).current;
+  const session = useRef<ShortsSession>({ watched: new Map(), reported: new Set(), failed: new Set() }).current;
+  // The work on screen at the last direct input (button, key, touch, wheel). Only a settled, visible,
+  // mostly exposed work can carry it; automatic moves, resize and hiding the page clear it.
+  const intent = useRef<{ key: string; at: number } | null>(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const exposed = useRef<string | null>(null);
+  exposed.current = visible ? shownKey : null;
+  const markIntent = useCallback(() => {
+    const key = itemsRef.current[activeRef.current]?.key;
+    if (key && exposed.current === key) intent.current = { key, at: performance.now() };
+    else if (intent.current?.key !== key) intent.current = null; // a gesture already under way keeps its start
+  }, []);
   const count = items.length + 1; // the closing slide
   const activeRef = useRef(active);
   activeRef.current = active;
 
-  const goTo = useCallback((index: number) => {
+  const goTo = useCallback((index: number, auto = false) => {
     const el = scroller.current;
     if (!el) return;
+    if (auto) intent.current = null;
     const next = Math.max(0, Math.min(count - 1, index));
     el.scrollTo({ top: next * el.clientHeight, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [count]);
-  const step = useCallback((delta: number) => { setAutoSkips(0); goTo(activeRef.current + delta); }, [goTo]);
+  const step = useCallback((delta: number) => { setAutoSkips(0); markIntent(); goTo(activeRef.current + delta); }, [goTo, markIntent]);
 
   // The player follows the slide the scroll settled on, never one passing by.
   useEffect(() => {
@@ -75,20 +89,40 @@ function ShortsReel({ items, feed, replay, onReplay }: { items: ShortsItem[]; fe
     if (!el) return;
     let timer = 0;
     const slide = () => Math.round(el.scrollTop / Math.max(1, el.clientHeight));
+    // Moving forward by hand from the settled work tells the server it was passed over. Works flicked
+    // through mid-scroll, failed ones and ones already reported are left alone; one attempt, no retry.
+    const settleAt = () => {
+      const next = slide(), from = activeRef.current, leaving = itemsRef.current[from], held = intent.current;
+      intent.current = null;
+      const manual = held !== null && held.key === leaving?.key && performance.now() - held.at < INTENT_MS;
+      if (manual && next > from && !session.reported.has(leaving.key) && !session.failed.has(leaving.key)) {
+        session.reported.add(leaving.key);
+        markShortSkipped(leaving.key).catch(() => {});
+      }
+      setActive(next);
+    };
     const onScroll = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => setActive(slide()), SETTLE_MS);
+      timer = window.setTimeout(settleAt, SETTLE_MS);
     };
-    const onVisibility = () => setVisible(document.visibilityState === "visible");
-    const onHide = () => setVisible(false);
-    const onResize = () => el.scrollTo({ top: activeRef.current * el.clientHeight });
+    const onInput = () => markIntent();
+    // Hidden: drop intent and the pending settle; on return settle again without intent.
+    const onHide = () => { intent.current = null; window.clearTimeout(timer); setVisible(false); };
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return onHide();
+      setVisible(true);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(settleAt, SETTLE_MS);
+    };
+    const onResize = () => { intent.current = null; el.scrollTo({ top: activeRef.current * el.clientHeight }); };
     el.addEventListener("scroll", onScroll, { passive: true });
+    for (const name of ["touchstart", "wheel"] as const) el.addEventListener(name, onInput, { passive: true });
     window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", onHide);
     window.addEventListener("pageshow", onVisibility);
-    return () => { window.clearTimeout(timer); el.removeEventListener("scroll", onScroll); window.removeEventListener("resize", onResize); document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("pagehide", onHide); window.removeEventListener("pageshow", onVisibility); };
-  }, []);
+    return () => { window.clearTimeout(timer); el.removeEventListener("scroll", onScroll); el.removeEventListener("touchstart", onInput); el.removeEventListener("wheel", onInput); window.removeEventListener("resize", onResize); document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("pagehide", onHide); window.removeEventListener("pageshow", onVisibility); };
+  }, [markIntent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mid-scroll the player goes as soon as its stage is half off screen, before the slide itself is.
   useEffect(() => {
@@ -126,15 +160,15 @@ function ShortsReel({ items, feed, replay, onReplay }: { items: ShortsItem[]; fe
   const current = items[active];
   const watchlist = useQuery({ queryKey: keys.watchlist, queryFn: () => api<MediaCard[]>("/watchlist"), enabled: Boolean(current?.mediaId) });
 
-  return <div className="shorts" ref={scroller} role="feed" aria-label="쇼츠" aria-busy={isFetchingNextPage} tabIndex={-1}>
+  return <div className={cx("shorts", fit && "is-fit")} ref={scroller} role="feed" aria-label="쇼츠" aria-busy={isFetchingNextPage} tabIndex={-1}>
     {items.map((item, index) => <ShortsSlide key={item.key} item={item} index={index} total={hasNextPage ? -1 : items.length}
       active={index === active} near={Math.abs(index - active) <= 2} muted={muted}
       inWatchlist={Boolean(item.mediaId && watchlist.data?.some(card => card.id === item.mediaId))}
       blocked={index === active && blocked} onPlay={() => control.current?.play()}
       onStep={step} onUnmute={() => setMuted(false)}>
       {index === active && shownKey === item.key && visible && <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
-        onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1)}
-        autoNext={autoSkips < AUTO_SKIP_LIMIT} onAutoNext={() => { setAutoSkips(old => old + 1); goTo(index + 1); }} />}
+        onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)}
+        autoNext={autoSkips < AUTO_SKIP_LIMIT} onAutoNext={() => { setAutoSkips(old => old + 1); goTo(index + 1, true); }} />}
     </ShortsSlide>)}
     <section className="shorts-slide shorts-end" aria-label="끝">
       {hasNextPage || isFetchingNextPage
@@ -142,7 +176,7 @@ function ShortsReel({ items, feed, replay, onReplay }: { items: ShortsItem[]; fe
         : <EmptyState icon={<Clapperboard size={32} />} title={replay ? "끝까지 봤어요" : "새 예고편을 다 봤어요"}
             action={<span className="shorts-state-actions">
               {!replay && <Button onClick={onReplay}>본 것도 보기</Button>}
-              <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={() => goTo(0)}>처음으로</Button>
+              <Button variant="ghost" icon={<RotateCcw size={16} />} onClick={() => goTo(0, true)}>처음으로</Button>
             </span>} />}
     </section>
     <div className="shorts-nav" data-remote-group>

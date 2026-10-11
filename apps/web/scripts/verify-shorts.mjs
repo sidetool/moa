@@ -53,7 +53,7 @@ const POOL = [
 const TRAILERS = { 'movie:1': ['e101aaaaaaa', 'okaaaaaaaaa'], 'tv:2': [], 'movie:3': ['blkcccccccc'], 'tv:4': ['e153ddddddd'], 'tv:5': ['okeeeeeeeee'], 'movie:6': ['okfffffffff'] };
 
 let settings, kids, log;
-const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], patches: [] }; };
+const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [] }; };
 const route = async context => {
   await context.route(url => !['127.0.0.1', 'localhost'].includes(url.hostname), r => {
     const url = new URL(r.request().url());
@@ -73,10 +73,10 @@ const route = async context => {
       const picked = settings.shortsCategories ?? ['movie', 'series', 'anime'], pool = POOL.filter(i => picked.includes(i.category));
       const start = Number(url.searchParams.get('cursor') ?? 0), end = start + 4;
       const hide = url.searchParams.get('replay') !== '1';
-      return r.fulfill({ json: { status: 'ready', items: pool.slice(start, end).filter(i => !hide || !log.seen.includes(i.key)), nextCursor: end < pool.length ? String(end) : null } });
+      return r.fulfill({ json: { status: 'ready', items: pool.slice(start, end).filter(i => !hide || !(log.seen.includes(i.key) || log.skips.includes(i.key))), nextCursor: end < pool.length ? String(end) : null } });
     }
-    const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen)$/.exec(path);
-    if (m) { const key = decodeURIComponent(m[1]); if (m[2] === 'seen') { log.seen.push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
+    const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
+    if (m) { const key = decodeURIComponent(m[1]); if (m[2] !== 'trailers') { assert.equal(method, 'POST'); (m[2] === 'seen' ? log.seen : log.skips).push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
     return r.fulfill({ json: [] });
   });
 };
@@ -119,6 +119,13 @@ try {
   await group.getByRole('button', { name: '애니' }).click();
   await group.getByRole('button', { name: '시리즈' }).click();
   await until(() => JSON.stringify(settings.shortsCategories) === '["movie","series","anime"]', 'categories restored in order');
+  await group.getByRole('button', { name: '애니' }).click();
+  await until(() => JSON.stringify(settings.shortsCategories) === '["movie","series"]', 'two categories');
+  await until(async () => (await group.locator('[aria-pressed="true"]').count()) === 2, 'two stay picked');
+  assert.equal(await page.getByRole('switch', { name: '화면 맞춤' }).getAttribute('aria-checked'), 'true', 'fit on by default');
+  await page.screenshot({ path: verificationPath('fit-settings.png') });
+  await group.getByRole('button', { name: '애니' }).click();
+  await until(() => settings.shortsCategories.length === 3, 'all three again');
   assert.equal(await page.locator('.tabbar .tab').count(), 5);
   assert.equal(log.feed.length, 0, 'settings never fetch the feed');
 
@@ -131,8 +138,10 @@ try {
   await until(async () => (await yt(page)).created.join() === 'e101aaaaaaa,okaaaaaaaaa', 'same-work fallback');
   assert.deepEqual([...new Set(log.trailers)], ['movie:1'], 'only the active work asks for trailers'); // dev StrictMode may repeat an aborted request
   const stage = await page.locator('.shorts-slide.is-active .shorts-stage').boundingBox();
-  assert.ok(stage.width >= 200 && stage.height >= 200 && Math.abs(stage.width / stage.height - 16 / 9) < .2, `uncropped stage ${stage.width}x${stage.height}`);
-  await page.screenshot({ path: verificationPath('03-playing-mobile.png') });
+  assert.ok(await page.locator('.shorts.is-fit').count(), 'fit by default');
+  assert.ok(stage.width >= 200 && stage.height > stage.width, `fit stage fills height ${stage.width}x${stage.height}`);
+  assert.equal(await page.locator('.shorts-stage iframe + .shorts-overlay, .shorts-stage .shorts-overlay ~ iframe').count(), 0, 'no overlay over a live iframe');
+  await page.screenshot({ path: verificationPath('fit-on.png') });
   await until(() => log.seen.includes('movie:1'), 'seen after 5s', 8000);
   await wait(800);
   assert.deepEqual(log.seen, ['movie:1'], 'seen reported once');
@@ -140,7 +149,7 @@ try {
   // Stage mostly off screen while the slide is still the nearest one: the player goes.
   const offset = await page.evaluate(() => {
     const el = document.querySelector('.shorts'), stage = document.querySelector('.shorts-slide.is-active .shorts-stage').getBoundingClientRect();
-    const by = Math.round(stage.top - el.getBoundingClientRect().top + stage.height * .7);
+    const by = Math.round(stage.top - el.getBoundingClientRect().top + stage.height * .55);
     el.style.scrollSnapType = 'none'; // hold a mid-drag position; mandatory snap would pull it back
     el.scrollTo({ top: by }); return by / el.clientHeight;
   });
@@ -149,33 +158,28 @@ try {
   await page.evaluate(() => { const el = document.querySelector('.shorts'); el.scrollTo({ top: 0 }); el.style.scrollSnapType = ''; });
   await until(async () => (await yt(page)).live === 1, 'stage back remounts');
 
-  // Empty work: bounded auto-advance, never seen.
+  // Manual next from an already seen work sends nothing more. Empty work: bounded auto-advance, never seen/skipped.
   await page.locator('.shorts-slide.is-active').getByRole('button', { name: '다음 작품' }).click();
   await until(async () => (await activeTitle(page)) === '예고편 없음', 'to empty');
   await page.getByText('재생할 수 있는 예고편이 없어요').waitFor();
   await until(async () => (await activeTitle(page)) === '자동 재생 거부', 'auto next', 5000);
+  assert.deepEqual(log.skips, [], 'seen and automatic moves are not skips');
 
   // Autoplay denial: muted retry, unmute outside the player.
   await until(async () => (await yt(page)).calls.includes('mute:blkcccccccc'), 'muted retry');
   const unmute = page.locator('.shorts-slide.is-active').getByRole('button', { name: '소리 켜기' });
   await unmute.waitFor();
-  await page.screenshot({ path: verificationPath('04-muted-mobile.png') });
   await unmute.click();
   await until(async () => (await yt(page)).calls.includes('unmute:blkcccccccc'), 'unmute');
 
-  // Hidden page: the player is removed, then comes back.
-  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
-  await until(async () => (await yt(page)).live === 0 && !(await page.locator('.shorts iframe').count()), 'hidden unmount');
-  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
-  await until(async () => (await yt(page)).live === 1, 'visible remount');
-  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
-  await until(async () => (await yt(page)).live === 0, 'pagehide unmount');
-  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
-  await until(async () => (await yt(page)).live === 1, 'pageshow remount');
-
-  // Environment error stops; next page loaded ahead once.
+  // Manual next before five seconds: one skip.
   await page.keyboard.press('ArrowDown');
   await until(async () => (await activeTitle(page)) === '환경 오류', 'to env');
+  await until(() => log.skips.length === 1, 'manual skip');
+  assert.deepEqual(log.skips, ['movie:3']);
+  assert.ok(!log.seen.includes('movie:3'));
+
+  // Environment error stops; next page loaded ahead once.
   await page.getByText('YouTube 플레이어를 열지 못했어요').waitFor();
   await wait(2500);
   assert.equal(await activeTitle(page), '환경 오류', 'env error does not skip');
@@ -186,23 +190,63 @@ try {
   await page.locator('.shorts-slide.is-active').getByRole('button', { name: '다음 작품' }).click();
   await until(async () => (await activeTitle(page)) === '둘째 페이지', 'page two');
   await until(async () => (await yt(page)).created.at(-1) === 'okeeeeeeeee', 'page two player');
+  assert.deepEqual(log.skips, ['movie:3'], 'leaving a failed work is not a skip');
+  // Hidden page: the player is removed, then comes back.
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await until(async () => (await yt(page)).live === 0 && !(await page.locator('.shorts iframe').count()), 'hidden unmount');
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await until(async () => (await yt(page)).live === 1, 'visible remount');
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  await until(async () => (await yt(page)).live === 0, 'pagehide unmount');
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+  await until(async () => (await yt(page)).live === 1, 'pageshow remount');
+
+  await page.setViewportSize({ width: 390, height: 700 });
+  await wait(500);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await wait(500);
+  assert.equal(await activeTitle(page), '둘째 페이지', 'resize keeps the work');
   await page.evaluate(() => window.__ytEnd());
   await until(async () => (await activeTitle(page)) === '마지막', 'ended advances');
   assert.ok((await yt(page)).live <= 1, 'one player at a time');
+  await until(async () => (await yt(page)).created.at(-1) === 'okfffffffff', 'last player');
   await page.locator('.shorts-slide.is-active').getByRole('button', { name: '다음 작품' }).click();
   await page.getByText('새 예고편을 다 봤어요').waitFor();
+  await until(() => log.skips.length === 2, 'second manual skip');
+  await page.keyboard.press('ArrowUp');
+  await until(async () => (await activeTitle(page)) === '마지막', 'back to last');
+  await until(async () => (await yt(page)).live === 1, 'last player again');
+  await page.keyboard.press('ArrowDown');
+  await page.getByText('새 예고편을 다 봤어요').waitFor();
+  await wait(500);
+  assert.deepEqual(log.skips, ['movie:3', 'movie:6'], 'no skip for ended/resize/hidden, one per work');
   const feedCount = log.feed.length;
   await wait(600);
   assert.equal(log.feed.length, feedCount, 'finite end');
   assert.equal((await yt(page)).live, 0, 'end slide has no player');
-  await page.screenshot({ path: verificationPath('05-end-mobile.png') });
-  await page.getByRole('button', { name: '본 것도 보기' }).click();
-  await until(() => log.feed.at(-1) === '?replay=1', 'replay request');
-  await until(async () => (await activeTitle(page)) === '첫 작품', 'replay restarts');
 
   // Leaving destroys the player.
   await page.locator('.tabbar').getByRole('link', { name: '홈' }).click();
   await until(async () => (await yt(page)).live === 0, 'leave cleanup');
+
+  // Fit OFF keeps 16:9; a revisit leaves out seen and skipped works; replay brings them back.
+  await page.goto(`${base}settings#experimental`);
+  await page.getByRole('switch', { name: '화면 맞춤' }).click();
+  await until(() => settings.shortsScreenFit === false, 'fit off');
+  await page.goto(`${base}shorts`);
+  await page.locator('.shorts-slide.is-active').waitFor();
+  assert.deepEqual(await page.locator('article.shorts-slide h2').allTextContents(), ['예고편 없음', '환경 오류', '둘째 페이지'], 'revisit excludes seen + skipped');
+  assert.equal(await page.locator('.shorts.is-fit').count(), 0);
+  const plain = await page.locator('.shorts-slide.is-active .shorts-stage').boundingBox();
+  assert.ok(Math.abs(plain.width / plain.height - 16 / 9) < .05, `16:9 when off ${plain.width}x${plain.height}`);
+  await page.screenshot({ path: verificationPath('fit-off.png') });
+  const skipsBefore = log.skips.length;
+  await page.evaluate(() => { const el = document.querySelector('.shorts'); el.scrollTo({ top: el.scrollHeight }); });
+  await page.getByRole('button', { name: '본 것도 보기' }).click();
+  await until(() => log.feed.at(-1) === '?replay=1', 'replay request');
+  await until(async () => (await activeTitle(page)) === '첫 작품', 'replay restarts');
+  assert.equal(log.skips.length, skipsBefore, 'programmatic scroll is not a skip');
+  await page.screenshot({ path: verificationPath('fit-replay.png') });
   await context.close();
 
   // Category selection reaches a fresh feed.
@@ -215,14 +259,14 @@ try {
 
   // Desktop: topnav link, side arrows, keyboard.
   ({ context, page } = await open(1280, 800));
-  settings.shortsCategories = undefined; log.seen = [];
+  settings.shortsCategories = undefined; settings.shortsScreenFit = undefined; log.seen = []; log.skips = [];
   await page.goto(`${base}shorts`);
   await page.locator('.topnav').getByRole('link', { name: '쇼츠' }).waitFor();
   await page.locator('.shorts-slide.is-active').waitFor();
   assert.equal(await activeTitle(page), '첫 작품');
   await until(async () => (await yt(page)).live === 1, 'desktop player');
   assert.equal(await page.locator('.shorts-nav').isVisible(), true);
-  await page.screenshot({ path: verificationPath('06-desktop.png') });
+  await page.screenshot({ path: verificationPath('fit-desktop.png') });
   await page.locator('.shorts-nav').getByRole('button', { name: '다음 작품' }).click();
   await until(async () => (await activeTitle(page)) === '예고편 없음', 'desktop next');
   await context.close();

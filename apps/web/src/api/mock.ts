@@ -679,10 +679,10 @@ export function installMockApi() {
       return json({ status: "ready", items: pool.slice(start, end).filter(item => !hide || !shortsSeen.has(item.key)), nextCursor: end < pool.length ? String(end) : null });
     }
     if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); return json({ ok: true }); }
-    const short = /^\/shorts\/([^/]+)\/(trailers|seen)$/.exec(path);
+    const short = /^\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
     if (short) {
       const key = decodeURIComponent(short[1]);
-      if (short[2] === "seen") { shortsSeen.add(key); return json({ ok: true }); }
+      if (short[2] !== "trailers") { if (method !== "POST") return json({ error: "not-found" }, 404); shortsSeen.add(key); return json({ ok: true }); }
       return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
     }
     if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }

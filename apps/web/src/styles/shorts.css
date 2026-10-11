@@ -50,7 +50,6 @@
 .shorts-nav .icon-btn { width: 44px; height: 44px; background: var(--surface-2); }
 .shorts-nav .icon-btn:disabled, .shorts-steps .icon-btn:disabled { opacity: .3; }
 .shorts-end { padding: 0 var(--gutter); }
-.segmented button:disabled.is-active { cursor: default; }
 
 @media (max-width: 760px) {
   .shell.is-shorts .topnav { display: none; }
@@ -64,5 +63,23 @@
   .shorts-steps { display: inline-flex; gap: 4px; margin-left: auto; }
   .shorts-nav { display: none; }
 }
+/* 화면 맞춤: the player area grows to the free height; the video itself is never cropped or covered. */
+@media (max-width: 760px) {
+  .shorts.is-fit .shorts-body { display: flex; flex-direction: column; gap: 12px; width: 100%; height: 100%; padding-bottom: 14px; }
+  .shorts.is-fit .shorts-stage { flex: 1 1 auto; aspect-ratio: auto; min-height: 200px; }
+  .shorts.is-fit .shorts-overview { -webkit-line-clamp: 1; }
+}
 @media (max-height: 560px) { .shorts-overview { display: none; } }
+
+.choice-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.choice-chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px 0 9px; border: 1px solid var(--hairline-strong); border-radius: 999px; color: var(--text-3); font-size: .9rem; font-weight: 600; transition: color .15s, border-color .15s, background-color .15s; }
+.choice-chip:hover:not(:disabled) { color: var(--text); border-color: rgba(255, 255, 255, .35); }
+.choice-chip.is-active { color: var(--text); border-color: rgba(255, 255, 255, .4); background: rgba(255, 255, 255, .06); }
+.choice-chip:disabled { cursor: default; }
+.choice-chip-box { display: grid; place-items: center; width: 16px; height: 16px; border: 1.5px solid var(--text-3); border-radius: 4px; }
+.choice-chip.is-active .choice-chip-box { border-color: #fff; background: #fff; color: #0b0b0d; }
 .setting-inline-link { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 760px) {
+  .setting.shorts-kinds { flex-direction: column; align-items: stretch; gap: 12px; }
+  .shorts-kinds .choice-chips { justify-content: flex-start; }
+}
