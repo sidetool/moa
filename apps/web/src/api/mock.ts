@@ -1,6 +1,6 @@
 // Development-only API stand-in (VITE_MOCK=1). It answers the same contract
 // as apps/server so screens can be built before the server lands.
-import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
+import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, ShortsItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
@@ -389,6 +389,18 @@ function downloadSummary() {
 }
 const savedEpisode = (episodeId: string) => { tickDownloads(); return downloadJobs.some(job => job.episodeId === episodeId && job.state === "ready"); };
 
+// Trailer feed stand-in. Video ids are placeholders; a real browser needs network access to play them.
+const mockShorts: ShortsItem[] = [
+  { key: "movie:101", kind: "movie", tmdbId: 101, title: "라라랜드", category: "movie", year: 2016, overview: "꿈을 좇는 두 사람의 이야기.", poster: img("lalaland-a"), mediaId: "lalaland", href: "/title/lalaland", reason: "personal" },
+  { key: "tv:201", kind: "tv", tmdbId: 201, title: "예제 시리즈 2기", category: "anime", year: 2024, poster: img("oshi-3"), mediaId: "oshi", href: "/title/oshi", reason: "personal" },
+  { key: "tv:202", kind: "tv", tmdbId: 202, title: "레드 카펫", category: "series", year: 2020, overview: "무대 뒤의 사람들.", href: "/search?q=%EB%A0%88%EB%93%9C%20%EC%B9%B4%ED%8E%AB", reason: "popular" },
+  { key: "movie:102", kind: "movie", tmdbId: 102, title: "그 겨울", category: "movie", year: 2021, href: "/search?q=%EA%B7%B8%20%EA%B2%A8%EC%9A%B8", reason: "popular" },
+  { key: "tv:203", kind: "tv", tmdbId: 203, title: "작은 무대", category: "anime", year: 2025, href: "/search?q=%EC%9E%91%EC%9D%80%20%EB%AC%B4%EB%8C%80", reason: "popular" },
+  { key: "tv:204", kind: "tv", tmdbId: 204, title: "밤의 도시를 걷다", category: "series", year: 2025, href: "/search?q=%EB%B0%A4", reason: "popular" }
+];
+const shortsTrailerKeys: Record<string, string[]> = { "movie:101": ["aaaaaaaaaa1", "aaaaaaaaaa2"], "tv:201": ["bbbbbbbbbb1"], "tv:202": ["cccccccccc1"], "movie:102": [], "tv:203": ["dddddddddd1"], "tv:204": ["eeeeeeeeee1"] };
+const shortsSeen = new Set<string>();
+
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -656,6 +668,22 @@ export function installMockApi() {
       if (downloadAction[2] === "retry") { if (!downloadSummary().configured) return json({ error: "download-disabled" }, 503); job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
       job.updatedAt = new Date().toISOString();
       return json({ ...job });
+    }
+    if (path === "/shorts" && method === "GET") {
+      if (!settings.shortsEnabled) return json({ status: "disabled", items: [], nextCursor: null });
+      const picked = settings.shortsCategories ?? ["movie", "series", "anime"], replay = url.searchParams.get("replay") === "1";
+      const hide = !replay && settings.shortsRepeatDays !== 0;
+      // Like the server, the cursor walks the unfiltered pool so a fresh view never shifts later pages.
+      const pool = mockShorts.filter(item => picked.includes(item.category!));
+      const start = Number(url.searchParams.get("cursor") ?? 0), end = start + 4;
+      return json({ status: "ready", items: pool.slice(start, end).filter(item => !hide || !shortsSeen.has(item.key)), nextCursor: end < pool.length ? String(end) : null });
+    }
+    if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); return json({ ok: true }); }
+    const short = /^\/shorts\/([^/]+)\/(trailers|seen)$/.exec(path);
+    if (short) {
+      const key = decodeURIComponent(short[1]);
+      if (short[2] === "seen") { shortsSeen.add(key); return json({ ok: true }); }
+      return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
     }
     if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);

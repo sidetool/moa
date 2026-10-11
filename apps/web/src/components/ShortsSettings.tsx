@@ -1,0 +1,33 @@
+import type { Settings } from "@moa/shared";
+import { Link } from "react-router-dom";
+import { SHORTS_CATEGORIES, shortsCategories } from "../api/shorts";
+import { cx } from "../lib/format";
+import { Select, Toggle } from "./ui";
+
+const MODES: Array<[NonNullable<Settings["shortsMode"]>, string]> = [["mixed", "섞어서"], ["personal", "내 취향"], ["popular", "인기작"]];
+const REPEAT: Array<[NonNullable<Settings["shortsRepeatDays"]>, string]> = [[0, "안 함"], [1, "하루"], [7, "일주일"], [30, "한 달"]];
+
+/** Profile-owned trailer feed. Off by default; child profiles can't turn it on. */
+export function ShortsSettings({ settings, kids, save }: { settings: Settings; kids: boolean; save: (patch: Partial<Settings>) => void }) {
+  const on = settings.shortsEnabled === true && !kids;
+  const categories = shortsCategories(settings);
+  const flip = (value: (typeof categories)[number]) => {
+    const next = categories.includes(value) ? categories.filter(item => item !== value) : SHORTS_CATEGORIES.map(([item]) => item).filter(item => item === value || categories.includes(item));
+    if (next.length) save({ shortsCategories: next });
+  };
+  const row = (title: string, desc: React.ReactNode, control: React.ReactNode) => <div className="setting"><div><b>{title}</b>{desc && <small>{desc}</small>}</div>{control}</div>;
+  return <section className="settings-group"><h2>이 프로필</h2><div className="settings-card">
+    {row("쇼츠", kids ? "어린이 프로필에서는 쓸 수 없어요." : on ? <>작품 예고편을 세로로 넘겨 봐요. <Link className="setting-inline-link" to="/shorts">열기</Link></> : "작품 예고편을 세로로 넘겨 봐요.",
+      <Toggle label="쇼츠" checked={on} disabled={kids} onChange={value => save({ shortsEnabled: value })} />)}
+    {on && <>
+      {row("고르는 방식", "", <Select className="setting-select" aria-label="고르는 방식" value={settings.shortsMode ?? "mixed"} onChange={value => save({ shortsMode: value as Settings["shortsMode"] })} options={MODES.map(([value, label]) => ({ value, label }))} />)}
+      {row("종류", "", <div className="segmented" role="group" aria-label="종류">
+        {SHORTS_CATEGORIES.map(([value, label]) => {
+          const picked = categories.includes(value);
+          return <button key={value} type="button" aria-pressed={picked} className={cx(picked && "is-active")} disabled={picked && categories.length === 1} onClick={() => flip(value)}>{label}</button>;
+        })}
+      </div>)}
+      {row("본 작품 숨기기", "5초 넘게 본 예고편의 작품을 이 기간 동안 빼요.", <Select className="setting-select" aria-label="본 작품 숨기기" value={String(settings.shortsRepeatDays ?? 7)} onChange={value => save({ shortsRepeatDays: Number(value) as Settings["shortsRepeatDays"] })} options={REPEAT.map(([value, label]) => ({ value: String(value), label }))} />)}
+    </>}
+  </div></section>;
+}

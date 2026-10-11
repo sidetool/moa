@@ -14,6 +14,7 @@ import { HistoryPage, MePage, MyListPage, SearchPage } from "./pages/ListPages";
 import { LibraryPage, PluginsPage, SettingsPage, SubtitlesPage } from "./pages/AdminPages";
 import { SourcesPage, SourceBrowsePage } from "./pages/SourcesPage";
 import { WatchPage } from "./pages/WatchPage";
+import { ShortsPage } from "./pages/ShortsPage";
 import { AccountsPage } from "./pages/AccountsPage";
 import { useMe } from "./api/queries";
 import { EmptyState } from "./components/ui";
@@ -23,6 +24,7 @@ import "./styles/base.css";
 import "./styles/components.css";
 import "./styles/pages.css";
 import "./styles/player.css";
+import "./styles/shorts.css";
 
 if (import.meta.env.VITE_MOCK === "1") {
   const { installMockApi } = await import("./api/mock");
@@ -77,6 +79,7 @@ const router = createBrowserRouter([
       { path: "/title/:id", element: <TitlePage /> },
       { path: "/search", element: <SearchPage /> },
       { path: "/my-list", element: <MyListPage /> },
+      { path: "/shorts", element: <ShortsPage /> },
       { path: "/history", element: <HistoryPage /> },
       { path: "/sources", element: <RequireAdmin><SourcesPage /></RequireAdmin> },
       { path: "/sources/:id", element: <SourceBrowsePage /> },

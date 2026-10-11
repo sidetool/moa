@@ -18,11 +18,12 @@ import { recommendationsKey, useResetDismissals } from "../api/recommendations";
 import { UpdateSettings } from "../components/UpdateSettings";
 import { SystemInfo } from "../components/SystemInfo";
 import { SubtitleAdvancedSettings } from "../components/SubtitleAdvancedSettings";
+import { ShortsSettings } from "../components/ShortsSettings";
 import { translationModeOf, useTranslationConfig, type TranslationMode } from "../api/translation";
-import { keys, useFolders, useMe, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
+import { keys, useFolders, useMe, useProfiles, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
 import { AccountSection } from "./AccountsPage";
 import { Button, ConfirmDialog, EmptyState, IconButton, Select, Skeleton, Spinner, Toggle } from "../components/ui";
-import { api, hasLoginGate } from "../lib/api";
+import { api, currentProfileId, hasLoginGate } from "../lib/api";
 import { TYPE_LABEL, cx } from "../lib/format";
 
 function FolderPicker({ onPick, onClose }: { onPick: (path: string, type: MediaType, label: string) => void; onClose: () => void }) {
@@ -173,6 +174,7 @@ export function SettingsPage() {
   const settings = useSettings();
   const client = useQueryClient();
   const admin = useMe().data?.role === "admin";
+  const kids = useProfiles().data?.find(item => item.id === currentProfileId())?.kids === true;
   const translation = useTranslationConfig().data;
   const { pathname, hash } = useLocation();
   // Grouped by where a choice applies: the profile, this device only, or the whole server.
@@ -182,7 +184,7 @@ export function SettingsPage() {
     { value: "tabs", label: "홈 화면", group: "프로필", icon: <LayoutGrid size={18} />, scope: "이 프로필의 모든 기기에 적용돼요." },
     ...(hasLoginGate ? [{ value: "account", label: "내 계정", group: "프로필", icon: <UserRound size={18} />, scope: "로그인한 계정에 적용돼요." }] : []),
     { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "리모컨·키보드·터치로 다루는 방식이에요. 이 브라우저에만 저장돼요." },
-    { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "이 브라우저에만 저장돼요. 동작이 바뀌거나 없어질 수 있어요." },
+    { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "동작이 바뀌거나 없어질 수 있어요." },
     ...(admin ? [
       { value: "library", label: "소스와 라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "plugins", label: "플러그인", group: "서버 관리", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
@@ -271,7 +273,8 @@ export function SettingsPage() {
       {admin && category === "subtitles" && <section className="settings-group"><h2>보관함 · 관리자</h2><div className="settings-card">
         {link("/subtitles", <FolderOpen size={20} />, "저장한 자막", "AI 번역·온라인·직접 가져온 자막 파일을 모든 프로필에서 관리")}
       </div></section>}
-      {category === "experimental" && <section className="settings-group"><div className="settings-card">
+      {category === "experimental" && <ShortsSettings settings={s} kids={kids} save={patch => void save(patch)} />}
+      {category === "experimental" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
         {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}
         {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />)}
       </div></section>}

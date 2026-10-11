@@ -1,7 +1,10 @@
-/** Minimal typing for the official YouTube IFrame Player API (only what the trailer dialog uses). */
+/** Minimal typing for the official YouTube IFrame Player API (only what the trailer players use). */
 export interface YouTubePlayer {
   playVideo(): void;
   destroy(): void;
+  pauseVideo?(): void;
+  mute?(): void;
+  unMute?(): void;
 }
 export interface YouTubeEvent { target: YouTubePlayer; data?: number }
 export interface YouTubeApi {
@@ -14,6 +17,7 @@ declare global {
   interface Window { YT?: Partial<YouTubeApi>; onYouTubeIframeAPIReady?: () => void }
 }
 
+export const YOUTUBE_ENDED = 0;
 export const YOUTUBE_PLAYING = 1;
 const API_URL = "https://www.youtube.com/iframe_api";
 const KEY = /^[A-Za-z0-9_-]{11}$/;
