@@ -42,7 +42,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
+let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */

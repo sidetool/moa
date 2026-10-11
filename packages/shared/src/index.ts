@@ -387,6 +387,7 @@ export interface Settings {
   shortsEnabled?: boolean;
   shortsScreenFit?: boolean;
   shortsPlayback?: 'embed' | 'native';
+  shortsQuality?: 'auto' | '360p' | '480p' | '720p';
   shortsCategories?: ShortsCategory[];
   shortsMode?: 'mixed' | 'personal' | 'popular';
   shortsHideWatched?: boolean;

@@ -101,10 +101,12 @@ test('routes require profile ownership and settings validate new controls',async
   assert.equal((await app.inject({url:'/api/shorts',headers})).json().status,'disabled');
   assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/skip',headers:{...headers,'x-moa-profile':'q'},payload:{}})).statusCode,401);
   assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/skip',headers,payload:{}})).statusCode,403);
-  for(const payload of [{shortsScreenFit:{}},{shortsCategories:[]},{shortsCategories:['sports']},{shortsCategories:['anime','anime']},{shortsRepeatDays:-1},{shortsRepeatDays:365},{shortsMode:'bad'}])assert.equal((await app.inject({method:'PATCH',url:'/api/settings',headers,payload})).statusCode,400);
-  const enabled=await app.inject({method:'PATCH',url:'/api/settings',headers,payload:{shortsEnabled:true,shortsScreenFit:false,shortsCategories:['movie','anime'],shortsRepeatDays:7,shortsMode:'mixed'}});
+  assert.equal((await app.inject({url:'/api/settings',headers})).json().shortsQuality,'auto');
+  for(const payload of [{shortsQuality:'1080p'},{shortsQuality:720},{shortsScreenFit:{}},{shortsCategories:[]},{shortsCategories:['sports']},{shortsCategories:['anime','anime']},{shortsRepeatDays:-1},{shortsRepeatDays:365},{shortsMode:'bad'}])assert.equal((await app.inject({method:'PATCH',url:'/api/settings',headers,payload})).statusCode,400);
+  const enabled=await app.inject({method:'PATCH',url:'/api/settings',headers,payload:{shortsQuality:'480p',shortsEnabled:true,shortsScreenFit:false,shortsCategories:['movie','anime'],shortsRepeatDays:7,shortsMode:'mixed'}});
   assert.equal(enabled.statusCode,200,enabled.body);
   assert.equal(enabled.json().shortsScreenFit,false);
+  assert.equal((await app.inject({url:'/api/settings',headers})).json().shortsQuality,'480p');
   assert.deepEqual(enabled.json().shortsCategories,['movie','anime']);
   assert.equal((await app.inject({url:'/api/shorts',headers})).json().status,'unconfigured');
 });

@@ -58,6 +58,9 @@
 .shorts-info h2 { font-size: 1.35rem; font-weight: 800; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .shorts-sub { margin-top: 4px; color: rgba(255, 255, 255, .72); font-size: .86rem; font-weight: 550; }
 .shorts-overview { max-width: 62ch; margin-top: 6px; color: rgba(255, 255, 255, .9); font-size: .92rem; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+button.shorts-overview { padding: 0; text-align: left; text-shadow: inherit; cursor: pointer; }
+/* Opened: the whole text, bounded and scrollable, on a light shade so it stays readable over video. */
+.shorts-overview.is-open { display: block; max-height: 38vh; overflow-y: auto; overscroll-behavior: contain; margin-left: -8px; padding: 6px 8px; border-radius: 8px; background: rgba(0, 0, 0, .38); -webkit-line-clamp: unset; }
 .shorts-open { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-top: 12px; padding: 0 13px 0 11px; border-radius: 999px; background: rgba(255, 255, 255, .14); backdrop-filter: blur(10px); font-size: .84rem; font-weight: 700; text-shadow: none; transition: background-color .15s; }
 .shorts-open:hover { background: rgba(255, 255, 255, .24); }
 
@@ -94,7 +97,7 @@
 }
 @media (max-height: 560px) { .shorts-overview { display: none; } }
 
-.choice-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.choice-chips, .setting > .choice-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .choice-chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px 0 9px; border: 1px solid var(--hairline-strong); border-radius: 999px; color: var(--text-3); font-size: .9rem; font-weight: 600; transition: color .15s, border-color .15s, background-color .15s; }
 .choice-chip:hover:not(:disabled) { color: var(--text); border-color: rgba(255, 255, 255, .35); }
 .choice-chip.is-active { color: var(--text); border-color: rgba(255, 255, 255, .4); background: rgba(255, 255, 255, .06); }
@@ -154,3 +157,7 @@
   .shorts-slide.is-native .shorts-info h2 { font-size: 1.2rem; }
   .shorts-slide.is-native .shorts-rail { right: 12px; bottom: 28px; }
 }
+
+/* Press-and-hold speed-up. */
+.shorts-native-video { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+.shorts-fast { position: absolute; top: calc(var(--safe-top) + 16px); left: 50%; z-index: 4; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px; background: rgba(0, 0, 0, .5); color: #fff; font-size: .86rem; font-weight: 700; pointer-events: none; }

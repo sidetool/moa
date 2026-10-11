@@ -2,7 +2,7 @@ import { Check, ChevronDown, ChevronUp, Clapperboard, Play, Plus, RotateCcw, Sea
 import { Link } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { MediaCard, ShortsItem } from "@moa/shared";
+import type { MediaCard, Settings, ShortsItem } from "@moa/shared";
 import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
 import { useShortsNative, markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
@@ -50,10 +50,10 @@ export function ShortsPage() {
   if (!items.length && !feed.hasNextPage) return <Centered><EmptyState icon={<Clapperboard size={32} />} title="새로 볼 예고편이 없어요"
     body={replay ? undefined : "본 작품은 설정한 기간 동안 빼고 보여줘요."}
     action={<span className="shorts-state-actions">{!replay && <Button onClick={() => setReplay(true)}>본 것도 보기</Button>}<ButtonLink to="/settings#experimental" variant="ghost">설정</ButtonLink></span>} /></Centered>;
-  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} native={native} onReplay={() => setReplay(true)} />;
+  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} native={native} quality={settings.data?.shortsQuality ?? "auto"} onReplay={() => setReplay(true)} />;
 }
 
-function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; native: boolean; onReplay: () => void }) {
+function ShortsReel({ items, feed, replay, fit, native, quality, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; native: boolean; quality: NonNullable<Settings["shortsQuality"]>; onReplay: () => void }) {
   const [embedded, setEmbedded] = useState<ReadonlySet<string>>(() => new Set()); // works switched to the YouTube player by hand
   const pool = useRef<NativePool | null>(null);
   pool.current ??= new NativePool();
@@ -182,7 +182,7 @@ function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: Sho
       blocked={index === active && blocked} onPlay={() => control.current?.play()} native={native && !embedded.has(item.key)}
       onStep={step} onSound={() => setMuted(old => !old)}>
       {index === active && shownKey === item.key && visible && (native && !embedded.has(item.key)
-        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} ahead={aheadOf(index)} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
+        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} ahead={aheadOf(index)} quality={quality} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
             onPlaying={() => setAutoSkips(0)} onStarted={() => pool.current?.prefetch(aheadOf(index))} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
         : <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
         onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)}
@@ -217,6 +217,8 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
 }) {
   const toggle = useWatchlistToggle();
   const poster = sized(item.poster, 500);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { if (!active) setExpanded(false); }, [active]);
   const meta = [item.year, item.category && CATEGORY_LABEL[item.category], item.reason === "personal" ? "취향" : "인기"].filter(Boolean).join(" · ");
   return <article className={cx("shorts-slide", active && "is-active", native && "is-native")} aria-posinset={index + 1} aria-setsize={total} aria-label={item.title}>
     <div className="shorts-frame">
@@ -229,7 +231,8 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
       <div className="shorts-info">
         <h2>{item.title}</h2>
         {meta && <p className="shorts-sub">{meta}</p>}
-        {item.overview && <p className="shorts-overview">{item.overview}</p>}
+        {/* Tap the description for the full text; it sits beside the video, so the tap never reaches it. */}
+        {item.overview && <button type="button" className={cx("shorts-overview", expanded && "is-open")} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{item.overview}</button>}
         <Link className="shorts-open" to={recommendationTarget(item.href, item.title)}>
           {item.mediaId ? <Play size={14} fill="currentColor" /> : <Search size={14} strokeWidth={2.6} />}{item.mediaId ? "작품 보기" : "MOA에서 찾기"}
         </Link>

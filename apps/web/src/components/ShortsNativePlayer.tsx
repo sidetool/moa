@@ -12,13 +12,27 @@ const PREPARE_TIMEOUT = 85_000; // the server may try two references for up to 4
 const READY_TIMEOUT = 20_000; // prepared media that never starts is treated as failed
 const HLS = "application/vnd.apple.mpegurl";
 
+const HOLD_MS = 450;
+/** Index for a fixed quality: the tallest variant at or under `target`, else the shortest; first wins ties. */
+export function levelFor(levels: Array<{ height?: number }>, target: number) {
+  let fit = -1, low = -1;
+  levels.forEach((level, index) => {
+    const h = level.height || 0;
+    if (h <= target && (fit < 0 || h > (levels[fit].height || 0))) fit = index;
+    if (low < 0 || h < (levels[low].height || 0)) low = index;
+  });
+  return fit >= 0 ? fit : low;
+}
+
 type Phase = "prepare" | "loading" | "ready" | "blocked" | "unavailable" | "error";
 
 /** Experimental: the server prepares the trailer and MOA plays it in its own <video>. Mounted only for the
  *  settled, visible work; unmounting cancels preparation, stops the media and releases the lease. Failures
  *  wait for the person (retry or the YouTube player) and never advance by themselves. */
-export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, control, muted, onMuted, onBlocked, onPlaying, onStarted, onEnded, onEmbed }: {
+export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quality, control, muted, onMuted, onBlocked, onPlaying, onStarted, onEnded, onEmbed }: {
   itemKey: string; title: string; session: ShortsSession; pool: NativePool; ahead: string[]; control: React.RefObject<ShortsControl | null>;
+  /** Profile setting; applies to HLS only (a single MP4 has one quality). */
+  quality: "auto" | "360p" | "480p" | "720p";
   muted: boolean; onMuted: (muted: boolean) => void; onBlocked: (blocked: boolean) => void;
   /** `onPlaying` follows every resume; `onStarted` fires once per attempt (prefetch hangs off it). */
   onPlaying: () => void; onStarted: () => void; onEnded: () => void; onEmbed: () => void;
@@ -29,6 +43,11 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, contr
   const dragging = useRef(false);
   const [prepared, setPrepared] = useState<ShortsNativeSession | null>(null);
   const [places, setPlaces] = useState<{ rail: HTMLElement | null; info: HTMLElement | null }>({ rail: null, info: null });
+  const qualityRef = useRef(quality);
+  qualityRef.current = quality;
+  const [fast, setFast] = useState(false);
+  const hold = useRef<{ timer: number; x: number; y: number; prev: number | null } | null>(null);
+  const suppressClick = useRef(false);
   const startedRef = useRef(false);
   const aheadRef = useRef(ahead);
   aheadRef.current = ahead;
@@ -77,7 +96,7 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, contr
     const stop = () => {
       if (stopped) return;
       stopped = true; live.current = false;
-      setPrepared(null);
+      setPrepared(null); endHold();
       window.clearTimeout(prepareTimer); window.clearTimeout(readyTimer.current);
       flush();
       el.removeEventListener("error", onError);
@@ -105,16 +124,13 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, contr
         if (HlsClass.isSupported()) {
           hls = new HlsClass({ maxBufferLength: 20, backBufferLength: 10 });
           hls.on(HlsClass.Events.ERROR, (_event, data) => { if (data.fatal) fail("error"); });
-          // Start small for a fast first frame (≤360p, else the lowest); adaptive switching stays on.
           hls.on(HlsClass.Events.MANIFEST_PARSED, (_event, data) => {
-            // Tallest ≤360p, else the shortest; the first variant wins ties (as the server's warm-up does).
-            let fit = -1, low = -1;
-            data.levels.forEach((level, index) => {
-              const h = level.height || 0;
-              if (h <= 360 && (fit < 0 || h > (data.levels[fit].height || 0))) fit = index;
-              if (low < 0 || h < (data.levels[low].height || 0)) low = index;
-            });
-            if (hls && (fit >= 0 || low >= 0)) hls.startLevel = fit >= 0 ? fit : low;
+            // Auto: start at ≤360p (else the shortest) and adapt. A fixed setting holds its level from the start.
+            if (!hls || !data.levels.length) return;
+            const fixed = qualityRef.current !== "auto";
+            const index = levelFor(data.levels, fixed ? Number.parseInt(qualityRef.current, 10) : 360);
+            hls.startLevel = index;
+            if (fixed) hls.nextLevel = index;
           });
           hls.loadSource(prepared.url);
           hls.attachMedia(el);
@@ -135,6 +151,46 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, contr
   }, [itemKey, round]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (video.current) video.current.muted = muted; }, [muted]);
+  // Press and hold: 2× while held. Any release, cancel, drag, scroll or hiding restores the previous rate.
+  function endHold() {
+    const current = hold.current;
+    if (!current) return;
+    window.clearTimeout(current.timer);
+    if (current.prev !== null && video.current) video.current.playbackRate = current.prev;
+    hold.current = null;
+    setFast(false);
+  }
+  useEffect(() => {
+    const feed = video.current?.closest(".shorts");
+    const end = () => endHold();
+    const onVisibility = () => { if (document.visibilityState !== "visible") endHold(); };
+    feed?.addEventListener("scroll", end, { passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", end);
+    return () => { feed?.removeEventListener("scroll", end); document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("blur", end); endHold(); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const holdHandlers = {
+    onPointerDown: (event: React.PointerEvent<HTMLVideoElement>) => {
+      suppressClick.current = false;
+      endHold();
+      if (!event.isPrimary || event.button > 0 || !live.current) return;
+      const start = { x: event.clientX, y: event.clientY };
+      hold.current = { ...start, prev: null, timer: window.setTimeout(() => {
+        const el = video.current, current = hold.current;
+        if (!el || !current || el.paused || !live.current) return;
+        current.prev = el.playbackRate;
+        el.playbackRate = 2;
+        suppressClick.current = true; // the release after a hold is not a tap
+        setFast(true);
+      }, HOLD_MS) };
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLVideoElement>) => {
+      const current = hold.current;
+      if (current && Math.hypot(event.clientX - current.x, event.clientY - current.y) > 10) endHold();
+    },
+    onPointerUp: endHold, onPointerCancel: endHold, onPointerLeave: endHold, onLostPointerCapture: endHold,
+    onContextMenu: (event: React.MouseEvent) => event.preventDefault()
+  };
   // The caption menu lives in this slide's action rail; captions keep clear of its title block.
   useEffect(() => {
     const slide = video.current?.closest(".shorts-slide");
@@ -158,7 +214,11 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, contr
   const failed = phase === "unavailable" || phase === "error";
   return <>
     <video ref={video} className={phase === "ready" || phase === "blocked" ? "shorts-native-video is-on" : "shorts-native-video"} playsInline preload="auto" aria-label={`${title} 예고편`}
-      onClick={() => { const el = video.current; if (!el || !live.current) return; if (el.paused) void play(); else el.pause(); }}
+      {...holdHandlers}
+      onClick={() => {
+        if (suppressClick.current) { suppressClick.current = false; return; }
+        const el = video.current; if (!el || !live.current) return; if (el.paused) void play(); else el.pause();
+      }}
       onPlaying={() => {
         if (!live.current) return;
         window.clearTimeout(readyTimer.current);
@@ -185,6 +245,7 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, contr
         setTime(old => ({ ...old, at }));
       }} />
     {prepared && video.current && <ShortsCaptions video={video.current} prepared={prepared} rail={places.rail} info={places.info} />}
+    {fast && <span className="shorts-fast" aria-hidden="true">2×</span>}
     {phase === "ready" && paused && <span className="shorts-native-paused" aria-hidden="true"><Play size={30} fill="currentColor" /></span>}
     {(phase === "prepare" || phase === "loading") && <div className="shorts-overlay is-quiet"><Spinner size={28} /></div>}
     {failed && <div className="shorts-overlay" role="alert">
