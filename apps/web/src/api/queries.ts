@@ -22,9 +22,9 @@ export const useMe = () => useQuery({ queryKey: keys.me, queryFn: () => api<Acco
 
 export const useProfiles = () => useQuery({ queryKey: keys.profiles, queryFn: () => api<Profile[]>("/profiles") });
 
-export const useHome = (type?: MediaType, providers?: string[], continueScope: "tab" | "all" = "tab") => {
+export const useHome = (type?: MediaType, providers?: string[], personalScope: "tab" | "all" = "tab") => {
   const titleGrouping = useTitleGrouping();
-  return useQuery({ queryKey: [...keys.home(type), providers, continueScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
+  return useQuery({ queryKey: [...keys.home(type), providers, personalScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
 };
 
 export const useMedia = (id: string) =>
@@ -99,6 +99,9 @@ export function useWatchlistToggle() {
     onSettled: (_data, _error, { id }) => {
       void client.invalidateQueries({ queryKey: keys.media(id) });
       void client.invalidateQueries({ queryKey: keys.watchlist });
+      void client.invalidateQueries({ queryKey: ["recommendations"] });
+      // Mark cached feeds stale, but never reorder the Shorts currently playing.
+      void client.invalidateQueries({ queryKey: ["shorts"], refetchType: "none" });
       void client.invalidateQueries({ queryKey: ["home"] });
     }
   });

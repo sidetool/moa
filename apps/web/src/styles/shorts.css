@@ -1,0 +1,163 @@
+/* ---------- Shorts: one settled trailer per screen ---------- */
+.shorts {
+  position: fixed;
+  inset: calc(var(--nav-h) + var(--safe-top)) 0 0 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  background: var(--bg);
+}
+.shorts::-webkit-scrollbar { display: none; }
+.shorts:focus { outline: none; }
+.shorts-state { display: grid; place-items: center; overflow: hidden; }
+.shorts-state-actions { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+.shorts-slide {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  container-type: size;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.shorts-end { padding: 0 var(--gutter); }
+
+.shorts-frame {
+  position: relative;
+  display: grid;
+  grid-template: "screen rail" auto "info ." auto / auto auto;
+  align-content: center;
+  justify-content: center;
+  gap: 16px 18px;
+  width: 100%;
+  height: 100%;
+}
+.shorts-screen { grid-area: screen; display: grid; align-items: center; min-height: 0; }
+/* Landscape trailers stay whole; YouTube needs at least 200×200. */
+.shorts-stage {
+  position: relative;
+  width: min(960px, calc(100cqw - 2 * var(--gutter) - 200px), calc((100cqh - 200px) * 16 / 9));
+  min-width: min(356px, 100cqw);
+  aspect-ratio: 16 / 9;
+  min-height: 200px;
+  overflow: hidden;
+  border-radius: var(--radius-l);
+  background: #000;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+}
+.shorts-stage iframe { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; border: 0; }
+.shorts-poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: .5; }
+.shorts-overlay { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px; background: rgba(0, 0, 0, .6); color: var(--text-2); text-align: center; }
+.shorts-overlay small { color: var(--text-3); font-size: .84rem; }
+.shorts-overlay.is-quiet { background: none; pointer-events: none; }
+
+.shorts-info { grid-area: info; width: 0; min-width: 100%; text-shadow: 0 1px 10px rgba(0, 0, 0, .55); }
+.shorts-info h2 { font-size: 1.35rem; font-weight: 800; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.shorts-sub { margin-top: 4px; color: rgba(255, 255, 255, .72); font-size: .86rem; font-weight: 550; }
+.shorts-overview { max-width: 62ch; margin-top: 6px; color: rgba(255, 255, 255, .9); font-size: .92rem; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+button.shorts-overview { padding: 0; text-align: left; text-shadow: inherit; cursor: pointer; }
+/* Opened: the whole text, bounded and scrollable, on a light shade so it stays readable over video. */
+.shorts-overview.is-open { display: block; max-height: 38vh; overflow-y: auto; overscroll-behavior: contain; margin-left: -8px; padding: 6px 8px; border-radius: 8px; background: rgba(0, 0, 0, .38); -webkit-line-clamp: unset; }
+.shorts-open { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-top: 12px; padding: 0 13px 0 11px; border-radius: 999px; background: rgba(255, 255, 255, .14); backdrop-filter: blur(10px); font-size: .84rem; font-weight: 700; text-shadow: none; transition: background-color .15s; }
+.shorts-open:hover { background: rgba(255, 255, 255, .24); }
+
+.shorts-rail { grid-area: rail; align-self: end; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.shorts-rail-btn { display: grid; justify-items: center; gap: 5px; color: #fff; }
+.shorts-rail-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: rgba(24, 24, 28, .42); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12); backdrop-filter: blur(12px); transition: background-color .15s, color .15s, transform .15s var(--ease); }
+.shorts-rail-btn:hover:not(:disabled) .shorts-rail-icon { background: rgba(255, 255, 255, .2); }
+.shorts-rail-btn:active:not(:disabled) .shorts-rail-icon { transform: scale(.94); }
+.shorts-rail-btn[aria-pressed="true"] .shorts-rail-icon { background: #fff; color: #0b0b0d; }
+.shorts-rail-btn:disabled { opacity: .3; cursor: default; }
+.shorts-rail-btn small { font-size: .7rem; font-weight: 650; text-shadow: 0 1px 6px rgba(0, 0, 0, .6); }
+.shorts-rail-steps { display: none; }
+.shorts-nav { position: fixed; right: var(--gutter); top: calc(50% + (var(--nav-h) + var(--safe-top)) / 2); z-index: 5; display: grid; gap: 10px; transform: translateY(-50%); }
+.shorts-nav .icon-btn { width: 44px; height: 44px; background: var(--surface-2); }
+.shorts-nav .icon-btn:disabled { opacity: .3; }
+
+@media (max-width: 760px) {
+  .shell.is-shorts .topnav { display: none; }
+  .shorts { inset: 0 0 calc(var(--tab-h) + var(--safe-bottom)) 0; }
+  .shorts-frame { grid-template: "screen screen" minmax(0, 1fr) "info rail" auto / minmax(0, 1fr) auto; align-content: stretch; gap: 0; padding-top: var(--safe-top); }
+  /* 끔: a compact card with margins. */
+  .shorts-screen { justify-items: center; }
+  .shorts-stage { width: min(calc(100cqw - 2 * var(--gutter)), calc((100cqh - 240px) * 16 / 9)); min-width: 0; border-radius: var(--radius-m); }
+  .shorts-info { width: auto; align-self: end; padding: 14px 8px 18px var(--gutter); }
+  .shorts-info h2 { font-size: 1.18rem; }
+  .shorts-overview { font-size: .88rem; }
+  .shorts-rail { gap: 14px; padding: 14px 12px 18px 4px; }
+  .shorts-rail-steps { display: grid; gap: 8px; }
+  .shorts-rail-steps .shorts-rail-icon { width: 40px; height: 40px; }
+  .shorts-nav { display: none; }
+  /* 화면 맞춤: the whole 16:9 player as large as the free width/height allows, edge to edge.
+     A taller player would only add YouTube's own black letterbox, so it isn't stretched. */
+  .shorts.is-fit .shorts-stage { width: min(100cqw, calc((100cqh - 240px) * 16 / 9)); border-radius: 0; box-shadow: 0 0 80px rgba(0, 0, 0, .35); }
+}
+@media (max-height: 560px) { .shorts-overview { display: none; } }
+
+.choice-chips, .setting > .choice-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.choice-chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 13px 0 9px; border: 1px solid var(--hairline-strong); border-radius: 999px; color: var(--text-3); font-size: .9rem; font-weight: 600; transition: color .15s, border-color .15s, background-color .15s; }
+.choice-chip:hover:not(:disabled) { color: var(--text); border-color: rgba(255, 255, 255, .35); }
+.choice-chip.is-active { color: var(--text); border-color: rgba(255, 255, 255, .4); background: rgba(255, 255, 255, .06); }
+.choice-chip:disabled { cursor: default; }
+.choice-chip-box { display: grid; place-items: center; width: 16px; height: 16px; border: 1.5px solid var(--text-3); border-radius: 4px; }
+.choice-chip.is-active .choice-chip-box { border-color: #fff; background: #fff; color: #0b0b0d; }
+.setting-inline-link { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 760px) {
+  .setting.shorts-kinds { flex-direction: column; align-items: stretch; gap: 12px; }
+  .shorts-kinds .choice-chips { justify-content: flex-start; }
+}
+
+/* ---------- Direct playback (experimental): MOA's own video fills the slide; text and actions sit on it ---------- */
+.shorts-slide.is-native .shorts-frame { display: block; }
+.shorts-slide.is-native .shorts-screen, .shorts-slide.is-native .shorts-stage { position: absolute; inset: 0; }
+.shorts-slide.is-native .shorts-stage { width: auto; min-width: 0; height: auto; min-height: 0; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
+.shorts-slide.is-native .shorts-poster { object-fit: cover; opacity: .35; }
+.shorts:not(.is-fit) .shorts-slide.is-native .shorts-poster { object-fit: contain; }
+.shorts-native-video { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: cover; background: #000; opacity: 0; transition: opacity .25s; }
+.shorts-native-video.is-on { opacity: 1; }
+.shorts:not(.is-fit) .shorts-native-video { object-fit: contain; }
+/* A soft shade under the captions, part of the video, not a panel. */
+.shorts-slide.is-native .shorts-stage::after { content: ""; position: absolute; inset: auto 0 0; z-index: 2; height: 42%; background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .62)); pointer-events: none; }
+.shorts-slide.is-native .shorts-overlay { z-index: 3; }
+.shorts-native-paused { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: rgba(255, 255, 255, .9); pointer-events: none; filter: drop-shadow(0 2px 12px rgba(0, 0, 0, .5)); }
+/* Seek bar: a real range input, thin track, generous hit area; horizontal drags don't scroll the feed. */
+.shorts-seek { position: absolute; inset: auto 0 0; z-index: 5; width: 100%; height: 22px; margin: 0; background: transparent; appearance: none; -webkit-appearance: none; touch-action: none; cursor: pointer; }
+.shorts-seek:disabled { cursor: default; opacity: .5; }
+.shorts-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, #fff var(--seek), rgba(255, 255, 255, .25) var(--seek)); }
+.shorts-seek::-moz-range-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, #fff var(--seek), rgba(255, 255, 255, .25) var(--seek)); }
+.shorts-seek::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4.5px; border: 0; border-radius: 50%; background: #fff; -webkit-appearance: none; transition: transform .15s; }
+.shorts-seek::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #fff; }
+.shorts-seek:active::-webkit-slider-thumb, .shorts-seek:focus-visible::-webkit-slider-thumb { transform: scale(1.35); }
+.shorts-seek:disabled::-webkit-slider-thumb { opacity: 0; }
+
+/* Captions: plain text on a soft box, kept above the title block. */
+.shorts-captions { position: absolute; left: var(--gutter); right: var(--gutter); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; pointer-events: none; }
+.shorts-captions span { max-width: 100%; padding: 2px 8px; border-radius: 4px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 1.05rem; font-weight: 600; line-height: 1.4; white-space: pre-wrap; }
+.shorts-rail-cc:empty { display: none; }
+.shorts-cc { position: relative; display: grid; }
+.shorts-cc-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 6; display: grid; min-width: 180px; max-width: 70vw; padding: 6px; border-radius: 12px; background: rgba(20, 20, 24, .94); box-shadow: var(--shadow-pop); backdrop-filter: blur(12px); }
+.shorts-cc-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px; color: var(--text-2); font-size: .9rem; text-align: left; }
+.shorts-cc-item[aria-checked="true"] { color: #fff; font-weight: 650; }
+.shorts-cc-item:hover { background: rgba(255, 255, 255, .08); }
+.shorts-cc-note { padding: 6px 12px 8px; color: var(--text-3); font-size: .8rem; }
+.shorts-overlay-actions { display: inline-flex; gap: 16px; margin-top: 4px; }
+.shorts-overlay-actions .text-btn { color: #fff; font-weight: 650; }
+.shorts-slide.is-native .shorts-info { position: absolute; left: var(--gutter); right: 96px; bottom: 34px; z-index: 4; width: auto; min-width: 0; padding: 0; }
+.shorts-slide.is-native .shorts-info h2 { font-size: 1.4rem; }
+.shorts-slide.is-native .shorts-rail { position: absolute; right: var(--gutter); bottom: 34px; z-index: 4; padding: 0; }
+.shorts.is-native .shorts-rail-steps { display: grid; gap: 8px; }
+.shorts.is-native .shorts-rail-steps .shorts-rail-icon { width: 40px; height: 40px; }
+.shorts.is-native .shorts-nav { display: none; }
+@media (max-width: 760px) {
+  .shorts-slide.is-native .shorts-info { left: var(--gutter); right: 76px; bottom: 28px; }
+  .shorts-captions span { font-size: .98rem; }
+  .shorts-slide.is-native .shorts-info h2 { font-size: 1.2rem; }
+  .shorts-slide.is-native .shorts-rail { right: 12px; bottom: 28px; }
+}
+
+/* Press-and-hold speed-up. */
+.shorts-native-video { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+.shorts-fast { position: absolute; top: calc(var(--safe-top) + 16px); left: 50%; z-index: 4; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px; background: rgba(0, 0, 0, .5); color: #fff; font-size: .86rem; font-weight: 700; pointer-events: none; }

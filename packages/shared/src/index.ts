@@ -146,6 +146,8 @@ export interface MediaDetail extends MediaCard {
   people?: Person[];
   /** YouTube video key. */
   trailer?: string;
+  /** Ordered YouTube candidates; playback availability is determined on the viewing device. */
+  trailers?: string[];
   similar?: MetadataCandidate[];
   /** Current metadata link. Absent when metadata is not configured. */
   metadata?: MetadataLink;
@@ -153,7 +155,7 @@ export interface MediaDetail extends MediaCard {
 
 export type MetadataKind = "tv" | "movie";
 export interface Person { name: string; role?: string; photo?: string; identity?: { provider: string; id: string } }
-export interface MetadataCandidate { kind: MetadataKind; id: number; title: string; originalTitle?: string; year?: number; poster?: string; overview?: string; seasons?: number }
+export interface MetadataCandidate { genreIds?: number[]; kind: MetadataKind; id: number; title: string; originalTitle?: string; year?: number; poster?: string; overview?: string; seasons?: number }
 export interface MetadataLink { status: "auto" | "manual" | "none" | "off" | "pending"; kind?: MetadataKind; id?: number; season?: number; title?: string }
 // GET   /api/metadata/status -> { tmdb: boolean }
 // GET   /api/media/:id/metadata/search?q= -> MetadataCandidate[]
@@ -178,7 +180,8 @@ export interface HomeResponse {
   hero: MediaCard[];
   rows: Row[];
 }
-// GET /api/home?type=movie|series|anime (type optional) -> HomeResponse
+// GET /api/home?type=movie|series|anime&providers=&continueScope=tab|all&watchlistScope=tab|all -> HomeResponse
+// Scope defaults to tab; main Home requests all for personal rows. Type/profile/kids filters still apply.
 // GET /api/media?type=&genre=&provider=&sort=recent|title|year&page= -> Page<MediaCard>
 // GET /api/genres?type= -> string[]
 
@@ -223,7 +226,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -379,7 +382,17 @@ export interface NavigationTab {
   includeLocal: boolean;
 }
 
+export type ShortsCategory = 'movie' | 'series' | 'anime';
 export interface Settings {
+  /** Experimental trailer discovery; per-profile and off unless explicitly enabled. */
+  shortsEnabled?: boolean;
+  shortsScreenFit?: boolean;
+  shortsPlayback?: 'embed' | 'native';
+  shortsQuality?: 'auto' | '360p' | '480p' | '720p';
+  shortsCategories?: ShortsCategory[];
+  shortsMode?: 'mixed' | 'personal' | 'popular';
+  shortsHideWatched?: boolean;
+  shortsRepeatDays?: 0 | 1 | 7 | 30;
   recommendationsEnabled?: boolean;
   generalSkipEnabled?: boolean;
   /** Per-profile navigation. Omitted uses source-based defaults. */
@@ -538,10 +551,13 @@ export interface DownloadJob {
   state: DownloadState; bytes: number; totalBytes: number | null; error: string | null;
   createdAt: string; updatedAt: string; quality: string | null;
 }
+export type DownloadQuality = 'best' | '1080p' | '720p' | '480p';
 export interface DownloadStatus {
+  enabled: boolean; allowed: boolean; storageReady: boolean; quality: DownloadQuality;
   configured: boolean; reason: string | null; quotaBytes: number; usedBytes: number;
   jobs: DownloadJob[];
-  totalJobs?: number; nextCursor?: string | null;
+  /** Active jobs across the entire server, independent of page/title filters. */
+  activeJobs?: number; totalJobs?: number; nextCursor?: string | null;
 }
 export interface DownloadChoice { id: string; label: string }
 export interface EpisodeDownloadStatus {
@@ -551,6 +567,9 @@ export interface EpisodeDownloadStatus {
 export interface HistoryQuery { cursor?: string; limit?: number; since?: string }
 export interface HistoryRecord { mediaId:string;episodeId:string;title:string;episodeTitle:string;season:number;episode:number;position:number;duration:number;completed:boolean;updatedAt:string;tmdb?:{kind:'tv'|'movie';id:number} }
 export interface HistoryPage { revision:string;items:HistoryRecord[];nextCursor:string|null }
+export interface WatchlistQuery { cursor?: string; limit?: number; since?: string }
+export interface WatchlistRecord { mediaId: string; title: string; type: MediaType; addedAt: string; tmdb?: { kind: 'tv' | 'movie'; id: number } }
+export interface WatchlistPage { revision: string; items: WatchlistRecord[]; nextCursor: string | null }
 /** Fixed provider query; no arbitrary URLs or API credentials cross the plugin boundary. */
 export interface TrendingQuery { kind: 'movie' | 'tv'; window: 'day' | 'week' }
 /** External identity is the tuple (provider, kind, id); id is opaque, never a MOA media ID. */
@@ -585,4 +604,15 @@ export interface TitlePeopleResponse extends TitlePeople {
 export interface PersonWorksResponse {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
   person: PersonCredit | null; items: DiscoveryItem[]; truncated: boolean;
+}
+
+/** Short-form discovery uses official trailers; never writes episode progress. */
+export interface ShortsItem {
+  key: string; kind: MetadataKind; tmdbId: number; title: string; category?: ShortsCategory;
+  poster?: string; overview?: string; year?: number;
+  mediaId?: string; href: string; reason: 'personal' | 'popular';
+}
+export interface ShortsFeed {
+  status: 'ready' | 'disabled' | 'restricted' | 'unconfigured' | 'unavailable';
+  items: ShortsItem[]; nextCursor: string | null;
 }

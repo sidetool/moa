@@ -243,6 +243,33 @@ Kids filtering applies. An empty page may have a nextCursor when filtered record
 If history changes during pagination, the server returns `history-changed`; restart pagination without the cursor.
 No history mutation API is exposed. A plugin with both history and external-network permissions can send records to its declared origins: only grant these permissions to trusted plugins. Revoking access cannot erase copies the plugin already stored.
 
+## Read-only watchlist (unreleased)
+
+Declare `watchlist.read` to call `await moa.watchlist.list({ limit: 50, cursor, since })`.
+This additive permission is independent of `history.read`; existing packages receive no additional access.
+The response is `{ revision, items, nextCursor }`. Each item contains only `mediaId`, `title`,
+`type`, `addedAt` and an optional confirmed `tmdb: { kind, id }`. No stream URLs, source metadata,
+credentials or other profiles are included. `since` filters the time the title was added.
+The server validates the installed package revision, permission, current profile ownership and PIN lock.
+Default page size is 50, maximum 100; ordering is added time descending, then media ID descending.
+Kids filtering can leave an empty page with a non-null `nextCursor`; continue using that cursor.
+A changed list, different profile or relevant policy/identity revision returns `watchlist-changed` (409);
+restart pagination without a cursor. The API provides no watchlist mutation.
+Both host routes `/api/plugin-runtime/:id/watchlist` and `/api/plugins/:id/watchlist`
+accept POST `{ revision, query? }`. The latter also requires admin access.
+A plugin granted external network access can send the returned records to its declared origins, just as
+with `history.read`. Installation must disclose both permissions. Removing a title from MOA cannot
+revoke data a plugin already saved or sent. This SDK is not available in the published beta yet;
+set `minMoaVersion` to the release that actually includes it when distributing a plugin.
+
+```js
+// The manifest must explicitly include watchlist.read.
+const page = await moa.watchlist.list({ limit: 50 });
+for (const title of page.items) {
+  // Use title.mediaId only for MOA navigation, and title.tmdb only as a TMDB identity.
+}
+```
+
 ## Trending discovery (unreleased)
 
 The `discovery.read` permission enables

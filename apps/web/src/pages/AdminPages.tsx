@@ -11,17 +11,19 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
 import { NetworkSettings } from "../components/NetworkSettings";
 import { TmdbSettings } from "../components/TmdbSettings";
+import { YouTubeSettings } from "../components/YouTubeSettings";
 import { TranslationSettings } from "../components/TranslationSettings";
 import { DownloadSettings } from "../components/DownloadSettings";
 import { recommendationsKey, useResetDismissals } from "../api/recommendations";
 import { UpdateSettings } from "../components/UpdateSettings";
 import { SystemInfo } from "../components/SystemInfo";
 import { SubtitleAdvancedSettings } from "../components/SubtitleAdvancedSettings";
+import { ShortsSettings } from "../components/ShortsSettings";
 import { translationModeOf, useTranslationConfig, type TranslationMode } from "../api/translation";
-import { keys, useFolders, useMe, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
+import { keys, useFolders, useMe, useProfiles, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
 import { AccountSection } from "./AccountsPage";
 import { Button, ConfirmDialog, EmptyState, IconButton, Select, Skeleton, Spinner, Toggle } from "../components/ui";
-import { api, hasLoginGate } from "../lib/api";
+import { api, currentProfileId, hasLoginGate } from "../lib/api";
 import { TYPE_LABEL, cx } from "../lib/format";
 
 function FolderPicker({ onPick, onClose }: { onPick: (path: string, type: MediaType, label: string) => void; onClose: () => void }) {
@@ -172,6 +174,7 @@ export function SettingsPage() {
   const settings = useSettings();
   const client = useQueryClient();
   const admin = useMe().data?.role === "admin";
+  const kids = useProfiles().data?.find(item => item.id === currentProfileId())?.kids === true;
   const translation = useTranslationConfig().data;
   const { pathname, hash } = useLocation();
   // Grouped by where a choice applies: the profile, this device only, or the whole server.
@@ -181,12 +184,12 @@ export function SettingsPage() {
     { value: "tabs", label: "홈 화면", group: "프로필", icon: <LayoutGrid size={18} />, scope: "이 프로필의 모든 기기에 적용돼요." },
     ...(hasLoginGate ? [{ value: "account", label: "내 계정", group: "프로필", icon: <UserRound size={18} />, scope: "로그인한 계정에 적용돼요." }] : []),
     { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "리모컨·키보드·터치로 다루는 방식이에요. 이 브라우저에만 저장돼요." },
-    { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "이 브라우저에만 저장돼요. 동작이 바뀌거나 없어질 수 있어요." },
+    { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "동작이 바뀌거나 없어질 수 있어요." },
     ...(admin ? [
       { value: "library", label: "소스와 라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "plugins", label: "플러그인", group: "서버 관리", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "translation", label: "번역 서비스", group: "서버 관리", icon: <Languages size={18} />, scope: "모든 프로필의 AI 자막 번역에 쓰여요." },
-      { value: "downloads", label: "서버 저장", group: "서버 관리", icon: <HardDriveDownload size={18} />, scope: "소스 영상을 서버에 저장해요. 저장·삭제는 관리자만, 재생은 볼 수 있는 모든 프로필이 할 수 있어요." },
+      { value: "downloads", label: "서버 다운로드", group: "서버 관리", icon: <HardDriveDownload size={18} />, scope: "소스 영상을 서버에 받아 둬요. 켜기·다운로드·삭제는 관리자만, 재생은 볼 수 있는 모든 프로필이 할 수 있어요." },
       { value: "network", label: "네트워크", group: "서버 관리", icon: <Network size={18} />, scope: "모든 프로필에 적용돼요." }
     ] : []),
     { value: "about", label: "정보", group: "", icon: <Info size={18} />, scope: "버전, 업데이트와 크레딧" }
@@ -270,7 +273,8 @@ export function SettingsPage() {
       {admin && category === "subtitles" && <section className="settings-group"><h2>보관함 · 관리자</h2><div className="settings-card">
         {link("/subtitles", <FolderOpen size={20} />, "저장한 자막", "AI 번역·온라인·직접 가져온 자막 파일을 모든 프로필에서 관리")}
       </div></section>}
-      {category === "experimental" && <section className="settings-group"><div className="settings-card">
+      {category === "experimental" && <ShortsSettings settings={s} kids={kids} save={patch => void save(patch)} />}
+      {category === "experimental" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
         {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}
         {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />)}
       </div></section>}
@@ -282,6 +286,7 @@ export function SettingsPage() {
           {link("/sources", <Tv size={20} />, "영상 소스", "확장 저장소, 소스 설치·업데이트·설정")}
           {link("/library", <FolderOpen size={20} />, "로컬 라이브러리", "영상 폴더 추가와 스캔")}
           <TmdbSettings />
+          <YouTubeSettings />
         </div>
         <p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
       </section>}
@@ -303,7 +308,7 @@ function RecommendationSettings({ enabled, onChange }: { enabled: boolean; onCha
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const run = async () => { setState("busy"); try { await reset(); setState("done"); } catch { setState("error"); } };
   return <section className="settings-group"><h2>추천</h2><div className="settings-card">
-    <div className="setting"><div><b>시청 기록 기반 추천</b><small>홈에 이 프로필의 시청 기록과 비슷한 작품을 보여줘요. 시청 기록은 외부로 보내지 않아요.</small></div><Toggle label="시청 기록 기반 추천" checked={enabled} onChange={onChange} /></div>
+    <div className="setting"><div><b>취향 기반 추천</b><small>홈에 시청 기록과 내 목록을 바탕으로 작품을 추천해요.</small></div><Toggle label="취향 기반 추천" checked={enabled} onChange={onChange} /></div>
     <div className="setting"><div><b>숨긴 추천 초기화</b><small>{state === "done" ? "숨긴 작품이 다시 추천될 수 있어요." : state === "error" ? <span className="settings-error">초기화하지 못했어요. 다시 시도해 주세요.</span> : "‘관심 없음’으로 숨긴 작품을 다시 추천 후보에 넣어요."}</small></div><Button disabled={state === "busy" || state === "done"} onClick={() => void run()}>{state === "busy" ? "초기화 중…" : state === "done" ? "초기화됨" : "초기화"}</Button></div>
   </div></section>;
 }

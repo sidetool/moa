@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DownloadChoice, DownloadJob, DownloadState, DownloadStatus, EpisodeDownloadStatus } from "@moa/shared";
+import type { InfiniteData } from "@tanstack/react-query";
+import type { DownloadJob, DownloadQuality, DownloadState, DownloadStatus, EpisodeDownloadStatus } from "@moa/shared";
 import { api, ApiError } from "../lib/api";
 
 export const downloadKeys = {
@@ -11,9 +12,12 @@ export const downloadKeys = {
 export const ACTIVE_DOWNLOAD: DownloadState[] = ["queued", "resolving", "downloading", "finalizing"];
 export const RETRYABLE_DOWNLOAD: DownloadState[] = ["failed", "cancelled", "interrupted"];
 export const DOWNLOAD_STATE_LABEL: Record<DownloadState, string> = {
-  queued: "대기 중", resolving: "영상 확인 중", downloading: "저장 중", finalizing: "마무리 중",
-  ready: "저장됨", failed: "실패", cancelled: "취소됨", interrupted: "중단됨"
+  queued: "대기 중", resolving: "영상 확인 중", downloading: "다운로드 중", finalizing: "마무리 중",
+  ready: "다운로드됨", failed: "실패", cancelled: "취소됨", interrupted: "중단됨"
 };
+export const DOWNLOAD_QUALITY_OPTIONS: { value: DownloadQuality; label: string }[] = [
+  { value: "best", label: "최고 화질" }, { value: "1080p", label: "1080p" }, { value: "720p", label: "720p" }, { value: "480p", label: "480p" }
+];
 export const GIB = 1024 ** 3;
 
 const DOWNLOAD_ERROR_TEXT: Record<string, string> = {
@@ -21,9 +25,9 @@ const DOWNLOAD_ERROR_TEXT: Record<string, string> = {
   "download-quota-exceeded": "저장 한도를 넘어요. 한도를 늘리거나 저장본을 정리해 주세요.",
   "download-space-low": "서버 디스크 여유 공간이 부족해요.",
   "download-auth-expired": "소스 인증이 만료됐어요. 다시 시도하면 영상 주소를 새로 받아요.",
-  "download-selection-changed": "소스의 영상 목록이 바뀌었어요. 다시 골라 주세요.",
+  "download-selection-changed": "소스의 영상 목록이 바뀌었어요. 다시 시도해 주세요.",
   "download-file-missing": "저장 파일을 찾을 수 없어요.",
-  "download-disabled": "서버에서 새 영상 저장을 꺼 두었어요. 저장본은 계속 볼 수 있어요.",
+  "download-disabled": "다운로드가 꺼져 있어 멈췄어요. 저장본은 계속 볼 수 있어요.",
   "download-quota-unconfigured": "저장 한도를 먼저 설정해 주세요.",
   "download-storage-unconfigured": "서버에 저장 폴더가 설정되지 않았어요.",
   "download-storage-overlap": "저장 폴더는 미디어·데이터 폴더와 분리해 주세요.",
@@ -35,6 +39,11 @@ const DOWNLOAD_ERROR_TEXT: Record<string, string> = {
   "download-stream-unsupported": "이 영상 형식은 저장을 지원하지 않아요. 재생은 그대로 할 수 있어요.",
   "download-hls-unsupported": "이 HLS 스트림은 저장을 지원하지 않아요. 재생은 그대로 할 수 있어요.",
   "download-duration-mismatch": "받은 영상 길이가 맞지 않아 저장하지 않았어요.",
+  "download-selection-expired": "영상 정보가 오래돼 다시 받아야 해요. 다시 시도해 주세요.",
+  "download-already-exists": "이 회차는 이미 다운로드 중이거나 받아 두었어요.",
+  "download-queue-full": "대기 중인 다운로드가 많아요. 몇 개 끝난 뒤 다시 시도해 주세요.",
+  "download-paused": "서버가 업데이트·정리 중이에요. 잠시 뒤 다시 시도해 주세요.",
+  "download-quota-in-use": "이미 받은 용량보다 작게 하거나 다운로드 중에는 한도를 바꿀 수 없어요.",
   "download-failed": "저장하지 못했어요."
 };
 /** Server error codes as short Korean; unknown codes get a generic line instead of the raw code. */
@@ -58,7 +67,7 @@ export function useDownloadStatus(enabled = true, mediaId?: string, loadAll = fa
     getNextPageParam: last => last.nextCursor || undefined,
     enabled,
     retry: false,
-    refetchInterval: query => query.state.data?.pages.some(page => page.jobs.some(job => ACTIVE_DOWNLOAD.includes(job.state))) ? 2000 : false
+    refetchInterval: query => query.state.data?.pages.some(page => (page.activeJobs ?? 0) > 0 || page.jobs.some(job => ACTIVE_DOWNLOAD.includes(job.state))) ? 2000 : false
   });
   const pages = query.data?.pages;
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
@@ -96,9 +105,6 @@ export function jobsByEpisode(jobs: DownloadJob[] = []) {
 
 export const downloadRatio = (job: DownloadJob) => job.totalBytes ? Math.min(1, job.bytes / job.totalBytes) : null;
 
-export const fetchDownloadChoices = (episodeId: string, signal?: AbortSignal) =>
-  api<{ choices: DownloadChoice[]; selectionToken: string }>(`/admin/downloads/choices?episodeId=${encodeURIComponent(episodeId)}`, { signal });
-
 export type RemoveResult = { removed: DownloadJob[]; failed: Array<{ job: DownloadJob; inUse: boolean }> };
 
 /** Deletes one at a time so each saved copy keeps the server's in-use protection; failures stay listed. */
@@ -130,11 +136,24 @@ export function useDownloadActions() {
     if (episodeId) void client.invalidateQueries({ queryKey: downloadKeys.episode(episodeId) });
   };
   const run = async <T,>(promise: Promise<T>, episodeId?: string) => { try { return await promise; } finally { refresh(episodeId); } };
+  // Puts a fresh job into every loaded list right away, so the row never flashes back to "download" before the refetch.
+  // Only the all-titles list and this title's list; other titles' lists must not gain foreign rows.
+  const upsert = (job: DownloadJob) => client.setQueriesData<InfiniteData<DownloadStatus>>({ queryKey: downloadKeys.admin, predicate: query => ["all", job.mediaId].includes(String(query.queryKey[1])) }, data => {
+    if (!data?.pages.length) return data;
+    const [first, ...rest] = data.pages;
+    return { ...data, pages: [{ ...first, jobs: [job, ...first.jobs.filter(item => item.id !== job.id)] }, ...rest] };
+  });
   return {
-    start: (episodeId: string, selectionToken: string, choiceId: string) => run(api<DownloadJob>("/admin/downloads", { method: "POST", body: { episodeId, selectionToken, choiceId } }), episodeId),
+    /** One tap: the server picks the source and quality from the saved preference. */
+    enqueue: (episodeId: string) => run(api<DownloadJob>("/admin/downloads", { method: "POST", body: { episodeId } }).then(job => { upsert(job); return job; }), episodeId),
     cancel: (job: DownloadJob) => run(api<DownloadJob>(`/admin/downloads/${encodeURIComponent(job.id)}/cancel`, { method: "POST" }), job.episodeId),
     retry: (job: DownloadJob) => run(api<DownloadJob>(`/admin/downloads/${encodeURIComponent(job.id)}/retry`, { method: "POST" }), job.episodeId),
     remove: (job: DownloadJob) => run(api<void>(`/admin/downloads/${encodeURIComponent(job.id)}`, { method: "DELETE" }), job.episodeId),
-    setQuota: (quotaBytes: number) => run(api<DownloadStatus>("/admin/downloads/config", { method: "PUT", body: { quotaBytes } }))
+    // Copies the new switches into every cached list (incl. inactive title pages) so OFF hides their buttons without a stale flash.
+    configure: (patch: { enabled?: boolean; quality?: DownloadQuality; quotaBytes?: number }) => run(api<DownloadStatus>("/admin/downloads/config", { method: "PUT", body: patch }).then(status => {
+      const { jobs: _jobs, totalJobs: _total, nextCursor: _cursor, ...summary } = status;
+      client.setQueriesData<InfiniteData<DownloadStatus>>({ queryKey: downloadKeys.admin }, data => data && { ...data, pages: data.pages.map(page => ({ ...page, ...summary })) });
+      return status;
+    }))
   };
 }

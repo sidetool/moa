@@ -1,6 +1,6 @@
 // Development-only API stand-in (VITE_MOCK=1). It answers the same contract
 // as apps/server so screens can be built before the server lands.
-import type { DownloadJob, DownloadStatus, RecommendationItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
+import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, ShortsItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
@@ -42,7 +42,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
+let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */
@@ -100,6 +100,28 @@ function history(): HistoryEntry[] {
   });
 }
 
+/* Placeholder trailer keys (valid shape, not real videos). A fake IFrame API in the smoke test reads the prefix:
+   `ok` plays, `e101`/`e150` are per-video errors, `rgn` stands for a region-blocked video, `e153` an embedder-identity error, `blk` blocks autoplay.
+   demo-2 also carries a duplicate and an invalid key to exercise client-side cleanup. */
+const mockTrailers: Record<string, Pick<MediaDetail, "trailer" | "trailers">> = {
+  "demo-2": { trailers: ["e101xxxxxxx", "okxxxxxxxxx", "e101xxxxxxx", "bad key"], trailer: "okxxxxxxxxx" },
+  "demo-6": { trailers: ["e101yyyyyyy", "e150yyyyyyy"] },
+  "lalaland": { trailers: ["rgnzzzzzzzz"], trailer: "okzzzzzzzzz" },
+  "oshi": { trailers: ["e153zzzzzzz", "okyyyyyyyyy"] },
+  "demo-1": { trailers: ["blkzzzzzzzz"] }
+};
+
+/* Optional YouTube precheck. With a saved key, `e101`/`e150` keys count as embedding-disabled (dropped) and
+   `rgn` keys as region-blocked (moved to the end). `moa.mockTrailerPreflight=error|slow` previews failures. */
+let youtubeConfig = { configured: false, source: "none" as "environment" | "database" | "none", hasSavedCredential: false, regionCode: "KR" };
+function trailerPreflight(id: string) {
+  const d = mockTrailers[id] ?? {};
+  const keys = [...new Set([...(d.trailers ?? []), d.trailer].filter((key): key is string => typeof key === "string" && /^[A-Za-z0-9_-]{11}$/.test(key)))].slice(0, 5);
+  if (!youtubeConfig.configured) return { trailers: keys, checked: false };
+  const usable = keys.filter(key => !/^e1(01|50)/.test(key));
+  return { trailers: [...usable.filter(key => !key.startsWith("rgn")), ...usable.filter(key => key.startsWith("rgn"))], checked: true };
+}
+
 function detail(id: string): MediaDetail | null {
   const card = byId.get(id);
   if (!card) return null;
@@ -111,6 +133,7 @@ function detail(id: string): MediaDetail | null {
       ...withProgress(card), inWatchlist: watchlist.has(id),
       overview: "연예계의 빛과 그림자를 배경으로, 쌍둥이 남매가 어머니의 죽음에 얽힌 진실을 좇는다. 2.5차원 무대를 둘러싼 새로운 이야기가 시작된다.",
       rating: 8.6, cast: ["타카하시 리에", "오오츠카 유이"],
+      ...mockTrailers[id],
       seasons: [{ number: 2, title: "시즌 2", episodes }],
       playTarget,
       fileInfo: { container: "MKV", video: "HEVC 10bit", audio: "AAC 2.0", resolution: "1080p", size: 5_300_000_000 }
@@ -121,6 +144,7 @@ function detail(id: string): MediaDetail | null {
     ...withProgress(card), inWatchlist: watchlist.has(id),
     overview: movie ? "꿈을 좇는 두 사람이 로스앤젤레스에서 만나 사랑에 빠지지만, 성공이 가까워질수록 서로의 길이 엇갈리기 시작한다." : undefined,
     runtime: movie ? 7680 : undefined, rating: movie ? 8.0 : undefined,
+    ...mockTrailers[id],
     seasons: [{ number: 1, title: movie ? "영화" : "시즌 1", episodes }],
     playTarget,
     fileInfo: id === "lalaland" ? { container: "MKV", video: "HEVC 10bit", audio: "E-AC3 5.1", resolution: "1080p", size: 2_800_000_000 } : undefined
@@ -315,9 +339,12 @@ const recommendations: RecommendationItem[] = [
 ];
 const dismissed = new Set<string>();
 
-/* Server saves: `moa.mockDownloads=off` previews the unconfigured state. Progress advances with time. */
+/* Server saves: `moa.mockDownloads=off` previews missing storage, `moa.mockDownloadsAllowed=0` the env block.
+   Downloads start OFF like a fresh server. Progress advances with time; even episode numbers act like HLS (no total size). */
 const GiB = 1024 ** 3;
 let downloadQuota = 50 * GiB;
+let downloadEnabled = localStorage.getItem("moa.mockDownloadsEnabled") === "1";
+let downloadQuality: DownloadQuality = "1080p";
 const downloadJobs: DownloadJob[] = [
   { id: "dl-1", episodeId: "demo-1-e1", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "1화", state: "ready", bytes: 1.4 * GiB, totalBytes: 1.4 * GiB, error: "download-subtitles-incomplete", createdAt: ago(86_400_000), updatedAt: ago(86_000_000), quality: "1080p" },
   { id: "dl-2", episodeId: "demo-1-e3", mediaId: "demo-1", title: "밤의 도시를 걷다", episodeTitle: "3화", state: "failed", bytes: 0, totalBytes: null, error: "download-auth-expired", createdAt: ago(7_200_000), updatedAt: ago(7_000_000), quality: "720p" }
@@ -332,13 +359,15 @@ if (localStorage.getItem("moa.mockManyDownloads") === "1") {
   downloadJobs.push(...many("long-a", "긴 연재 시리즈 (예시)", 48, 20_000_000), ...many("long-b", "두 번째 예시 시리즈", 14, 40_000_000), ...many("demo-3", "스테이지 뒤편", 3, 60_000_000));
 }
 const downloadStarted = new Map<string, number>();
+const hlsDownloads = new Set<string>(); // total size stays unknown; only bytes grow
 function tickDownloads() {
   for (const job of downloadJobs) {
     const started = downloadStarted.get(job.id);
     if (started === undefined || !["queued", "resolving", "downloading", "finalizing"].includes(job.state)) continue;
     const t = (Date.now() - started) / 1000, total = job.totalBytes ?? 0.9 * GiB;
     job.state = t < 2 ? "queued" : t < 4 ? "resolving" : t < 16 ? "downloading" : t < 18 ? "finalizing" : "ready";
-    job.totalBytes = t < 4 ? null : total;
+    const hls = hlsDownloads.has(job.id);
+    job.totalBytes = t < 4 || (hls && job.state !== "ready") ? null : total;
     job.bytes = job.state === "downloading" ? Math.round(total * (t - 4) / 12) : job.state === "queued" || job.state === "resolving" ? 0 : total;
     job.updatedAt = new Date().toISOString();
   }
@@ -351,13 +380,26 @@ function downloadStatus(cursor = "", mediaId = ""): DownloadStatus {
   const [at, id] = cursor ? JSON.parse(atob(cursor)) as [string, string] : [];
   const rest = at ? sorted.filter(job => job.createdAt < at || (job.createdAt === at && job.id < id!)) : sorted;
   const page = rest.slice(0, size), last = page.at(-1);
-  return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
+  return { ...downloadSummary(), jobs: page.map(job => ({ ...job })), totalJobs: sorted.length, activeJobs: downloadJobs.filter(job => ["queued", "resolving", "downloading", "finalizing"].includes(job.state)).length, nextCursor: rest.length > size && last ? btoa(JSON.stringify([last.createdAt, last.id])) : null };
 }
 function downloadSummary() {
-  const off = localStorage.getItem("moa.mockDownloads") === "off";
-  return { configured: !off, reason: off ? "저장 폴더(/downloads)가 연결되지 않았어요. 설치 안내에 따라 볼륨을 추가한 뒤 다시 시작해 주세요." : null, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0) };
+  const storageReady = localStorage.getItem("moa.mockDownloads") !== "off", allowed = localStorage.getItem("moa.mockDownloadsAllowed") !== "0";
+  const reason = !storageReady ? "download-storage-unconfigured" : !allowed || !downloadEnabled ? "download-disabled" : downloadQuota <= 0 ? "download-quota-unconfigured" : null;
+  return { enabled: downloadEnabled, allowed, storageReady, quality: downloadQuality, configured: !reason, reason, quotaBytes: downloadQuota, usedBytes: downloadJobs.filter(job => job.state === "ready").reduce((sum, job) => sum + (job.totalBytes ?? 0), 0) };
 }
 const savedEpisode = (episodeId: string) => { tickDownloads(); return downloadJobs.some(job => job.episodeId === episodeId && job.state === "ready"); };
+
+// Trailer feed stand-in. Video ids are placeholders; a real browser needs network access to play them.
+const mockShorts: ShortsItem[] = [
+  { key: "movie:101", kind: "movie", tmdbId: 101, title: "라라랜드", category: "movie", year: 2016, overview: "꿈을 좇는 두 사람의 이야기.", poster: img("lalaland-a"), mediaId: "lalaland", href: "/title/lalaland", reason: "personal" },
+  { key: "tv:201", kind: "tv", tmdbId: 201, title: "예제 시리즈 2기", category: "anime", year: 2024, poster: img("oshi-3"), mediaId: "oshi", href: "/title/oshi", reason: "personal" },
+  { key: "tv:202", kind: "tv", tmdbId: 202, title: "레드 카펫", category: "series", year: 2020, overview: "무대 뒤의 사람들.", href: "/search?q=%EB%A0%88%EB%93%9C%20%EC%B9%B4%ED%8E%AB", reason: "popular" },
+  { key: "movie:102", kind: "movie", tmdbId: 102, title: "그 겨울", category: "movie", year: 2021, href: "/search?q=%EA%B7%B8%20%EA%B2%A8%EC%9A%B8", reason: "popular" },
+  { key: "tv:203", kind: "tv", tmdbId: 203, title: "작은 무대", category: "anime", year: 2025, href: "/search?q=%EC%9E%91%EC%9D%80%20%EB%AC%B4%EB%8C%80", reason: "popular" },
+  { key: "tv:204", kind: "tv", tmdbId: 204, title: "밤의 도시를 걷다", category: "series", year: 2025, href: "/search?q=%EB%B0%A4", reason: "popular" }
+];
+const shortsTrailerKeys: Record<string, string[]> = { "movie:101": ["aaaaaaaaaa1", "aaaaaaaaaa2"], "tv:201": ["bbbbbbbbbb1"], "tv:202": ["cccccccccc1"], "movie:102": [], "tv:203": ["dddddddddd1"], "tv:204": ["eeeeeeeeee1"] };
+const shortsSeen = new Set<string>();
 
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -419,6 +461,22 @@ export function installMockApi() {
     const selectedProfile = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get('X-Moa-Profile');
     if (selectedProfile && profilePins.has(selectedProfile) && unlockedProfile !== selectedProfile) return json({ error: 'profile-locked' }, 401);
     if (path === "/home") return json(home(url.searchParams.get("type") ?? undefined));
+    const trailerCheck = /^\/media\/([^/]+)\/trailers$/.exec(path);
+    if (trailerCheck) {
+      (window as { __mockTrailerChecks?: number }).__mockTrailerChecks = ((window as { __mockTrailerChecks?: number }).__mockTrailerChecks ?? 0) + 1;
+      const mode = localStorage.getItem("moa.mockTrailerPreflight");
+      if (mode === "error") return json({ error: "youtube-unavailable" }, 503);
+      await delay(mode === "slow" ? 8000 : 400);
+      return json(trailerPreflight(decodeURIComponent(trailerCheck[1])));
+    }
+    if (path === "/admin/youtube/config") {
+      if (method === "PATCH") {
+        if (typeof body.regionCode === "string") { if (!/^[A-Z]{2}$/.test(body.regionCode)) return json({ error: "youtube-region-invalid" }, 400); youtubeConfig = { ...youtubeConfig, regionCode: body.regionCode }; }
+        if (body.clear === true) youtubeConfig = { ...youtubeConfig, configured: false, source: "none", hasSavedCredential: false };
+        else if (typeof body.apiKey === "string") { if (body.apiKey.trim().length < 20) return json({ error: "youtube-key-invalid" }, 400); youtubeConfig = { ...youtubeConfig, configured: true, source: "database", hasSavedCredential: true }; }
+      }
+      return json(youtubeConfig);
+    }
     if (path.startsWith("/media/")) { const d = detail(decodeURIComponent(path.slice(7))); return d ? json(d) : json({ error: "not-found" }, 404); }
     if (path === "/media") { const type = url.searchParams.get("type"); const items = cards.filter(card => !type || card.type === type); return json({ items, page: 1, hasNextPage: false, total: items.length }); }
     if (path === "/genres") return json(["드라마", "로맨스", "뮤지컬", "미스터리", "음악", "코미디", "스릴러"]);
@@ -568,17 +626,37 @@ export function installMockApi() {
     if (episodeDownload) { const id = decodeURIComponent(episodeDownload[1]), job = downloadJobs.find(item => item.episodeId === id && item.state === "ready"); return json({ saved: Boolean(job), ...(job ? { job } : {}) }); }
     if (path.startsWith("/admin/downloads") && localStorage.getItem("moa.mockRole") === "member") return json({ error: "admin-required" }, 403);
     if (path === "/admin/downloads" && method === "GET") return json(downloadStatus(url.searchParams.get("cursor") ?? "", url.searchParams.get("mediaId") ?? ""));
-    if (path === "/admin/downloads/config" && method === "PUT") { if (!Number.isSafeInteger(body.quotaBytes) || body.quotaBytes <= 0) return json({ error: "invalid-request" }, 400); downloadQuota = body.quotaBytes; return json(downloadStatus()); }
+    if (path === "/admin/downloads/config" && method === "PUT") {
+      const keys = Object.keys(body ?? {});
+      if (!keys.length || keys.some(key => !["enabled", "quality", "quotaBytes"].includes(key)) || (body.enabled !== undefined && typeof body.enabled !== "boolean")
+        || (body.quality !== undefined && !["best", "1080p", "720p", "480p"].includes(body.quality)) || (body.quotaBytes !== undefined && (!Number.isSafeInteger(body.quotaBytes) || body.quotaBytes <= 0))) return json({ error: "download-config-invalid" }, 400);
+      const summary = downloadSummary();
+      if (body.enabled === true && !summary.allowed) return json({ error: "download-disabled" }, 503);
+      if (body.enabled === true && !summary.storageReady) return json({ error: "download-storage-unconfigured" }, 503);
+      if (body.enabled === true && !(body.quotaBytes ?? downloadQuota)) return json({ error: "download-quota-unconfigured" }, 503);
+      await delay(300);
+      if (body.quotaBytes !== undefined) downloadQuota = body.quotaBytes;
+      if (body.quality !== undefined) downloadQuality = body.quality;
+      if (body.enabled !== undefined) downloadEnabled = body.enabled;
+      if (body.enabled === false) for (const job of downloadJobs) if (["queued", "resolving", "downloading", "finalizing"].includes(job.state)) {
+        tickDownloads(); downloadStarted.delete(job.id); job.state = "interrupted"; job.error = "download-disabled"; job.updatedAt = new Date().toISOString();
+      }
+      return json(downloadStatus());
+    }
     if (path === "/admin/downloads/choices") {
       const id = url.searchParams.get("episodeId") ?? "";
       return json({ selectionToken: `sel-${Date.now()}`, choices: id.startsWith("demo-4") ? [] : [{ id: "c-1080", label: "1080p · 서버 A" }, { id: "c-720", label: "720p · 서버 A" }, { id: "c-720b", label: "720p · 서버 B (자막 포함)" }] });
     }
     if (path === "/admin/downloads" && method === "POST") {
       tickDownloads();
-      if (downloadJobs.some(job => job.episodeId === body.episodeId && !["failed", "cancelled", "interrupted"].includes(job.state))) return json({ error: "download-exists" }, 409);
+      if (!downloadSummary().configured) return json({ error: "download-disabled" }, 503);
+      if (downloadJobs.some(job => job.episodeId === body.episodeId && !["failed", "cancelled", "interrupted"].includes(job.state))) return json({ error: "download-already-exists" }, 409);
+      if (String(body.episodeId).startsWith("demo-4")) return json({ error: "download-stream-unsupported" }, 422);
+      await delay(700); // lets the tap's pending state show
       const episode = byId.get(String(body.episodeId).replace(/-(m|e\d+)$/, "")) ?? (String(body.episodeId).startsWith("oshi") ? byId.get("oshi") : undefined);
-      const job: DownloadJob = { id: `dl-${Date.now()}`, episodeId: body.episodeId, mediaId: episode?.id ?? "", title: episode?.title ?? "작품", episodeTitle: episode?.type === "movie" ? "" : `${/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1}화`, state: "queued", bytes: 0, totalBytes: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), quality: body.choiceId === "c-1080" ? "1080p" : "720p" };
+      const job: DownloadJob = { id: `dl-${Date.now()}`, episodeId: body.episodeId, mediaId: episode?.id ?? "", title: episode?.title ?? "작품", episodeTitle: episode?.type === "movie" ? "" : `${/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1}화`, state: "queued", bytes: 0, totalBytes: null, error: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), quality: body.choiceId ? (body.choiceId === "c-1080" ? "1080p" : "720p") : downloadQuality === "best" || downloadQuality === "1080p" ? "1080p" : "720p" };
       downloadJobs.unshift(job); downloadStarted.set(job.id, Date.now());
+      if (Number(/e(\d+)$/.exec(body.episodeId)?.[1] ?? 1) % 2 === 0) hlsDownloads.add(job.id);
       return json(job, 201);
     }
     const downloadAction = /^\/admin\/downloads\/([^/]+)(?:\/(cancel|retry))?$/.exec(path);
@@ -587,9 +665,25 @@ export function installMockApi() {
       if (!job) return json({ error: "not-found" }, 404);
       if (method === "DELETE") { if ((localStorage.getItem("moa.mockDownloadInUse") ?? "").split(",").includes(job.id)) return json({ error: "download-in-use" }, 409); downloadJobs.splice(downloadJobs.indexOf(job), 1); return json(null, 204); }
       if (downloadAction[2] === "cancel") { downloadStarted.delete(job.id); job.state = "cancelled"; job.bytes = 0; }
-      if (downloadAction[2] === "retry") { job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
+      if (downloadAction[2] === "retry") { if (!downloadSummary().configured) return json({ error: "download-disabled" }, 503); job.state = "queued"; job.error = null; downloadStarted.set(job.id, Date.now()); }
       job.updatedAt = new Date().toISOString();
       return json({ ...job });
+    }
+    if (path === "/shorts" && method === "GET") {
+      if (!settings.shortsEnabled) return json({ status: "disabled", items: [], nextCursor: null });
+      const picked = settings.shortsCategories ?? ["movie", "series", "anime"], replay = url.searchParams.get("replay") === "1";
+      const hide = !replay && settings.shortsRepeatDays !== 0;
+      // Like the server, the cursor walks the unfiltered pool so a fresh view never shifts later pages.
+      const pool = mockShorts.filter(item => picked.includes(item.category!));
+      const start = Number(url.searchParams.get("cursor") ?? 0), end = start + 4;
+      return json({ status: "ready", items: pool.slice(start, end).filter(item => !hide || !shortsSeen.has(item.key)), nextCursor: end < pool.length ? String(end) : null });
+    }
+    if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); return json({ ok: true }); }
+    const short = /^\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
+    if (short) {
+      const key = decodeURIComponent(short[1]);
+      if (short[2] !== "trailers") { if (method !== "POST") return json({ error: "not-found" }, 404); shortsSeen.add(key); return json({ ok: true }); }
+      return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
     }
     if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);

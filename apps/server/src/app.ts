@@ -37,6 +37,9 @@ import { randomUUID } from 'node:crypto';
 import { OnlineSubtitles, type OnlineClient } from './online.js';
 import { Enrichment, type EnrichmentOptions } from './enrichment.js';
 import { Tmdb } from './tmdb.js';
+import { Shorts } from './shorts.js';
+import { NativeShorts, ytDlpExtractor } from './shorts-native.js';
+import { YouTubeTrailers } from './youtube-trailers.js';
 import { ProfilePins, hashPin } from './profile-pin.js';
 
 declare module 'fastify' { interface FastifyRequest { moaProfile?: string; moaAccount: Account } }
@@ -48,7 +51,7 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 const profileFields = { pin: { type: ['string', 'null'], pattern: '^[0-9]{4,8}$' }, avatar: { type: ['string', 'null'], pattern: '^[a-z]+-[0-9]{1,2}$', maxLength: 64 }, name: { ...string, pattern: '\\S' }, color: { type: 'string', enum: COLORS }, kids: { type: 'boolean' } };
 const filterChange = object({ position: { type: 'integer', minimum: 0, maximum: 511 }, groupPosition: { type: 'integer', minimum: 0, maximum: 511 }, value: { type:['string','number','boolean','object'], maxLength:2000, additionalProperties:false, properties:{index:{type:'integer',minimum:0},ascending:{type:'boolean'}}, required:['index','ascending'] } }, ['position','value']);
 const browseSelection = object({ revision: {type:'string',maxLength:80}, filters: {type:'array',maxItems:512,items:filterChange} }, ['revision','filters']);
-const settingsFields = { recommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
+const settingsFields = { shortsQuality: {type:'string',enum:['auto','360p','480p','720p']}, shortsPlayback: {type:'string',enum:['embed','native']}, shortsCategories: {type:'array',minItems:1,maxItems:3,uniqueItems:true,items:{type:'string',enum:['movie','series','anime']}}, shortsEnabled: {type:'boolean'}, shortsScreenFit: {type:'boolean'}, shortsMode: {type:'string',enum:['mixed','personal','popular']}, shortsHideWatched: {type:'boolean'}, shortsRepeatDays: {type:'integer',enum:[0,1,7,30]}, recommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
 const validateNavigation = (tabs: NavigationTab[] | null | undefined) => {
   if (tabs && (tabs[0]?.id !== 'home' || new Set(tabs.map(t => t.id)).size !== tabs.length)) throw new ApiFailure(400, 'invalid-navigation');
 };
@@ -72,7 +75,7 @@ export async function sendFile(reply: FastifyReply, file: string, mime: string, 
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
   return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
 }
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -98,6 +101,8 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const imageCache = new ImageCache(path.join(cfg.dataDir,'images'),undefined,Date.now,()=>app.log.warn({event:'image-cache-io-error'}));
   const cacheStatsTimer = setInterval(()=>app.log.info({event:'cache-stats',...sources.stats.snapshot()}),5*60_000); cacheStatsTimer.unref();
   const tmdb = new Tmdb(db, value => app.log.info(value), services.tmdb);
+  const youtube = new YouTubeTrailers(db, services.youtube);
+  const nativeShorts = new NativeShorts(cfg.shortsExtractor ? ytDlpExtractor(cfg.shortsExtractor) : undefined);
   catalog.metadata = tmdb.enabled;
   const recommendations = new Recommendations(db, tmdb);
   const groups = new TitleGroups(catalog);
@@ -117,7 +122,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   await downloads.initialize();
   const casting = new Casting(db, (id, profile) => remotePlayback.sessions.has(id) ? remotePlayback.get(id, profile) : playback.get(id, profile));
   const updateMaintenance = new UpdateMaintenance(process.env.MOA_UPDATER_DIR, () =>
-    downloads.busy || playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
+    nativeShorts.busy || downloads.busy || playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
     Boolean(db.get("SELECT 1 FROM skip_analysis_jobs WHERE status='running' LIMIT 1")));
   updateMaintenance.register(app);
   /** Give TMDB a moment to link new titles so first visits already show its artwork. */
@@ -177,7 +182,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     }
     if (sessionAsset) {
       const sessionId = params(req).sessionId;
-      const owner = playback.sessions.get(sessionId)?.profile ?? remotePlayback.sessions.get(sessionId)?.profile ?? online.assetProfile(sessionId) ?? translations.assetProfile(sessionId) ?? subtitleLibrary.assetProfile(sessionId);
+      const owner = playback.sessions.get(sessionId)?.profile ?? remotePlayback.sessions.get(sessionId)?.profile ?? online.assetProfile(sessionId) ?? translations.assetProfile(sessionId) ?? subtitleLibrary.assetProfile(sessionId) ?? nativeShorts.owner(sessionId);
       if (owner && !db.get('SELECT 1 FROM profiles WHERE id=? AND account_id=?', owner, req.moaAccount.id)) throw new ApiFailure(403, 'session-account-mismatch');
       if (owner) pins.assert(owner, req);
     }
@@ -186,11 +191,86 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
   app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
   app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb), new PluginPeople(db, tmdb));
+  const discovery = new PluginDiscovery(db, tmdb);
+  const shorts = new Shorts(db, tmdb, recommendations, youtube);
+  app.get('/api/shorts', {schema:{querystring:object({cursor:{type:'string',pattern:'^[0-9]{1,3}$'},replay:{type:'string',enum:['1']}})}}, async (req, reply) =>
+    reply.header('Cache-Control','private, no-store').send(await shorts.feed(profile(req),query(req).cursor,query(req).replay==='1')));
+  const shortsKey = object({key:{type:'string',pattern:'^(tv|movie):[1-9][0-9]{0,14}$'}},['key']);
+  app.get('/api/shorts/:key/trailers', {schema:{params:shortsKey}}, async (req,reply) =>
+    reply.header('Cache-Control','private, no-store').send(await shorts.trailers(profile(req),(req.params as {key:string}).key)));
+  app.get('/api/shorts/native',async (_req,reply)=>reply.header('Cache-Control','private, no-store').send({available:nativeShorts.available}));
+  app.post('/api/shorts/:key/native',{schema:{params:shortsKey,body:object({})}},async(req,reply)=>{
+    const owner=profile(req),abort=new AbortController();
+    if(!req.moaAccount.permissions.includes('video.watch'))throw new ApiFailure(403,'permission-denied');
+    if(db.settings(owner).shortsPlayback!=='native')throw new ApiFailure(403,'shorts-native-disabled');
+    if(!nativeShorts.available)throw new ApiFailure(503,'shorts-native-unconfigured');
+    const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};
+    req.raw.once('aborted',disconnect);reply.raw.once('close',disconnect);
+    let lease:string|undefined;
+    try{
+      const {trailers}=await shorts.trailers(owner,params(req).key);
+      abort.signal.throwIfAborted();
+      const prepared=await nativeShorts.prepare(owner,trailers,abort.signal,sources.proxy());lease=prepared.sessionId;
+      const row=db.get('SELECT kids,account_id FROM profiles WHERE id=?',owner),settings=db.settings(owner);
+      if(!row||row.kids||row.account_id!==req.moaAccount.id||!settings.shortsEnabled||settings.shortsPlayback!=='native')throw new ApiFailure(403,'shorts-native-disabled');
+      pins.assert(owner,req);abort.signal.throwIfAborted();
+      return reply.header('Cache-Control','private, no-store').send(prepared);
+    }catch(error){if(lease)nativeShorts.release(lease);throw error;}
+    finally{req.raw.off('aborted',disconnect);reply.raw.off('close',disconnect);}
+  });
+  const assertNativeShort=(req:FastifyRequest,id:string,scoped=true)=>{
+    const owner=nativeShorts.owner(id);
+    if(!owner)throw new ApiFailure(410,'shorts-native-expired');
+    if(scoped&&owner!==profile(req))throw new ApiFailure(403,'session-profile-mismatch');
+    if(!req.moaAccount.permissions.includes('video.watch'))throw new ApiFailure(403,'permission-denied');
+    const settings=db.settings(owner),row=db.get('SELECT kids FROM profiles WHERE id=?',owner);
+    if(!row||row.kids||!settings.shortsEnabled||settings.shortsPlayback!=='native'){nativeShorts.release(id);throw new ApiFailure(403,'shorts-native-disabled');}
+    return owner;
+  };
+  app.post('/api/shorts/native/:sessionId/warm',{schema:{body:object({})}},async(req,reply)=>{
+    const id=params(req).sessionId,owner=assertNativeShort(req,id),abort=new AbortController();
+    const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
+    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal));}
+    finally{reply.raw.off('close',disconnect);}
+  });
+  app.get('/api/playback/:sessionId/shorts-captions/:trackId',async(req,reply)=>{
+    const id=params(req).sessionId,owner=assertNativeShort(req,id,false);
+    const result=await nativeShorts.caption(id,params(req).trackId,owner,AbortSignal.timeout(16_000));
+    return reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff').type('text/vtt; charset=utf-8').send(result.content);
+  });
+  app.post('/api/shorts/native/:sessionId/subtitles/:trackId/translate',{schema:{body:object({})}},async(req,reply)=>{
+    const id=params(req).sessionId,owner=assertNativeShort(req,id);
+    if(!req.moaAccount.permissions.includes('subtitles.translate'))throw new ApiFailure(403,'permission-denied');
+    const abort=new AbortController(),disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
+    try{
+      const source=await nativeShorts.caption(id,params(req).trackId,owner,abort.signal);
+      assertNativeShort(req,id);abort.signal.throwIfAborted();
+      const job=translations.startPreview(id,owner,source.title,source);
+      nativeShorts.onRelease(id,owner,job.id,()=>translations.cancel(job.id,owner));
+      return reply.header('Cache-Control','private, no-store').send(job);
+    }finally{reply.raw.off('close',disconnect);}
+  });
+  app.delete('/api/shorts/native/:sessionId',async req=>{nativeShorts.release(params(req).sessionId,profile(req));return {ok:true};});
+  app.get('/api/playback/:sessionId/shorts/:assetId',async(req,reply)=>{
+    const id=params(req).sessionId,owner=nativeShorts.owner(id);
+    if(!owner)throw new ApiFailure(410,'shorts-native-expired');
+    const settings=db.settings(owner),row=db.get('SELECT kids FROM profiles WHERE id=?',owner);
+    if(!row||row.kids||!settings.shortsEnabled||settings.shortsPlayback!=='native'){nativeShorts.release(id);throw new ApiFailure(403,'shorts-native-disabled');}
+    return nativeShorts.stream(req,reply,id,params(req).assetId);
+  });
+  app.post('/api/shorts/:key/seen', {schema:{params:shortsKey}}, async req => { shorts.seen(profile(req),(req.params as {key:string}).key); return {ok:true}; });
+  app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
+  app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
+  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
   app.get('/api/admin/tmdb/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(tmdb.status()));
+  app.get('/api/admin/youtube/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.status()));
+  app.patch('/api/admin/youtube/config', { schema: { body: object({
+    apiKey: { type: 'string', minLength: 20, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' },
+    regionCode: { type: 'string', pattern: '^[A-Z]{2}$' }, clear: { type: 'boolean' }
+  }) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.configure(req.body as Parameters<YouTubeTrailers['configure']>[0])));
   app.patch('/api/admin/tmdb/config', { schema: { body: object({
     token: { type: 'string', minLength: 16, maxLength: 4096, pattern: '^[A-Za-z0-9._-]+$' },
     apiKey: { type: 'string', pattern: '^[a-fA-F0-9]{32}$' }, clear: { type: 'boolean' }
@@ -295,9 +375,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     const updated: Settings = { ...db.settings(profile(req)), ...req.body as Partial<Settings> };
     db.run('INSERT OR REPLACE INTO settings VALUES(?,?)', profile(req), JSON.stringify(updated)); return updated;
   });
-  app.get('/api/home', { schema: { querystring: object({ type: typeQuery, providers: { type: 'string', maxLength: 4096 }, continueScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, titleGrouping: { type: 'string', enum: ['true', 'false'], default: 'true' } }) } }, async req => { let home=catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope);
+  app.get('/api/home', { schema: { querystring: object({ type: typeQuery, providers: { type: 'string', maxLength: 4096 }, continueScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, watchlistScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, titleGrouping: { type: 'string', enum: ['true', 'false'], default: 'true' } }) } }, async req => { let home=catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope);
     const unlinked = [...new Set(home.rows.flatMap(r => r.items.map(c => c.id)))].filter(id => !db.get('SELECT 1 FROM tmdb_links WHERE media_id=?', id));
-    if (tmdb.enabled && unlinked.length) { await tmdb.ensure(unlinked, 1500); home = catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope); } return {...home,rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.resolve(row.items.map(c=>c.id),profile(req))} : row)}; });
+    if (tmdb.enabled && unlinked.length) { await tmdb.ensure(unlinked, 1500); home = catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope); } return {...home,rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.resolve(row.items.map(c=>c.id),profile(req))} : row)}; });
   app.get('/api/media', { schema: { querystring: object({ type: typeQuery, genre: string, provider: string, sort: { type: 'string', enum: ['recent', 'title', 'year'], default: 'recent' }, page: pageQuery }) } }, async req => {
     const q = query(req); let cards = catalog.cards(profile(req), q.type);
     if (q.genre) cards = cards.filter(c => c.genres?.includes(q.genre));
@@ -315,6 +395,11 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.get('/api/episodes/:id/context', {schema:{params:idParams()}}, async req=>{const e=db.get('SELECT media_id,season,number FROM episodes WHERE id=?',params(req).id);if(!e)throw new ApiFailure(404,'episode-not-found');return {mediaId:e.media_id,season:e.season,number:e.number};});
   app.get('/api/media/:id/franchise', { schema: { params: idParams() } }, async req => franchises.get(params(req).id, profile(req)));
   app.get('/api/media/:id', { schema: { params: idParams() } }, async req => { catalog.kids.assert(params(req).id, profile(req)); await sources.detail(params(req).id); await tmdb.ensureDetail(params(req).id, 5000); return catalog.detail(params(req).id, profile(req)); });
+  app.get('/api/media/:id/trailers', { schema: { params: idParams() } }, async (req, reply) => {
+    // Read existing metadata only; do not re-run source extraction or title matching for a precheck.
+    const detail = catalog.detail(params(req).id, profile(req));
+    return reply.header('Cache-Control', 'private, no-store').send(await youtube.check([...(detail.trailers ?? []), detail.trailer]));
+  });
   app.get('/api/metadata/status', async () => ({ tmdb: tmdb.enabled }));
   app.get('/api/media/:id/metadata/search', { schema: { params: idParams(), querystring: object({ q: { ...string } }, ['q']) } }, async req => catalog.kids.candidates(await tmdb.search(query(req).q), profile(req)));
   app.patch('/api/media/:id/metadata', { schema: { params: idParams(), body: object({ action: { type: 'string', enum: ['link', 'off', 'auto'] }, kind: { type: 'string', enum: ['tv', 'movie'] }, tmdbId: { type: 'integer', minimum: 1 }, season: { type: 'integer', minimum: 1, maximum: 200 } }, ['action']) } }, async req => tmdb.change(params(req).id, req.body as any));
@@ -461,9 +546,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     return reply.code(204).send();
   });
   app.get('/api/admin/downloads',{schema:{querystring:object({cursor:{type:'string',maxLength:2048},mediaId:{type:'string',minLength:1,maxLength:512}})}},async (req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.status(query(req))));
-  app.put('/api/admin/downloads/config',{schema:{body:object({quotaBytes:{type:'integer',minimum:1,maximum:1099511627776000}},['quotaBytes'])}},async req=>{downloads.configure((req.body as {quotaBytes:number}).quotaBytes);return downloads.status();});
+  app.put('/api/admin/downloads/config',{schema:{body:{...object({enabled:{type:'boolean'},quality:{type:'string',enum:['best','1080p','720p','480p']},quotaBytes:{type:'integer',minimum:1,maximum:1099511627776000}}),minProperties:1}}},async req=>{await downloads.configureSettings(req.body as {enabled?:boolean;quality?:import('@moa/shared').DownloadQuality;quotaBytes?:number});return downloads.status();});
   app.get('/api/admin/downloads/choices',{schema:{querystring:object({episodeId:string},['episodeId'])}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.choices(query(req).episodeId,profile(req))));
-  app.post('/api/admin/downloads',{schema:{body:object({episodeId:string,selectionToken:string,choiceId:string},['episodeId','selectionToken','choiceId'])}},async req=>{const b=req.body as {episodeId:string;selectionToken:string;choiceId:string};return downloads.create(b.episodeId,profile(req),b.selectionToken,b.choiceId);});
+  app.post('/api/admin/downloads',{schema:{body:{...object({episodeId:string,selectionToken:string,choiceId:string},['episodeId']),dependencies:{selectionToken:['choiceId'],choiceId:['selectionToken']}}}},async req=>{const b=req.body as {episodeId:string;selectionToken?:string;choiceId?:string};return b.selectionToken!==undefined?downloads.create(b.episodeId,profile(req),b.selectionToken,b.choiceId!):downloads.createPreferred(b.episodeId,profile(req));});
   app.post('/api/admin/downloads/:id/cancel',{schema:{params:idParams()}},async req=>downloads.cancel(params(req).id));
   app.post('/api/admin/downloads/:id/retry',{schema:{params:idParams()}},async req=>downloads.retry(params(req).id,profile(req)));
   app.delete('/api/admin/downloads/:id',{schema:{params:idParams()}},async(req,reply)=>{await downloads.remove(params(req).id);return reply.code(204).send();});
@@ -568,6 +653,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

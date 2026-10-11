@@ -448,7 +448,8 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
     inset: auto 0 0 0;
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     height: calc(var(--tab-h) + var(--safe-bottom));
     padding-bottom: var(--safe-bottom);
     background: rgba(9, 9, 11, .94);

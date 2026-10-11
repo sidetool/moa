@@ -19,16 +19,6 @@ function useEscape(onClose: () => void) {
   }, [onClose]);
 }
 
-export function TrailerDialog({ videoKey, title, onClose }: { videoKey: string; title: string; onClose: () => void }) {
-  useEscape(onClose);
-  return <div className="sheet-backdrop trailer-backdrop" onClick={onClose}>
-    <div className="trailer" role="dialog" aria-modal="true" aria-label={`${title} 예고편`} onClick={e => e.stopPropagation()}>
-      <iframe src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoKey)}?autoplay=1&rel=0&playsinline=1`} title={`${title} 예고편`} allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
-      <IconButton className="trailer-close" label="닫기" onClick={onClose}><X size={22} /></IconButton>
-    </div>
-  </div>;
-}
-
 export function PeopleRow({ people, mediaId, linked }: { people: Person[]; mediaId: string; linked: boolean }) {
   // With an enabled `title.people` plugin the same row gains a full credits sheet; otherwise it stays as before.
   // Linked titles without native cast (crew-only works, older cached details) still get an entry to the sheet.

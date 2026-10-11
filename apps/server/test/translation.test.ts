@@ -842,3 +842,22 @@ test('local HTTP endpoints use the normal model and translation transport withou
     assert.deepEqual(received, ['/v1/models', '/v1/chat/completions', '/redirect/models']);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+test('preview translation shares the bounded queue without creating library/history entries',async()=>{
+  const f=await fixture();
+  try{
+    const job=f.service.startPreview('a'.repeat(32),'p','Trailer',input);
+    const complete=await wait(f.service,job.id);
+    assert.equal(complete.state,'completed');assert.ok(complete.track);assert.equal('preview' in complete,false);
+    assert.equal(f.db.get('SELECT count(*) n FROM episodes')!.n,1);
+    assert.equal(f.db.get('SELECT count(*) n FROM translated_subtitles')!.n,0);
+    assert.throws(()=>f.service.get(job.id,'q'),{statusCode:404});
+    const asset=complete.track!.url.split('/')[3];assert.equal(f.service.assetProfile(asset),'p');
+    assert.match(f.service.asset(asset,'translation.vtt','p')!.content!,/번역/);
+    assert.throws(()=>f.service.asset(asset,'translation.vtt','q'),{statusCode:403});
+    const second=f.service.startPreview('b'.repeat(32),'p','Trailer',input);
+    assert.equal(second.cached,true);assert.notEqual(second.id,job.id);
+    f.db.run("UPDATE profiles SET kids=1 WHERE id='p'");
+    assert.throws(()=>f.service.get(job.id,'p'),{statusCode:403});
+  }finally{await f.close();}
+});

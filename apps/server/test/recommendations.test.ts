@@ -89,3 +89,56 @@ test('candidate validation and duplicate entries cannot produce repeated recomme
   assert.deepEqual(keys(service), ['movie:10', 'movie:13']);
   assert.deepEqual(keys(service), keys(service), 'ordering is stable across repeated reads');
 });
+
+test('watchlist alone creates recommendations, excludes saved works and updates immediately on removal',async t=>{
+  const {db,service,title,detail}=await fixture(t);
+  title('saved',1,'viewer',-1);title('later',2,'viewer',-1);title('foreign',3,'other',-1);
+  for(const [owner,id] of [['viewer','saved'],['viewer','later'],['other','foreign']])db.run('INSERT INTO watchlist VALUES(?,?,?)',owner,id,'2026-10-10');
+  detail(1,[candidate(1),candidate(2),candidate(10)]);detail(2,[]);detail(3,[candidate(30)]);
+  assert.deepEqual(keys(service),['movie:10']);assert.match(service.get('viewer').items[0].reason,/내 목록/);
+  assert.deepEqual(keys(service,'other'),['movie:30']);
+  service.dismiss('viewer','movie:10');assert.deepEqual(keys(service),[]);service.reset('viewer');
+  db.run("DELETE FROM watchlist WHERE profile_id='viewer'");assert.equal(service.get('viewer').status,'insufficient-history');
+  assert.equal(db.get('SELECT COUNT(*) AS n FROM progress')!.n,0);
+});
+
+test('duplicate saved aliases cannot boost a candidate and history overlap is counted once',async t=>{
+  const {db,service,title,detail}=await fixture(t);
+  title('watched',1);title('saved',2,'viewer',-1);detail(1,[candidate(10)]);detail(2,[candidate(20)]);
+  db.run('INSERT INTO watchlist VALUES(?,?,?)','viewer','saved','2026-10-10');
+  assert.deepEqual(keys(service),['movie:10','movie:20']);
+  for(let i=0;i<6;i++){title(`alias-${i}`,2,'viewer',-1);db.run('INSERT INTO watchlist VALUES(?,?,?)','viewer',`alias-${i}`,'2026-10-10');}
+  assert.deepEqual(keys(service),['movie:10','movie:20']);
+  db.run('INSERT INTO watchlist VALUES(?,?,?)','viewer','watched','2026-10-11');
+  assert.deepEqual(keys(service),['movie:10','movie:20']);assert.match(service.get('viewer').items[0].reason,/시청 기록과 내 목록/);
+});
+
+test('saved seeds honor confirmed matching, live exclusion and kids policy',async t=>{
+  const {db,service,title,detail}=await fixture(t);
+  for(const [id,n] of [['safe',1],['adult',2],['unknown',3],['live',4],['ambiguous',5]] as const){
+    title(id,n,'kids',-1);db.run('INSERT INTO watchlist VALUES(?,?,?)','kids',id,'2026-10-10');
+    if(id!=='unknown')detail(n,[candidate(n+10)],id==='adult'?'19':'ALL');detail(n+10);
+  }
+  db.run("UPDATE media SET metadata=? WHERE id='live'",JSON.stringify({live:true}));
+  db.run("UPDATE tmdb_links SET status='ambiguous' WHERE media_id='ambiguous'");
+  assert.deepEqual(keys(service,'kids'),['movie:11']);
+});
+
+test('recommendations return up to forty distinct items without increasing the seed/candidate budgets',async t=>{
+  const {service,title,detail}=await fixture(t);
+  for(let s=1;s<=5;s++){title(`seed-${s}`,s);detail(s,Array.from({length:18},(_,i)=>candidate(100+s*20+i)));}
+  const result=service.get('viewer');
+  assert.equal(result.items.length,40);assert.equal(new Set(result.items.map(r=>r.key)).size,40);
+});
+
+test('uncached lower-ranked seeds are warmed without bypassing the two-request concurrency bound',async t=>{
+  const {service,tmdb,title,detail}=await fixture(t);
+  const calls:string[]=[];const releases:Array<()=>void>=[];
+  for(let s=1;s<=8;s++){title(`seed-${s}`,s,'viewer',400,`2026-10-${String(11-s).padStart(2,'0')}T00:00:00.000Z`);if(s<=5)detail(s,[]);}
+  tmdb.ensureDetail=async id=>{calls.push(id);await new Promise<void>(resolve=>releases.push(resolve));};
+  service.get('viewer');assert.deepEqual(calls,['seed-6','seed-7']);
+  service.get('viewer');assert.equal(calls.length,2);
+  releases.splice(0).forEach(resolve=>resolve());await new Promise<void>(resolve=>setImmediate(resolve));
+  service.get('viewer');assert.deepEqual(calls,['seed-6','seed-7','seed-8']);
+  releases.splice(0).forEach(resolve=>resolve());await new Promise<void>(resolve=>setImmediate(resolve));
+});

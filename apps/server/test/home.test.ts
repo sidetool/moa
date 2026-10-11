@@ -51,6 +51,15 @@ test('home resumes unlisted sources while tab discovery, profiles and completion
     assert.deepEqual(ids(await get('providers=&continueScope=all', other), 'continue'), ['other-profile']);
     assert.deepEqual(ids(await get('providers=source-a&continueScope=all&type=movie'), 'continue'), []);
     assert.equal((await app.inject({ url: '/api/home?continueScope=invalid', headers })).statusCode, 400);
+    const saved = await get('providers=source-a&continueScope=all&watchlistScope=all');
+    assert.deepEqual([...ids(saved,'watchlist')].sort(), ['finished','listed','local','not-started','other-profile','unlisted']);
+    assert.deepEqual(saved.hero.map((c:any)=>c.id),['listed'],'only personal rows ignore Home source selection');
+    assert.deepEqual([...ids(await get('providers=&watchlistScope=all'),'watchlist')].sort(), [...ids(saved,'watchlist')].sort());
+    assert.deepEqual(ids(await get('providers=source-a&watchlistScope=all',other),'watchlist'),[]);
+    assert.deepEqual(ids(await get('providers=source-a&watchlistScope=all&type=movie'),'watchlist'),[]);
+    assert.deepEqual(ids(await get('providers=source-a&watchlistScope=tab'),'watchlist'),['listed']);
+    assert.deepEqual([...((await app.inject({url:'/api/watchlist',headers})).json()).map((c:any)=>c.id)].sort(), [...ids(saved,'watchlist')].sort());
+    assert.equal((await app.inject({url:'/api/home?watchlistScope=invalid',headers})).statusCode,400);
   } finally {
     await app.close();
     await rm(temp, { recursive: true, force: true });

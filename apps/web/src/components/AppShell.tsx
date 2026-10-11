@@ -1,10 +1,11 @@
 import { useNavigation, tabPath } from "../lib/navigation";
 import { hasLoginGate } from "../lib/api";
-import { Info, Bookmark, FolderOpen, History, House, LogOut, Puzzle, Search, Settings, Subtitles, UserRound, Users, UsersRound, X } from "lucide-react";
+import { Info, Bookmark, Clapperboard, FolderOpen, History, House, LogOut, Puzzle, Search, Settings, Subtitles, UserRound, Users, UsersRound, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import type { Profile } from "@moa/shared";
-import { useMe, useProfiles } from "../api/queries";
+import { useMe, useProfiles, useSettings } from "../api/queries";
+import { shortsAvailable } from "../api/shorts";
 import { logout } from "../pages/AccountsPage";
 import { currentProfileId, setCurrentProfileId } from "../lib/api";
 import { PROFILE_COLOR, cx } from "../lib/format";
@@ -132,10 +133,12 @@ function ProfileMenu({ profile }: { profile?: Profile }) {
 export function AppShell() {
   const scrolled = useScrolled();
   const { tabs } = useNavigation();
-  const sections = [...tabs.map(t => ({ to: tabPath(t.id), label: t.name, end: true })), { to: "/my-list", label: "내 목록", end: true }];
   const location = useLocation();
   const profiles = useProfiles();
   const profile = profiles.data?.find(item => item.id === currentProfileId());
+  const shorts = shortsAvailable(useSettings().data, profile?.kids);
+  const onShorts = location.pathname === "/shorts";
+  const sections = [...tabs.map(t => ({ to: tabPath(t.id), label: t.name, end: true })), { to: "/my-list", label: "내 목록", end: true }, ...(shorts ? [{ to: "/shorts", label: "쇼츠", end: true }] : [])];
   const [searchOpen, setSearchOpen] = useState(location.pathname === "/search");
   const overHero = ["/", "/series", "/movies", "/anime"].includes(location.pathname) || location.pathname.startsWith("/tabs/") || location.pathname === "/local" || location.pathname.startsWith("/title/");
 
@@ -151,7 +154,7 @@ export function AppShell() {
   }, []);
 
   return (
-    <div className="shell">
+    <div className={cx("shell", onShorts && "is-shorts")}>
       <PluginScripts />
       <header className={cx("topnav", (scrolled || !overHero) && "is-solid", location.pathname.startsWith("/title/") && "topnav-detail")} data-remote-group data-remote-edge>
         <Link to="/" className="topnav-logo" aria-label="MOA 홈"><Logo /></Link>
@@ -171,11 +174,12 @@ export function AppShell() {
       <main className="page" key={location.pathname}>
         <Outlet />
       </main>
-      <UpdateNotice />
+      {!onShorts && <UpdateNotice />}
 
       <nav className="tabbar" aria-label="하단 메뉴">
         <NavLink to="/" end className={({ isActive }) => cx("tab", isActive && "is-active")}><House size={22} /><span>홈</span></NavLink>
         <NavLink to="/search" className={({ isActive }) => cx("tab", isActive && "is-active")}><Search size={22} /><span>검색</span></NavLink>
+        {shorts && <NavLink to="/shorts" className={({ isActive }) => cx("tab", isActive && "is-active")}><Clapperboard size={22} /><span>쇼츠</span></NavLink>}
         <NavLink to="/my-list" className={({ isActive }) => cx("tab", isActive && "is-active")}><Bookmark size={22} /><span>내 목록</span></NavLink>
         <NavLink to="/me" className={({ isActive }) => cx("tab", isActive && "is-active")}><UserRound size={22} /><span>마이</span></NavLink>
       </nav>
