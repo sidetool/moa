@@ -1,4 +1,5 @@
-import { Bookmark, BookmarkCheck, ChevronDown, ChevronUp, Clapperboard, Play, RotateCcw, VolumeX } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Clapperboard, Play, Plus, RotateCcw, Search, VolumeX } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { MediaCard, ShortsItem } from "@moa/shared";
@@ -186,6 +187,13 @@ function ShortsReel({ items, feed, replay, fit, onReplay }: { items: ShortsItem[
   </div>;
 }
 
+function RailButton({ label, caption, pressed, disabled, onClick, children }: { label: string; caption?: string; pressed?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" className="shorts-rail-btn" aria-label={label} title={label} aria-pressed={pressed} disabled={disabled} onClick={onClick}>
+    <span className="shorts-rail-icon">{children}</span>{caption && <small aria-hidden="true">{caption}</small>}
+  </button>;
+}
+
+/** Artwork fills the screen around the player; title and actions sit on it, never on the iframe. */
 function ShortsSlide({ item, index, total, active, near, muted, blocked, inWatchlist, onPlay, onStep, onUnmute, children }: {
   item: ShortsItem; index: number; total: number; active: boolean; near: boolean; muted: boolean; blocked: boolean; inWatchlist: boolean;
   onPlay: () => void; onStep: (delta: number) => void; onUnmute: () => void; children: React.ReactNode;
@@ -194,29 +202,31 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, inWatch
   const poster = sized(item.poster, 500);
   const meta = [item.year, item.category && CATEGORY_LABEL[item.category], item.reason === "personal" ? "취향" : "인기"].filter(Boolean).join(" · ");
   return <article className={cx("shorts-slide", active && "is-active")} aria-posinset={index + 1} aria-setsize={total} aria-label={item.title}>
-    {near && poster && <img className="shorts-ambient" src={poster} alt="" aria-hidden="true" />}
-    <div className="shorts-body">
-      <div className="shorts-stage">
-        {near && poster && <img className="shorts-poster" src={poster} alt="" loading="lazy" />}
-        {children}
+    <div className="shorts-backdrop" aria-hidden="true">{near && poster && <img src={poster} alt="" />}</div>
+    <div className="shorts-frame">
+      <div className="shorts-screen">
+        <div className="shorts-stage">
+          {near && poster && <img className="shorts-poster" src={poster} alt="" loading="lazy" />}
+          {children}
+        </div>
       </div>
-      <div className="shorts-meta">
-        <div className="shorts-info">
-          <h2>{item.title}</h2>
-          {meta && <p className="shorts-sub">{meta}</p>}
-          {item.overview && <p className="shorts-overview">{item.overview}</p>}
-        </div>
-        <div className="shorts-actions">
-          <ButtonLink to={recommendationTarget(item.href, item.title)} variant={item.mediaId ? "primary" : "secondary"}>{item.mediaId ? "작품 보기" : "MOA에서 찾기"}</ButtonLink>
-          {item.mediaId && <IconButton label={inWatchlist ? "내 목록에서 빼기" : "내 목록에 추가"} aria-pressed={inWatchlist} disabled={toggle.isPending}
-            onClick={() => toggle.mutate({ id: item.mediaId!, add: !inWatchlist })}>{inWatchlist ? <BookmarkCheck size={20} /> : <Bookmark size={20} />}</IconButton>}
-          {blocked && <Button variant="primary" icon={<Play size={18} fill="currentColor" />} onClick={onPlay}>재생</Button>}
-          {active && muted && <Button icon={<VolumeX size={18} />} onClick={onUnmute}>소리 켜기</Button>}
-          <span className="shorts-steps">
-            <IconButton label="이전 작품" disabled={index === 0} onClick={() => onStep(-1)}><ChevronUp size={22} /></IconButton>
-            <IconButton label="다음 작품" onClick={() => onStep(1)}><ChevronDown size={22} /></IconButton>
-          </span>
-        </div>
+      <div className="shorts-info">
+        <h2>{item.title}</h2>
+        {meta && <p className="shorts-sub">{meta}</p>}
+        {item.overview && <p className="shorts-overview">{item.overview}</p>}
+        <Link className="shorts-open" to={recommendationTarget(item.href, item.title)}>
+          {item.mediaId ? <Play size={14} fill="currentColor" /> : <Search size={14} strokeWidth={2.6} />}{item.mediaId ? "작품 보기" : "MOA에서 찾기"}
+        </Link>
+      </div>
+      <div className="shorts-rail">
+        {blocked && <RailButton label="재생" caption="재생" onClick={onPlay}><Play size={24} fill="currentColor" /></RailButton>}
+        {active && muted && <RailButton label="소리 켜기" caption="소리" onClick={onUnmute}><VolumeX size={24} /></RailButton>}
+        {item.mediaId && <RailButton label={inWatchlist ? "내 목록에서 빼기" : "내 목록에 추가"} caption="내 목록" pressed={inWatchlist} disabled={toggle.isPending}
+          onClick={() => toggle.mutate({ id: item.mediaId!, add: !inWatchlist })}>{inWatchlist ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
+        <span className="shorts-rail-steps">
+          <RailButton label="이전 작품" disabled={index === 0} onClick={() => onStep(-1)}><ChevronUp size={24} /></RailButton>
+          <RailButton label="다음 작품" onClick={() => onStep(1)}><ChevronDown size={24} /></RailButton>
+        </span>
       </div>
     </div>
   </article>;

@@ -30,7 +30,7 @@ export function ShortsSettings({ settings, kids, save }: { settings: Settings; k
           </button>;
         })}
       </div>, "shorts-kinds")}
-      {row("화면 맞춤", "휴대폰에서 플레이어를 화면 높이까지 키워요. 가로 영상은 위아래가 비어 보여요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
+      {row("화면 맞춤", "휴대폰에서 예고편을 화면 폭에 맞춰 최대한 크게 보여줘요. 끄면 여백을 두고 작게 보여요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
       {row("본 작품 숨기기", "5초 넘게 봤거나 직접 넘긴 작품을 이 기간 동안 빼요.", <Select className="setting-select" aria-label="본 작품 숨기기" value={String(settings.shortsRepeatDays ?? 7)} onChange={value => save({ shortsRepeatDays: Number(value) as Settings["shortsRepeatDays"] })} options={REPEAT.map(([value, label]) => ({ value: String(value), label }))} />)}
     </>}
   </div></section>;
