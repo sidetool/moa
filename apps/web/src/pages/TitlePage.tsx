@@ -1,3 +1,4 @@
+import { TitleReviews } from '../components/TitleReviews';
 import { TitleSources } from '../components/TitleSources';
 import { InlinePlugins } from '../components/WebsitePlugins';
 import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
@@ -266,6 +267,7 @@ export function TitlePage() {
 
       <div className="title-body">
         <InlinePlugins key={`plugins:${m.id}`} placement="detail" />
+        <TitleReviews mediaId={m.id} />
         <TitleSources key={m.id} id={m.id} title={m.title}/>
         {!isMovie && <Episodes media={m} saves={saves} />}
         <PeopleRow key={`people:${m.id}`} people={m.people ?? []} mediaId={m.id} linked={Boolean(m.metadata?.id)} />

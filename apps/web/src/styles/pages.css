@@ -1017,3 +1017,13 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
   .person-photo.is-large { width: 72px; height: 72px; }
   .similar-grid.person-works { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* Reviews use the title page's native section rhythm; no independent iframe theme. */
+.title-reviews{margin-block:32px;border-block:1px solid var(--border, #ffffff18);padding-block:20px}
+.review-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;border:0;background:none;color:inherit;padding:0;text-align:left;font:inherit;font-size:20px;font-weight:700;cursor:pointer}
+.review-heading-aside{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted, #a1a1aa);font-weight:400}
+.review-hint,.review-byline{color:var(--muted, #a1a1aa);font-size:13px;line-height:1.7}
+.review-hint{margin:10px 0 0}.review-body{margin-top:22px}.review-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.review-filters{display:flex;gap:6px;flex-wrap:wrap}.review-filters button{font:inherit;font-size:13px;color:var(--muted,#a1a1aa);background:none;border:1px solid transparent;border-radius:20px;padding:8px 13px;cursor:pointer}.review-filters button[aria-pressed=true]{color:inherit;background:#ffffff0f;border-color:#ffffff24}
+.review-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 28px}.review-entry{padding:20px 0;border-bottom:1px solid #ffffff12;min-width:0;overflow-wrap:anywhere}.review-title{display:block;margin:6px 0 12px;color:inherit;font-weight:600;text-decoration:none;line-height:1.65}.review-title svg{display:inline;vertical-align:middle}.review-title:hover{text-decoration:underline}.review-entry summary{font-size:12px;color:var(--muted,#a1a1aa);cursor:pointer}.review-entry details p{font-size:14px;line-height:1.9;white-space:pre-wrap}.review-entry details a,.review-search-links a{font-size:13px;color:inherit;text-underline-offset:4px}.review-translate{display:block;margin-top:12px}.review-search-links{display:flex;gap:20px;flex-wrap:wrap;margin-top:24px}.review-empty{font-size:14px;line-height:1.8;margin-top:24px}.review-attribution{margin-top:24px;display:flex;align-items:center;gap:12px;font-size:11px;color:var(--muted,#a1a1aa)}
+@media(max-width:640px){.review-list{grid-template-columns:1fr}.review-heading{font-size:18px}.review-heading-aside{font-size:0;gap:0}.review-toolbar{align-items:flex-start}.review-filters button{padding:8px 10px}.review-attribution{align-items:flex-start}}

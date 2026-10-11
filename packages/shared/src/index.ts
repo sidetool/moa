@@ -215,7 +215,7 @@ export const PLUGIN_API_VERSION = 2;
 export interface WebsitePlugin {
   apiVersion: number;
   minMoaVersion?: string;
-  hooks?: Array<'catalog.transform' | 'title.people'>;
+  hooks?: Array<'catalog.transform' | 'title.people' | 'title.reviews'>;
   compatibility?: { supported: boolean; apiVersion: number; moaVersion: string | null };
   revision: string;
   id: string;
@@ -223,7 +223,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'reviews.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -586,3 +586,8 @@ export interface PersonWorksResponse {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
   person: PersonCredit | null; items: DiscoveryItem[]; truncated: boolean;
 }
+
+/** Reviews are public provider data; article snippets are not verified viewer ratings. */
+export type ReviewProvider = 'naver' | 'kakao' | 'tmdb';
+export interface ReviewItem { title:string; excerpt:string; author:string; date:string; url:string; kind:'article'|'review'; language:'unknown'|'en'; }
+export interface ReviewResponse { mediaId:string; provider:ReviewProvider; status:'ready'|'unconfigured'|'unlinked'|'restricted'|'unavailable'; query:string; items:ReviewItem[]; }

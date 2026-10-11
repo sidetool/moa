@@ -388,3 +388,9 @@ ID, 현재 작품, 지원 공급자, 목록 수와 이미지 URL을 검증해 �
 등록 해제·프로필 변경·취소·20초 제한에 걸린 응답은 버린다. 결과는 최대
 262,144자이며, 캐시나 영구 저장을 하지 않는다. 요청 전후에 활성화·revision·
 권한을 확인하고 현재 상세 작품과 다른 응답을 거부한다.
+
+### 개발 중: 작품 리뷰 (`title.reviews`)
+
+현재 리뷰 작업 브랜치에서만 지원하며 배포 버전은 미확정이다. `reviews.read` 권한과 `title.reviews` hook을 선언한 API 2 플러그인은 `moa.reviews.list(provider)`를 호출할 수 있다. 현재 provider는 `naver`, `kakao`, `tmdb`이며, API 자체는 특정 공급자 이름에 묶이지 않는다. 작품은 호스트가 현재 상세 페이지에서 결정한다. 플러그인이 임의 쿼리/URL/키를 전달할 수 없다.
+
+Hook 입력은 `{mediaId, provider}`, 응답은 shared의 `ReviewResponse`다. 호스트가 네이티브 리뷰 UI와 외부 링크를 렌더링하고 모든 응답을 검증한다. 기존 플러그인은 이 기능을 선언하지 않으면 영향을 받지 않는다. 상태는 ready/unconfigured/unlinked/restricted/unavailable이며, ready+빈 목록은 정상적인 검색 결과 없음이다. 원문 전체/누적 별점/한국 관람객 인증 여부는 제공하지 않는다. 연결 설정·검증 범위·외부 번역의 한계는 `plugins/title-reviews/README.md` 참조.

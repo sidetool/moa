@@ -1,3 +1,4 @@
+import { PluginReviews, type ReviewOptions } from './plugin-reviews.js';
 import { Downloads } from './downloads.js';
 import { GeneralMarkers } from './general-markers.js';
 import { Recommendations } from './recommendations.js';
@@ -72,7 +73,7 @@ export async function sendFile(reply: FastifyReply, file: string, mime: string, 
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
   return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
 }
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { reviews?: ReviewOptions; downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -186,7 +187,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
   app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
   app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb), new PluginPeople(db, tmdb));
+  registerWebsitePlugins(app, db, new PluginDiscovery(db, tmdb), new PluginPeople(db, tmdb), new PluginReviews(db, tmdb, services.reviews ?? {naverId:process.env.MOA_NAVER_CLIENT_ID,naverSecret:process.env.MOA_NAVER_CLIENT_SECRET,kakaoKey:process.env.MOA_KAKAO_REST_KEY}));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
