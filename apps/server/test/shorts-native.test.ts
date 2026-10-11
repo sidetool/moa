@@ -26,6 +26,8 @@ test('leases are profile-bound, capped per profile, expire, and return no upstre
     assert.equal(native.owner(a.sessionId),'a');assert.ok(!JSON.stringify(a).includes('googlevideo'));
     native.release(a.sessionId,'b');assert.equal(native.owner(a.sessionId),'a');
     await native.prepare('a',[id],new AbortController().signal);await native.prepare('a',[id],new AbortController().signal);
+    assert.equal(native.owner(a.sessionId),'a');
+    await native.prepare('a',[id],new AbortController().signal);
     assert.equal(native.owner(a.sessionId),undefined);
     const b=await native.prepare('b',[id],new AbortController().signal);
     now+=600_001;await native.prepare('c',[id],new AbortController().signal);
@@ -101,6 +103,10 @@ test('prepared media checks its account and PIN even when a video tag supplies n
   const prepared=await app.inject({method:'POST',url:'/api/shorts/movie:1/native',headers,payload:{}});
   assert.equal(prepared.statusCode,200,prepared.body);
   const lease=prepared.json();assert.ok(!prepared.body.includes('googlevideo'));
+  assert.equal((await app.inject({method:'POST',url:`/api/shorts/native/${lease.sessionId}/warm`,headers:{'x-moa-account':'other','x-moa-role':'member','x-moa-permissions':'video.watch','x-moa-profile':'p'},payload:{}})).statusCode,401);
+  assert.equal((await app.inject({method:'POST',url:`/api/shorts/native/${lease.sessionId}/subtitles/unknown/translate`,headers:{'x-moa-account':'owner','x-moa-role':'member','x-moa-permissions':'video.watch','x-moa-profile':'p'},payload:{}})).statusCode,403);
+  assert.equal((await app.inject({url:`/api/playback/${lease.sessionId}/shorts-captions/unknown`,headers:{'x-moa-account':'other','x-moa-role':'member','x-moa-permissions':'video.watch'}})).statusCode,403);
+
   assert.equal((await app.inject({url:lease.url,headers:{'x-moa-account':'other','x-moa-role':'member','x-moa-permissions':'video.watch'}})).statusCode,403);
   assert.equal((await app.inject({url:lease.url,headers:{'x-moa-account':'owner','x-moa-role':'member'}})).statusCode,403);
   db.run("UPDATE profiles SET pin_hash='locked' WHERE id='p'");
@@ -166,5 +172,64 @@ test('segment paths containing playlist/index.m3u8 are still binary segments',as
     const media=reply();await native.stream({headers:{}} as any,media.reply,s.sessionId,asset);
     const chunks=[];for await(const chunk of media.sent())chunks.push(chunk);
     assert.equal(Buffer.concat(chunks).toString(),'binary segment');
+  }finally{native.close();}
+});
+
+test('two next leases warm audio/video and playback serves those bytes without upstream repeats',async()=>{
+  const master='#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=640x360,CODECS="avc1.42001e,mp4a.40.2",AUDIO="a"\nvideo.m3u8\n';
+  const urls:string[]=[],a=Buffer.from('audio'),v=Buffer.from('video');
+  const native=new NativeShorts(async()=>({...selected,url:'https://example.googlevideo.com/master.m3u8',mime:'application/vnd.apple.mpegurl',master:true}),async(url)=>{
+    urls.push(String(url));const file=new URL(String(url)).pathname.slice(1);
+    const body=file==='master.m3u8'?master:file.endsWith('.m3u8')?`#EXTM3U\n#EXTINF:5,\n${file.startsWith('audio')?'a':'v'}.ts\n#EXT-X-ENDLIST\n`:file==='a.ts'?a:v;
+    return {url:String(url),response:Object.assign(Readable.from([Buffer.from(body)]),{statusCode:200,headers:{'content-type':file.endsWith('.m3u8')?'application/vnd.apple.mpegurl':'video/mp2t'}})} as any;
+  });
+  try{
+    const current=await native.prepare('p',[id],new AbortController().signal);
+    const next=await native.prepare('p',['BBBBBBBBBBB'],new AbortController().signal);
+    const second=await native.prepare('p',['CCCCCCCCCCC'],new AbortController().signal);
+    assert.equal(native.owner(current.sessionId),'p');
+    await assert.rejects(native.warm(next.sessionId,'q',new AbortController().signal),{statusCode:403});
+    assert.deepEqual(await native.warm(next.sessionId,'p',new AbortController().signal),{ready:true});
+    assert.equal(urls.length,5);
+    const read=async(url:string)=>{const out=reply();await native.stream({headers:{},moaProfile:'p'} as any,out.reply,url.split('/')[3],url.split('/').at(-1)!);return out.sent();};
+    const root=await read(next.url);
+    const video=root.split('\n').find((line:string)=>line.startsWith('/api'));
+    const list=await read(video),segment=list.split('\n').find((line:string)=>line.startsWith('/api'));
+    const stream=await read(segment),chunks=[];for await(const c of stream)chunks.push(c);
+    assert.deepEqual(Buffer.concat(chunks),v);assert.equal(urls.length,5);
+    await native.warm(next.sessionId,'p',new AbortController().signal);assert.equal(urls.length,5);
+    assert.deepEqual(await native.warm(second.sessionId,'p',new AbortController().signal),{ready:true});
+  }finally{native.close();}
+});
+
+test('MP4 prewarm caches a bounded prefix and preserves byte range semantics',async()=>{
+  let calls=0;
+  const native=new NativeShorts(async()=>selected,async(_url,headers)=>{
+    calls++;assert.equal(headers.Range,'bytes=0-524287');
+    return {url:selected.url,response:Object.assign(Readable.from([Buffer.from('12345')]),{statusCode:206,headers:{'content-type':'video/mp4','content-range':'bytes 0-4/10'}})} as any;
+  });
+  try{
+    const lease=await native.prepare('p',[id],new AbortController().signal);
+    await native.warm(lease.sessionId,'p',new AbortController().signal);
+    const out=reply();await native.stream({headers:{range:'bytes=2-4'}} as any,out.reply,lease.sessionId,lease.url.split('/').at(-1)!);
+    const chunks=[];for await(const c of out.sent())chunks.push(c);
+    assert.equal(Buffer.concat(chunks).toString(),'345');assert.equal(out.status(),206);assert.equal(out.headers['content-range'],'bytes 2-4/10');assert.equal(calls,1);
+  }finally{native.close();}
+});
+
+test('caption URLs are opaque, validated, cached and lease-owned; releasing cancels registered translation',async()=>{
+  const source=selectNativeTrailer({...data([format]),title:'Fixture',subtitles:{ko:[{ext:'vtt',url:'https://www.youtube.com/api/timedtext?v=fixture'}],en:[{ext:'vtt',url:'https://example.com/private'}]},automatic_captions:{ja:[{ext:'vtt',url:'https://www.youtube.com/api/timedtext?v=fixture&lang=ja'}],fr:[{ext:'vtt',url:'https://www.youtube.com/api/timedtext?v=fixture&tlang=fr'}]}},id);
+  assert.deepEqual(source.subtitles?.map(c=>c.lang),['ko','ja']);let calls=0,cancelled=false;
+  const native=new NativeShorts(async()=>source,async(url)=>{
+    calls++;return {url,response:Object.assign(Readable.from([Buffer.from('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n')]),{statusCode:200,headers:{'content-type':'text/vtt'}})} as any;
+  });
+  try{
+    const lease=await native.prepare('p',[id],new AbortController().signal),track=lease.subtitles[0];
+    assert.equal(JSON.stringify(lease).includes('timedtext'),false);
+    await assert.rejects(native.caption(lease.sessionId,track.id,'q',new AbortController().signal),{statusCode:403});
+    assert.match((await native.caption(lease.sessionId,track.id,'p',new AbortController().signal)).content,/Hello/);
+    await native.caption(lease.sessionId,track.id,'p',new AbortController().signal);assert.equal(calls,1);
+    native.onRelease(lease.sessionId,'p','job',()=>{cancelled=true;});native.release(lease.sessionId);assert.equal(cancelled,true);
+    await assert.rejects(native.caption(lease.sessionId,track.id,'p',new AbortController().signal),{statusCode:410});
   }finally{native.close();}
 });

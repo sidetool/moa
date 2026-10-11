@@ -20,6 +20,7 @@ interface Secret {
   retryCount: number;
 }
 interface Job extends TranslationJob {
+  preview?: boolean;
   profile: string;
   key: string;
   touched: number;
@@ -52,6 +53,7 @@ interface Cache {
   touched: number;
 }
 interface Asset {
+  preview?: boolean;
   profile: string;
   episode: string;
   key: string;
@@ -325,15 +327,28 @@ export class Translations {
     input: { content: string; format: string; sourceLabel: string; sourceLanguage?: string; sourceUrl?: string; startAt?: number },
   ): TranslationJob {
     const episode = this.episode(episodeId, profile);
+    return this.enqueue(episodeId,profile,episode.title,input,false);
+  }
+  private previewProfile(profile:string){
+    const row=this.db.get('SELECT kids FROM profiles WHERE id=?',profile);
+    if(!row||row.kids)throw new ApiFailure(403,'shorts-native-disabled');
+  }
+  /** Short-lived previews use the same bounded queue/cache without adding library/history rows. */
+  startPreview(lease:string,profile:string,title:string,input:{content:string;format:string;sourceLabel:string;sourceLanguage?:string}):TranslationJob {
+    this.previewProfile(profile);
+    if(!/^[A-Za-z0-9_-]{32}$/.test(lease))throw new ApiFailure(400,'invalid-preview');
+    return this.enqueue(`preview:${lease}`,profile,title,input,true);
+  }
+  private enqueue(episodeId:string,profile:string,contextTitle:string,input:{content:string;format:string;sourceLabel:string;sourceLanguage?:string;sourceUrl?:string;startAt?:number},preview:boolean):TranslationJob {
     this.validatePosition(input.startAt ?? 0);
     if (!this.secret.apiKeys.length) throw new ApiFailure(400, 'translation-not-configured');
     if (!this.secret.enabled || this.closed) throw new ApiFailure(409, 'translation-disabled');
     const document = subtitleDocument(input.content, input.format);
-    const title = episode.title.slice(0, 300),
+    const title = contextTitle.slice(0, 300),
       language = (input.sourceLanguage || 'auto').slice(0, 32),
       model = this.secret.model;
     // Include the original bytes and context: different edits/offsets never share output.
-    const context = ['ko-v1', input.content, document.format, title, language, model];
+    const context = [preview?'ko-preview-v1':'ko-v1', input.content, document.format, title, language, model];
     if (this.secret.provider !== 'gemini' || this.secret.baseUrl !== ENDPOINTS.gemini) context.push(this.secret.provider, this.secret.baseUrl);
     const key = digest(JSON.stringify(context));
     for (const job of this.jobs.values())
@@ -360,6 +375,7 @@ export class Translations {
     )
       throw new ApiFailure(429, 'translation-queue-full');
     const job: Job = {
+      preview,
       id: randomUUID(),
       profile,
       key,
@@ -414,15 +430,15 @@ export class Translations {
   get(id: string, profile: string): TranslationJob {
     const job = this.jobs.get(id);
     if (!job || job.profile !== profile) throw new ApiFailure(404, 'translation-job-not-found');
-    this.episode(job.episodeId, profile);
+    if(job.preview)this.previewProfile(profile);else this.episode(job.episodeId, profile);
     job.touched = Date.now();
-    const { key, profile: _, touched, sourceUrl, priorityAt, ...result } = job;
+    const { key, profile: _, touched, sourceUrl, priorityAt, preview, ...result } = job;
     const cache = this.db.get<Cache>('SELECT * FROM translation_cache WHERE key=?', key);
     result.revision = cache?.revision || 0;
     result.partial = !cache?.complete;
     result.translatedRanges = JSON.parse(cache?.ranges || '[]');
     if (cache?.content) {
-      result.track = this.track(job.episodeId, key, profile);
+      result.track = this.track(job.episodeId, key, profile,job.preview);
       if (sourceUrl) result.track.provenance = {creatorName: 'Jimaku', sourceUrl};
     }
     return result;
@@ -464,7 +480,7 @@ export class Translations {
     for (const [id, asset] of this.assets) if (asset.profile === profile) this.assets.delete(id);
   }
   private link(job: Job) {
-    this.db.run(
+    if(!job.preview)this.db.run(
       'INSERT OR IGNORE INTO translated_subtitles(episode_id,cache_key,created_at,source_url) VALUES(?,?,?,?)',
       job.episodeId,
       job.key,
@@ -546,7 +562,7 @@ export class Translations {
       );
       for (const id of work.subscribers) {
         const job = this.jobs.get(id);
-        if (job && this.db.get('SELECT 1 FROM episodes WHERE id=?', job.episodeId)) {
+        if (job && (job.preview?this.db.get('SELECT 1 FROM profiles WHERE id=? AND kids=0',job.profile):this.db.get('SELECT 1 FROM episodes WHERE id=?', job.episodeId))) {
           this.link(job);
           job.state = 'completed';
           job.done = job.total;
@@ -566,7 +582,7 @@ export class Translations {
       .map((row) => this.track(episode, row.cache_key, profile));
   }
   trackEpisode(key: string, profile: string) { return [...this.assets.values()].find(asset => asset.key === key && asset.profile === profile)?.episode; }
-  private track(episode: string, key: string, profile: string): SubtitleTrack {
+  private track(episode: string, key: string, profile: string,preview=false): SubtitleTrack {
     const row = this.db.get<Cache>('SELECT * FROM translation_cache WHERE key=? AND content IS NOT NULL', key);
     if (!row) throw new ApiFailure(404, 'translation-cache-expired');
     let id = [...this.assets].find(
@@ -578,7 +594,7 @@ export class Translations {
         this.assets.delete(oldest[0]);
       }
       id = randomUUID();
-      this.assets.set(id, { profile, episode, key, touched: Date.now() });
+      this.assets.set(id, { preview, profile, episode, key, touched: Date.now() });
     }
     this.assets.get(id)!.touched = Date.now();
     this.db.run('UPDATE translation_cache SET touched=? WHERE key=?', Date.now(), key);
@@ -605,7 +621,7 @@ export class Translations {
     const asset = this.assets.get(id);
     if (!asset) return undefined;
     if (profile !== undefined && profile !== asset.profile) throw new ApiFailure(403, 'session-profile-mismatch');
-    this.episode(asset.episode, asset.profile);
+    if(asset.preview)this.previewProfile(asset.profile);else this.episode(asset.episode, asset.profile);
     const row = this.db.get<Cache>('SELECT * FROM translation_cache WHERE key=? AND content IS NOT NULL', asset.key);
     if (!row || track !== `translation.${row.format}`) throw new ApiFailure(404, 'subtitle-not-found');
     asset.touched = Date.now();

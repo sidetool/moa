@@ -218,6 +218,38 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     }catch(error){if(lease)nativeShorts.release(lease);throw error;}
     finally{req.raw.off('aborted',disconnect);reply.raw.off('close',disconnect);}
   });
+  const assertNativeShort=(req:FastifyRequest,id:string,scoped=true)=>{
+    const owner=nativeShorts.owner(id);
+    if(!owner)throw new ApiFailure(410,'shorts-native-expired');
+    if(scoped&&owner!==profile(req))throw new ApiFailure(403,'session-profile-mismatch');
+    if(!req.moaAccount.permissions.includes('video.watch'))throw new ApiFailure(403,'permission-denied');
+    const settings=db.settings(owner),row=db.get('SELECT kids FROM profiles WHERE id=?',owner);
+    if(!row||row.kids||!settings.shortsEnabled||settings.shortsPlayback!=='native'){nativeShorts.release(id);throw new ApiFailure(403,'shorts-native-disabled');}
+    return owner;
+  };
+  app.post('/api/shorts/native/:sessionId/warm',{schema:{body:object({})}},async(req,reply)=>{
+    const id=params(req).sessionId,owner=assertNativeShort(req,id),abort=new AbortController();
+    const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
+    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal));}
+    finally{reply.raw.off('close',disconnect);}
+  });
+  app.get('/api/playback/:sessionId/shorts-captions/:trackId',async(req,reply)=>{
+    const id=params(req).sessionId,owner=assertNativeShort(req,id,false);
+    const result=await nativeShorts.caption(id,params(req).trackId,owner,AbortSignal.timeout(16_000));
+    return reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff').type('text/vtt; charset=utf-8').send(result.content);
+  });
+  app.post('/api/shorts/native/:sessionId/subtitles/:trackId/translate',{schema:{body:object({})}},async(req,reply)=>{
+    const id=params(req).sessionId,owner=assertNativeShort(req,id);
+    if(!req.moaAccount.permissions.includes('subtitles.translate'))throw new ApiFailure(403,'permission-denied');
+    const abort=new AbortController(),disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
+    try{
+      const source=await nativeShorts.caption(id,params(req).trackId,owner,abort.signal);
+      assertNativeShort(req,id);abort.signal.throwIfAborted();
+      const job=translations.startPreview(id,owner,source.title,source);
+      nativeShorts.onRelease(id,owner,job.id,()=>translations.cancel(job.id,owner));
+      return reply.header('Cache-Control','private, no-store').send(job);
+    }finally{reply.raw.off('close',disconnect);}
+  });
   app.delete('/api/shorts/native/:sessionId',async req=>{nativeShorts.release(params(req).sessionId,profile(req));return {ok:true};});
   app.get('/api/playback/:sessionId/shorts/:assetId',async(req,reply)=>{
     const id=params(req).sessionId,owner=nativeShorts.owner(id);

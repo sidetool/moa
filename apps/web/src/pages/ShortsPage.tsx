@@ -6,7 +6,8 @@ import type { MediaCard, ShortsItem } from "@moa/shared";
 import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
 import { useShortsNative, markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
-import { NativePool, ShortsNativePlayer } from "../components/ShortsNativePlayer";
+import { ShortsNativePlayer } from "../components/ShortsNativePlayer";
+import { NativePool } from "../lib/shorts-native-pool";
 import { ShortsPlayer, type ShortsControl, type ShortsSession } from "../components/ShortsPlayer";
 import { Button, ButtonLink, EmptyState, IconButton, Spinner } from "../components/ui";
 import { api, currentProfileId, sized } from "../lib/api";
@@ -56,6 +57,8 @@ function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: Sho
   const [embedded, setEmbedded] = useState<ReadonlySet<string>>(() => new Set()); // works switched to the YouTube player by hand
   const pool = useRef<NativePool | null>(null);
   pool.current ??= new NativePool();
+  // The next two works that would play directly; YouTube-fallback works are not prepared.
+  const aheadOf = (index: number) => items.slice(index + 1, index + 3).filter(item => !embedded.has(item.key)).map(item => item.key);
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [shownKey, setShownKey] = useState<string | null>(null); // only this work has a mostly visible stage
@@ -179,8 +182,8 @@ function ShortsReel({ items, feed, replay, fit, native, onReplay }: { items: Sho
       blocked={index === active && blocked} onPlay={() => control.current?.play()} native={native && !embedded.has(item.key)}
       onStep={step} onSound={() => setMuted(old => !old)}>
       {index === active && shownKey === item.key && visible && (native && !embedded.has(item.key)
-        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
-            onPlaying={() => { setAutoSkips(0); const next = items[index + 1]; if (next && !embedded.has(next.key)) pool.current?.prefetch(next.key); }} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
+        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} ahead={aheadOf(index)} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
+            onPlaying={() => setAutoSkips(0)} onStarted={() => pool.current?.prefetch(aheadOf(index))} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
         : <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
         onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)}
         autoNext={autoSkips < AUTO_SKIP_LIMIT} onAutoNext={() => { setAutoSkips(old => old + 1); goTo(index + 1, true); }} />)}
@@ -234,6 +237,7 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
       <div className="shorts-rail">
         {blocked && <RailButton label="재생" caption="재생" onClick={onPlay}><Play size={24} fill="currentColor" /></RailButton>}
         {active && (muted || native) && <RailButton label={muted ? "소리 켜기" : "소리 끄기"} caption="소리" onClick={onSound}>{muted ? <VolumeX size={24} /> : <Volume2 size={24} />}</RailButton>}
+        {native && active && <span className="shorts-rail-cc" />}
         {item.mediaId && <RailButton label={inWatchlist ? "내 목록에서 빼기" : "내 목록에 추가"} caption="내 목록" pressed={inWatchlist} disabled={toggle.isPending}
           onClick={() => toggle.mutate({ id: item.mediaId!, add: !inWatchlist })}>{inWatchlist ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
         <span className="shorts-rail-steps">

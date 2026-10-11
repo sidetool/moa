@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import type { Settings, ShortsCategory, ShortsFeed, ShortsItem } from "@moa/shared";
+import type { Settings, ShortsCategory, ShortsFeed, ShortsItem, TranslationJob } from "@moa/shared";
 import { api, currentProfileId } from "../lib/api";
 
 export const SHORTS_CATEGORIES: Array<[ShortsCategory, string]> = [["movie", "영화"], ["series", "시리즈"], ["anime", "애니"]];
@@ -46,6 +46,12 @@ export const useShortsNative = (enabled: boolean) => useQuery({
   queryKey: ["shorts-native"], enabled, staleTime: 60_000, retry: false,
   queryFn: ({ signal }) => api<{ available: boolean }>("/shorts/native", { signal })
 });
-export interface ShortsNativeSession { sessionId: string; url: string; mime: "video/mp4" | "application/vnd.apple.mpegurl" }
+export interface ShortsNativeSubtitle { id: string; label: string; lang: string; auto: boolean; url: string }
+export interface ShortsNativeSession { sessionId: string; url: string; mime: "video/mp4" | "application/vnd.apple.mpegurl"; subtitles?: ShortsNativeSubtitle[] }
 export const prepareShortNative = (key: string, signal: AbortSignal) => api<ShortsNativeSession>(`${path(key)}/native`, { method: "POST", body: {}, signal });
 export const closeShortNative = (sessionId: string) => { api<{ ok: true }>(`/shorts/native/${encodeURIComponent(sessionId)}`, { method: "DELETE", keepalive: true }).catch(() => {}); };
+const nativePath = (sessionId: string) => `/shorts/native/${encodeURIComponent(sessionId)}`;
+/** Server-side warm-up of the first media for a prefetched lease; advisory only. */
+export const warmShortNative = (sessionId: string, signal: AbortSignal) => api<{ ready: boolean }>(`${nativePath(sessionId)}/warm`, { method: "POST", body: {}, signal });
+export const translateShortSubtitle = (sessionId: string, trackId: string, signal?: AbortSignal) =>
+  api<TranslationJob>(`${nativePath(sessionId)}/subtitles/${encodeURIComponent(trackId)}/translate`, { method: "POST", body: {}, signal });

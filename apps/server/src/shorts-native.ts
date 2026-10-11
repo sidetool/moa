@@ -1,11 +1,14 @@
+import { Readable } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { publicStream } from '@moa/extensions';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { ApiFailure } from './util.js';
+import { subtitleDocument } from './translation/subtitle.js';
 import { rewritePlaylist } from './remote-playback.js';
 
-export type NativeTrailer = { url:string; mime:'video/mp4'|'application/vnd.apple.mpegurl'; headers:Record<string,string>; master?:boolean };
+type Caption={url:string;lang:string;label:string;auto:boolean};
+export type NativeTrailer = { videoId?:string; title?:string; subtitles?:Caption[]; url:string; mime:'video/mp4'|'application/vnd.apple.mpegurl'; headers:Record<string,string>; master?:boolean };
 export type TrailerExtractor = (id:string,signal:AbortSignal,proxy?:string)=>Promise<NativeTrailer>;
 const fail = (status=502,code='shorts-native-unavailable')=>new ApiFailure(status,code);
 const token=()=>randomBytes(24).toString('base64url');
@@ -18,6 +21,32 @@ export function trailerMediaUrl(value:unknown):string {
   if(u.protocol!=='https:'||u.username||u.password||u.port||!/(^|\.)googlevideo\.com$/.test(u.hostname))throw fail();
   return u.href;
 }
+export function trailerCaptionUrl(value:unknown):string {
+  if(typeof value!=='string'||value.length>16384)throw fail();
+  const u=new URL(value);
+  if(u.protocol!=='https:'||u.username||u.password||u.port||!['www.youtube.com','youtube.com'].includes(u.hostname)||u.pathname!=='/api/timedtext')throw fail();
+  return u.href;
+}
+function captions(value:any):Caption[]{
+  const found:Caption[]=[];
+  for(const [auto,source] of [[false,value.subtitles],[true,value.automatic_captions]] as const){
+    if(!source||typeof source!=='object')continue;
+    for(const [lang,entries] of Object.entries(source)){
+      if(!/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{1,8}){0,3}$/.test(lang)||!Array.isArray(entries))continue;
+      for(const row of entries){
+        try{
+          if(row.ext!=='vtt')continue;
+          const url=trailerCaptionUrl(row.url);
+          // Original ASR only: translated variants use MOA's explicit translation setting.
+          if(new URL(url).searchParams.has('tlang'))continue;
+          const normalized=lang.replace(/-orig$/i,'');
+          if(!found.some(c=>c.lang===normalized&&c.auto===auto))found.push({url,lang:normalized,label:typeof row.name==='string'?row.name.slice(0,80):normalized,auto});break;
+        }catch{/* Ignore unsupported caption endpoints. */}
+      }
+    }
+  }
+  return found.sort((a,b)=>Number(b.lang.startsWith('ko'))-Number(a.lang.startsWith('ko'))||Number(a.auto)-Number(b.auto)).slice(0,24);
+}
 export function selectNativeTrailer(value:any,id:string):NativeTrailer {
   if(!value||value.id!==id||value.is_live||value.has_drm||!Number.isFinite(value.duration)||value.duration<=0||value.duration>600)throw fail(422,'shorts-native-unsupported');
   const formats=(Array.isArray(value.formats)?value.formats:[]).filter((f:any)=>
@@ -29,7 +58,7 @@ export function selectNativeTrailer(value:any,id:string):NativeTrailer {
       const url=trailerMediaUrl(f.url),headers:Record<string,string>={};
       for(const [key,v] of Object.entries({...value.http_headers,...f.http_headers}))
         if(/^(user-agent|referer|origin|accept-language)$/i.test(key)&&typeof v==='string'&&v.length<=2048&&!/[\r\n]/.test(v))headers[key]=v;
-      return {url,headers,mime:f.protocol==='https'?'video/mp4':'application/vnd.apple.mpegurl'};
+      return {videoId:id,title:typeof value.title==='string'?value.title.slice(0,300):'Trailer',subtitles:captions(value),url,headers,mime:f.protocol==='https'?'video/mp4':'application/vnd.apple.mpegurl'};
     }catch{/* another playable format may exist */}
   }
   // YouTube commonly exposes HLS with separate audio renditions. Preserve the master audio
@@ -40,7 +69,7 @@ export function selectNativeTrailer(value:any,id:string):NativeTrailer {
         const url=trailerMediaUrl(f.manifest_url),headers:Record<string,string>={};
         for(const [key,v] of Object.entries({...value.http_headers,...f.http_headers}))
           if(/^(user-agent|referer|origin|accept-language)$/i.test(key)&&typeof v==='string'&&v.length<=2048&&!/[\r\n]/.test(v))headers[key]=v;
-        return {url,headers,mime:'application/vnd.apple.mpegurl',master:true};
+        return {videoId:id,title:typeof value.title==='string'?value.title.slice(0,300):'Trailer',subtitles:captions(value),url,headers,mime:'application/vnd.apple.mpegurl',master:true};
       }catch{/* no usable master */}
     }
   }
@@ -83,7 +112,7 @@ export function ytDlpExtractor(binary:string):TrailerExtractor {
     signal.throwIfAborted();
     const args=['--ignore-config','--no-plugin-dirs','--no-cache-dir','--no-playlist','--no-warnings','--no-progress',
       '--use-extractors','^youtube$','--no-remote-components','--no-js-runtimes','--js-runtimes',`node:${process.execPath}`,
-      '--socket-timeout','12','--retries','0','--extractor-retries','0','--print','%(.{id,duration,is_live,has_drm,formats,http_headers})j','--skip-download',
+      '--extractor-args','youtube:skip=translated_subs','--socket-timeout','12','--retries','0','--extractor-retries','0','--print','%(.{id,title,duration,is_live,has_drm,formats,http_headers,subtitles,automatic_captions})j','--skip-download',
       '--proxy',proxy||'','--',`https://www.youtube.com/watch?v=${id}`];
     const raw=await new Promise<string>((resolve,reject)=>{
       const child=spawn(binary,args,{detached:process.platform!=='win32',stdio:['ignore','pipe','pipe'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
@@ -93,7 +122,7 @@ export function ytDlpExtractor(binary:string):TrailerExtractor {
       const abort=()=>finish(fail(499,'shorts-native-cancelled'));
       const timer=setTimeout(()=>finish(fail(504,'shorts-native-timeout')),40_000);timer.unref();
       signal.addEventListener('abort',abort,{once:true});
-      child.stdout.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>2*1024*1024)finish(fail());else text+=chunk.toString('utf8');});
+      child.stdout.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>4*1024*1024)finish(fail());else text+=chunk.toString('utf8');});
       child.stderr.on('data',(chunk:Buffer)=>{stderr=(stderr+chunk.toString('utf8')).slice(-16_384);});
       child.once('error',()=>finish(fail(503,'shorts-native-unconfigured')));
       child.once('close',code=>finish(code===0?undefined:extractorFailure(stderr)));
@@ -103,8 +132,10 @@ export function ytDlpExtractor(binary:string):TrailerExtractor {
   };
 }
 
-type Asset={url:string;headers:Record<string,string>;playlist:boolean;master?:boolean};
-type Session={profile:string;expires:number;proxy?:string;abort:AbortController;assets:Map<string,Asset>;bytes:number;active:number;cacheKey:string};
+type CachedAsset={body:Buffer;type:string;url:string;start:number;total:number};
+type Asset={url:string;headers:Record<string,string>;playlist:boolean;master?:boolean;cached?:CachedAsset;loading?:Promise<void>};
+type CaptionAsset=Caption & {content?:string;loading?:Promise<string>};
+type Session={captions:Map<string,CaptionAsset>;title:string;videoId:string;cleanups:Map<string,()=>void>;profile:string;expires:number;proxy?:string;abort:AbortController;assets:Map<string,Asset>;bytes:number;active:number;cacheKey:string;warming?:Promise<{ready:boolean}>};
 /** Bounded, memory-only media leases. Neither URLs nor extraction metadata go to clients or persistent caches. */
 export class NativeShorts {
   private sessions=new Map<string,Session>();
@@ -112,12 +143,14 @@ export class NativeShorts {
   private resolved=new Map<string,{value:NativeTrailer;expires:number}>();
   private sweep:ReturnType<typeof setInterval>;
   private closed=false;
+  private warming=0;
+  private captionLoads=0;
   constructor(private extractor:TrailerExtractor|undefined,private transport=publicStream,private now=Date.now){
     this.sweep=setInterval(()=>{for(const [id,s] of this.sessions)if(s.expires<=this.now())this.release(id);},30_000);this.sweep.unref();
   }
   get available(){return Boolean(this.extractor)&&!this.closed;}
   owner(id:string){return this.sessions.get(id)?.profile;}
-  release(id:string,profile?:string){const s=this.sessions.get(id);if(s&&(!profile||s.profile===profile)){s.abort.abort();this.sessions.delete(id);}}
+  release(id:string,profile?:string){const s=this.sessions.get(id);if(s&&(!profile||s.profile===profile)){s.abort.abort();this.sessions.delete(id);for(const cleanup of s.cleanups.values()){try{cleanup();}catch{}}s.cleanups.clear();}}
   private asset(id:string,s:Session,asset:Asset){
     trailerMediaUrl(asset.url);
     for(const [key,prior] of s.assets)if(prior.url===asset.url)return `/api/playback/${id}/shorts/${key}`;
@@ -150,13 +183,136 @@ export class NativeShorts {
       for(const [id,s] of this.sessions)if(s.expires<=this.now())this.release(id);
       if(this.sessions.size>=32)throw fail(503,'shorts-native-busy');
       const own=[...this.sessions.entries()].filter(([,s])=>s.profile===profile);
-      // At most two leases allow a handover without a previous response racing the next one.
-      while(own.length>=2)this.release(own.shift()![0]);
-      const id=token(),s:Session={profile,expires:this.now()+TTL,proxy,abort:new AbortController(),assets:new Map(),bytes:0,active:0,cacheKey};
+      // Current playback plus two prepared next works; old leases are retired in order.
+      while(own.length>=3)this.release(own.shift()![0]);
+      const id=token(),s:Session={profile,expires:this.now()+TTL,proxy,abort:new AbortController(),assets:new Map(),bytes:0,active:0,cacheKey,title:selected.title||'Trailer',videoId:selected.videoId||ids[0],captions:new Map(),cleanups:new Map()};
       const url=this.asset(id,s,{...selected,playlist:selected.mime!=='video/mp4'});
       this.sessions.set(id,s);
-      return {sessionId:id,url,mime:selected.mime};
+      const subtitles=(selected.subtitles||[]).map(caption=>{
+        const key=token();s.captions.set(key,{...caption});
+        return {id:key,label:caption.label,lang:caption.lang,auto:caption.auto,url:`/api/playback/${id}/shorts-captions/${key}`};
+      });
+      return {sessionId:id,url,mime:selected.mime,subtitles};
     }finally{this.pending.delete(abort);}
+  }
+  private current(id:string,profile?:string){
+    const s=this.sessions.get(id);
+    if(!s||s.expires<=this.now()){this.release(id);throw fail(410,'shorts-native-expired');}
+    if(profile&&s.profile!==profile)throw fail(403,'session-profile-mismatch');
+    return s;
+  }
+  onRelease(id:string,profile:string,key:string,cleanup:()=>void){this.current(id,profile).cleanups.set(key,cleanup);}
+  async caption(id:string,track:string,profile:string,signal:AbortSignal){
+    const s=this.current(id,profile),caption=s.captions.get(track);
+    if(!caption)throw fail(404,'subtitle-not-found');
+    if(!caption.content){
+      if(!caption.loading){
+        if(this.captionLoads>=4)throw fail(429,'shorts-native-busy');
+        this.captionLoads++;
+        const combined=AbortSignal.any([s.abort.signal,AbortSignal.timeout(15_000)]);
+        const root=s.assets.values().next().value!;
+        caption.loading=(async()=>{
+          const result=await this.transport(trailerCaptionUrl(caption.url),root.headers,combined,s.proxy);
+          try{
+            trailerCaptionUrl(result.url);
+            if(result.response.statusCode!==200)throw fail(502,'shorts-subtitles-unavailable');
+            const chunks:Buffer[]=[];let bytes=0;
+            for await(const chunk of result.response){bytes+=chunk.length;if(bytes>1024*1024)throw fail(413,'shorts-subtitles-too-large');chunks.push(Buffer.from(chunk));}
+            combined.throwIfAborted();
+            const document=subtitleDocument(Buffer.concat(chunks).toString('utf8'),'vtt');
+            const content=document.render(Object.fromEntries(document.lines.map(line=>[String(line.id),line.text])));
+            const own=[...s.captions.values()].reduce((n,c)=>n+Buffer.byteLength(c.content||''),0);
+            const total=[...this.sessions.values()].reduce((n,row)=>n+[...row.captions.values()].reduce((m,c)=>m+Buffer.byteLength(c.content||''),0),0);
+            if(own+Buffer.byteLength(content)>4*1024*1024||total+Buffer.byteLength(content)>16*1024*1024)throw fail(429,'shorts-native-busy');
+            caption.content=content;
+            return caption.content;
+          }finally{result.response.destroy();}
+        })().catch(error=>{if(error instanceof ApiFailure)throw error;throw fail(502,'shorts-subtitles-unavailable');}).finally(()=>{this.captionLoads--;});
+      }
+      const loading=caption.loading;
+      try{await loading;}finally{if(caption.loading===loading)caption.loading=undefined;}
+    }
+    signal.throwIfAborted();this.current(id,profile);
+    return {content:caption.content!,format:'vtt',sourceLabel:caption.label,sourceLanguage:caption.lang,title:s.title,videoId:s.videoId};
+  }
+  /** Initial bytes only, no playback. A cancelled warmer never cancels foreground media. */
+  async warm(id:string,profile:string,signal:AbortSignal):Promise<{ready:boolean}>{
+    const s=this.current(id,profile);
+    if(s.warming)return s.warming;
+    if(this.warming>=2)return {ready:false};
+    this.warming++;
+    const combined=AbortSignal.any([signal,s.abort.signal,AbortSignal.timeout(12_000)]);
+    let received=0;
+    const load=async(asset:Asset,range?:string)=>{
+      if(asset.cached)return;
+      if(asset.loading)return asset.loading;
+      const pending=(async()=>{
+        const out=await this.transport(asset.url,{...asset.headers,...(range?{Range:range}:{})},combined,s.proxy);
+        const response=out.response,type=String(response.headers['content-type']||'');
+        try{
+          if(![200,206].includes(response.statusCode||0)||!/^(video\/|audio\/|application\/(?:octet-stream|[^;]*mpegurl))/i.test(type))throw fail();
+          const chunks:Buffer[]=[];let bytes=0;
+          for await(const chunk of response){bytes+=chunk.length;received+=chunk.length;s.bytes+=chunk.length;
+            if(bytes>(asset.playlist?512*1024:2*1024*1024)||received>4*1024*1024||s.bytes>BYTE_LIMIT)throw fail();
+            chunks.push(Buffer.from(chunk));
+          }
+          combined.throwIfAborted();
+          const contentRange=/^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(response.headers['content-range']||''));
+          if(response.statusCode===206&&!contentRange)throw fail();
+          const used=[...this.sessions.values()].reduce((n,row)=>n+[...row.assets.values()].reduce((m,a)=>m+(a.cached?.body.length||0),0),0);
+          if(used+bytes>32*1024*1024)throw fail();
+          asset.cached={body:Buffer.concat(chunks),type,url:out.url,start:contentRange?Number(contentRange[1]):0,total:contentRange?Number(contentRange[3]):bytes};
+        }finally{response.destroy();}
+      })();
+      asset.loading=pending;
+      try{await pending;}finally{if(asset.loading===pending)asset.loading=undefined;}
+    };
+    const child=(parent:Asset,url:string,playlist:boolean)=>{
+      const target=trailerMediaUrl(new URL(url,parent.cached?.url||parent.url).href);
+      const key=this.asset(id,s,{url:target,headers:parent.headers,playlist}).split('/').at(-1)!;
+      return s.assets.get(key)!;
+    };
+    const segment=async(asset:Asset)=>{
+      await load(asset);
+      const body=asset.cached!.body.toString('utf8');
+      if(!body.startsWith('#EXTM3U')||/#EXT-X-(?:SESSION-)?KEY:[^\n]*METHOD=(?!NONE)/.test(body))throw fail();
+      const map=/#EXT-X-MAP:[^\n]*URI="([^"]+)"/.exec(body)?.[1];
+      if(map)await load(child(asset,map,false));
+      const first=body.split(/\r?\n/).find(line=>line.trim()&&!line.startsWith('#'));
+      if(first)await load(child(asset,first.trim(),false));
+    };
+    s.warming=(async()=>{
+      try{
+        const root=s.assets.values().next().value!;
+        if(!root.playlist){await load(root,'bytes=0-524287');return {ready:true};}
+        await load(root);
+        if(!root.master){await segment(root);return {ready:true};}
+        const body=selectTrailerMaster(root.cached!.body.toString('utf8')),lines=body.split('\n');
+        const variants=lines.flatMap((line,i)=>{const h=Number(/RESOLUTION=\d+x(\d+)/.exec(line)?.[1]);return line.startsWith('#EXT-X-STREAM-INF:')&&h?[{height:h,url:lines[i+1],audio:/AUDIO="([^"]+)"/.exec(line)?.[1]}]:[];}).sort((a,b)=>a.height-b.height);
+        const height=(variants.filter(v=>v.height<=360).at(-1)||variants[0])?.height;
+        const picked=variants.find(v=>v.height===height);if(!picked)throw fail();
+        // Match the player's initial 360p choice. ABR can move up after the first fragment.
+        const audio=lines.find(line=>line.startsWith('#EXT-X-MEDIA:')&&line.includes('TYPE=AUDIO')&&line.includes(`GROUP-ID="${picked.audio}"`));
+        const audioUrl=audio&&/URI="([^"]+)"/.exec(audio)?.[1];
+        if(audioUrl)await segment(child(root,audioUrl,true));
+        await segment(child(root,picked.url,true));
+        return {ready:true};
+      }catch{return {ready:false};}finally{this.warming--;}
+    })();
+    return s.warming;
+  }
+  private cachedResponse(asset:Asset,range?:string){
+    const cache=asset.cached;if(!cache)return;
+    let start=0,end=cache.total-1,status=200;
+    if(range){const m=/^bytes=(\d*)-(\d*)$/.exec(range);if(!m||!m[1]&&!m[2])return;
+      start=m[1]?Number(m[1]):Math.max(0,cache.total-Number(m[2]));
+      end=m[1]&&m[2]?Math.min(Number(m[2]),cache.total-1):cache.total-1;status=206;
+      if(!m[2])end=Math.min(end,cache.start+cache.body.length-1);
+    }
+    if(start<cache.start||end<start||end>=cache.start+cache.body.length)return;
+    const body=cache.body.subarray(start-cache.start,end-cache.start+1);
+    const response=Object.assign(Readable.from([body]),{statusCode:status,headers:{'content-type':cache.type,'content-length':String(body.length),'accept-ranges':'bytes',...(status===206?{'content-range':`bytes ${start}-${end}/${cache.total}`}:{})}});
+    return {url:cache.url,response};
   }
   async stream(req:FastifyRequest,reply:FastifyReply,id:string,assetId:string){
     const s=this.sessions.get(id);
@@ -170,7 +326,13 @@ export class NativeShorts {
     let cleaned=false;
     const clean=()=>{if(cleaned)return;cleaned=true;s.active--;reply.raw.off('close',close);};
     try{
-      const upstream=await this.transport(asset.url,{...asset.headers,...(req.headers.range?{Range:req.headers.range}:{})},signal,s.proxy);
+      // A slow speculative request must not hold foreground playback for its full timeout.
+      if(asset.loading)await new Promise<void>(resolve=>{
+        const timer=setTimeout(resolve,250);timer.unref();
+        const done=()=>{clearTimeout(timer);resolve();};asset.loading!.then(done,done);
+      });
+      signal.throwIfAborted();
+      const upstream=this.cachedResponse(asset,req.headers.range)||await this.transport(asset.url,{...asset.headers,...(req.headers.range?{Range:req.headers.range}:{})},signal,s.proxy);
       const response=upstream.response,status=response.statusCode??502;
       if(![200,206].includes(status)){this.resolved.delete(s.cacheKey);response.destroy();throw fail(status===416?416:502);}
       const type=String(response.headers['content-type']||'');
@@ -188,7 +350,7 @@ export class NativeShorts {
         }finally{response.destroy();clean();}
       }
       if(!/^(video\/|audio\/|application\/octet-stream)/i.test(type)){response.destroy();throw fail();}
-      for(const key of ['content-length','content-range','accept-ranges'])if(response.headers[key])reply.header(key,response.headers[key]);
+      for(const key of ['content-length','content-range','accept-ranges'] as const)if(response.headers[key])reply.header(key,response.headers[key]);
       response.once('close',clean);
       return reply.code(status).type(asset.playlist?'application/vnd.apple.mpegurl':/^(video|audio)\//.test(type)?type:'application/octet-stream').send(response);
     }catch(error){clean();abort.abort();if(error instanceof ApiFailure)throw error;throw fail();}

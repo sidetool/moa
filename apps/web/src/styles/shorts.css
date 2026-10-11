@@ -120,18 +120,37 @@
 .shorts-slide.is-native .shorts-stage::after { content: ""; position: absolute; inset: auto 0 0; z-index: 2; height: 42%; background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .62)); pointer-events: none; }
 .shorts-slide.is-native .shorts-overlay { z-index: 3; }
 .shorts-native-paused { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: rgba(255, 255, 255, .9); pointer-events: none; filter: drop-shadow(0 2px 12px rgba(0, 0, 0, .5)); }
-.shorts-progress { position: absolute; inset: auto 0 0; z-index: 3; height: 2px; background: rgba(255, 255, 255, .18); pointer-events: none; }
-.shorts-progress i { display: block; width: 0; height: 100%; background: #fff; }
+/* Seek bar: a real range input, thin track, generous hit area; horizontal drags don't scroll the feed. */
+.shorts-seek { position: absolute; inset: auto 0 0; z-index: 5; width: 100%; height: 22px; margin: 0; background: transparent; appearance: none; -webkit-appearance: none; touch-action: none; cursor: pointer; }
+.shorts-seek:disabled { cursor: default; opacity: .5; }
+.shorts-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, #fff var(--seek), rgba(255, 255, 255, .25) var(--seek)); }
+.shorts-seek::-moz-range-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, #fff var(--seek), rgba(255, 255, 255, .25) var(--seek)); }
+.shorts-seek::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4.5px; border: 0; border-radius: 50%; background: #fff; -webkit-appearance: none; transition: transform .15s; }
+.shorts-seek::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: #fff; }
+.shorts-seek:active::-webkit-slider-thumb, .shorts-seek:focus-visible::-webkit-slider-thumb { transform: scale(1.35); }
+.shorts-seek:disabled::-webkit-slider-thumb { opacity: 0; }
+
+/* Captions: plain text on a soft box, kept above the title block. */
+.shorts-captions { position: absolute; left: var(--gutter); right: var(--gutter); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; pointer-events: none; }
+.shorts-captions span { max-width: 100%; padding: 2px 8px; border-radius: 4px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 1.05rem; font-weight: 600; line-height: 1.4; white-space: pre-wrap; }
+.shorts-rail-cc:empty { display: none; }
+.shorts-cc { position: relative; display: grid; }
+.shorts-cc-menu { position: absolute; right: calc(100% + 10px); bottom: 0; z-index: 6; display: grid; min-width: 180px; max-width: 70vw; padding: 6px; border-radius: 12px; background: rgba(20, 20, 24, .94); box-shadow: var(--shadow-pop); backdrop-filter: blur(12px); }
+.shorts-cc-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px; color: var(--text-2); font-size: .9rem; text-align: left; }
+.shorts-cc-item[aria-checked="true"] { color: #fff; font-weight: 650; }
+.shorts-cc-item:hover { background: rgba(255, 255, 255, .08); }
+.shorts-cc-note { padding: 6px 12px 8px; color: var(--text-3); font-size: .8rem; }
 .shorts-overlay-actions { display: inline-flex; gap: 16px; margin-top: 4px; }
 .shorts-overlay-actions .text-btn { color: #fff; font-weight: 650; }
-.shorts-slide.is-native .shorts-info { position: absolute; left: var(--gutter); right: 96px; bottom: 26px; z-index: 4; width: auto; min-width: 0; padding: 0; }
+.shorts-slide.is-native .shorts-info { position: absolute; left: var(--gutter); right: 96px; bottom: 34px; z-index: 4; width: auto; min-width: 0; padding: 0; }
 .shorts-slide.is-native .shorts-info h2 { font-size: 1.4rem; }
-.shorts-slide.is-native .shorts-rail { position: absolute; right: var(--gutter); bottom: 26px; z-index: 4; padding: 0; }
+.shorts-slide.is-native .shorts-rail { position: absolute; right: var(--gutter); bottom: 34px; z-index: 4; padding: 0; }
 .shorts.is-native .shorts-rail-steps { display: grid; gap: 8px; }
 .shorts.is-native .shorts-rail-steps .shorts-rail-icon { width: 40px; height: 40px; }
 .shorts.is-native .shorts-nav { display: none; }
 @media (max-width: 760px) {
-  .shorts-slide.is-native .shorts-info { left: var(--gutter); right: 76px; bottom: 18px; }
+  .shorts-slide.is-native .shorts-info { left: var(--gutter); right: 76px; bottom: 28px; }
+  .shorts-captions span { font-size: .98rem; }
   .shorts-slide.is-native .shorts-info h2 { font-size: 1.2rem; }
-  .shorts-slide.is-native .shorts-rail { right: 12px; bottom: 18px; }
+  .shorts-slide.is-native .shorts-rail { right: 12px; bottom: 28px; }
 }
