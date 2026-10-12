@@ -397,7 +397,7 @@
 .password-toggle { position: absolute; top: 0; right: 0; bottom: 0; width: 42px; display: grid; place-items: center; color: var(--text-3); border-radius: var(--radius-s); }
 .password-toggle:hover, .password-toggle[aria-pressed=true] { color: var(--text); }
 .field { display: grid; gap: 6px; font-size: .85rem; color: var(--text-3); font-weight: 600; }
-.field input:not([type=checkbox]) { height: 40px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-1); color: var(--text); }
+.field input:not([type=checkbox]), .plugin-install-link input { height: 40px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-1); color: var(--text); }
 .field input:focus { outline: none; border-color: rgba(255, 255, 255, .5); }
 .segmented { display: inline-flex; padding: 3px; border-radius: 8px; background: var(--surface-2); }
 .segmented button { height: 34px; padding: 0 14px; border-radius: 6px; color: var(--text-3); font-weight: 600; font-size: .9rem; }
