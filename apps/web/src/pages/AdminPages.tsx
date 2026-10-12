@@ -5,7 +5,7 @@ import { SubtitleLibrarySettings } from '../components/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
 import { NavigationSettings } from "../components/NavigationSettings";
 import { useDevicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
-import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
+import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, Users, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,11 +18,14 @@ import { DownloadSettings } from "../components/DownloadSettings";
 import { recommendationsKey, useResetDismissals } from "../api/recommendations";
 import { UpdateSettings } from "../components/UpdateSettings";
 import { SystemInfo } from "../components/SystemInfo";
-import { SubtitleAdvancedSettings } from "../components/SubtitleAdvancedSettings";
+import { SubtitleAdvancedSettings, RequestControls } from "../components/SubtitleAdvancedSettings";
 import { ShortsSettings } from "../components/ShortsSettings";
 import { translationModeOf, useTranslationConfig, type TranslationMode } from "../api/translation";
 import { keys, useFolders, useMe, useProfiles, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
-import { AccountSection } from "./AccountsPage";
+import { AccountSection, AccountsPage } from "./AccountsPage";
+import { SourcesPage } from "./SourcesPage";
+import { AboutPage } from "./AboutPage";
+import { RemoteAccessPage } from "./RemoteAccessPage";
 import { Button, ConfirmDialog, EmptyState, IconButton, Select, Skeleton, Spinner, Toggle } from "../components/ui";
 import { api, currentProfileId, hasLoginGate } from "../lib/api";
 import { TYPE_LABEL, cx } from "../lib/format";
@@ -80,7 +83,7 @@ function ScanBanner({ status }: { status?: ScanStatus }) {
   );
 }
 
-export function LibraryPage() {
+export function LibraryPage({ embedded = false }: { embedded?: boolean }) {
   const folders = useFolders();
   const client = useQueryClient();
   const [picking, setPicking] = useState(false);
@@ -116,9 +119,9 @@ export function LibraryPage() {
   };
   const selectedFolders = folders.data?.filter(folder => selected.includes(folder.id)) ?? [];
   return (
-    <div className="page-pad narrow">
+    <div className={embedded ? "settings-embedded" : "page-pad narrow"}>
       <header className="page-head page-head-row">
-        <h1>라이브러리</h1>
+        {!embedded && <h1>라이브러리</h1>}
         <div className="page-head-actions">
           <Button icon={<RefreshCw size={18} />} onClick={() => void scan()} disabled={status.data?.running}>다시 스캔</Button>
           <Button variant="primary" icon={<FolderPlus size={18} />} onClick={() => setPicking(true)}>폴더 추가</Button>
@@ -187,10 +190,14 @@ export function SettingsPage() {
     { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "리모컨·키보드·터치로 다루는 방식이에요. 이 브라우저에만 저장돼요." },
     { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "동작이 바뀌거나 없어질 수 있어요." },
     ...(admin ? [
-      { value: "library", label: "소스와 라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "모든 프로필에 적용돼요." },
+      { value: "sources", label: "영상 소스", group: "서버 관리", icon: <Tv size={18} />, scope: "" },
+      { value: "library", label: "라이브러리", group: "서버 관리", icon: <FolderOpen size={18} />, scope: "" },
+      { value: "subtitle-library", label: "자막 관리", group: "서버 관리", icon: <Subtitles size={18} />, scope: "" },
+      ...(hasLoginGate ? [{ value: "accounts", label: "계정과 초대", group: "서버 관리", icon: <Users size={18} />, scope: "" }] : []),
       { value: "plugins", label: "플러그인", group: "서버 관리", icon: <Puzzle size={18} />, scope: "모든 프로필에 적용돼요." },
       { value: "translation", label: "번역 서비스", group: "서버 관리", icon: <Languages size={18} />, scope: "모든 프로필의 AI 자막 번역에 쓰여요." },
       { value: "downloads", label: "서버 다운로드", group: "서버 관리", icon: <HardDriveDownload size={18} />, scope: "소스 영상을 서버에 받아 둬요. 켜기·다운로드·삭제는 관리자만, 재생은 볼 수 있는 모든 프로필이 할 수 있어요." },
+      { value: "remote-access", label: "원격 접속", group: "서버 관리", icon: <Globe size={18} />, scope: "" },
       { value: "network", label: "네트워크", group: "서버 관리", icon: <Network size={18} />, scope: "모든 프로필에 적용돼요." }
     ] : []),
     { value: "about", label: "정보", group: "", icon: <Info size={18} />, scope: "버전, 업데이트와 크레딧" }
@@ -202,7 +209,8 @@ export function SettingsPage() {
   const chosen = categories.find(item => item.value === requested);
   const current = chosen ?? categories[0];
   const category = current.value;
-  const categoryPath = (value: string) => value === "tabs" ? "/settings/tabs" : `/settings#${value}`;
+  useEffect(() => { window.scrollTo(0, 0); }, [category]);
+  const categoryPath = (value: string) => `/settings#${value}`;
   const saveSettings = useSaveSettings();
   const save = (patch: Partial<Settings>) => saveSettings(patch).catch(() => {});
   const s = settings.data;
@@ -212,9 +220,6 @@ export function SettingsPage() {
   );
   const select = <K extends keyof Settings>(key: K, options: Array<[Settings[K], string]>) => (
     <Select className="setting-select" aria-label={String(key)} value={String(s[key])} onChange={value => void save({ [key]: (typeof s[key] === "number" ? Number(value) : value) } as Partial<Settings>)} options={options.map(([value, label]) => ({ value: String(value), label }))} />
-  );
-  const link = (to: string, icon: React.ReactNode, title: string, desc: string) => (
-    <Link to={to} className="setting setting-link"><span className="setting-icon">{icon}</span><div><b>{title}</b><small>{desc}</small></div><ChevronRight size={18} /></Link>
   );
   return (
     <div className={cx("page-pad narrow settings-page", chosen ? "is-detail" : "is-index")}>
@@ -234,7 +239,7 @@ export function SettingsPage() {
       <header className="settings-panel-head">
         <Link className="settings-back" to="/settings" replace><ChevronLeft size={20} />설정</Link>
         <h2>{current.label}</h2>
-        <p>{current.scope}</p>
+        {current.scope && <p>{current.scope}</p>}
       </header>
       {category === "account" && hasLoginGate && <AccountSection />}
       {category === "playback" && <section className="settings-group">
@@ -263,7 +268,7 @@ export function SettingsPage() {
           {row("기본 자막 언어", "여러 자막이 있으면 이 언어를 먼저 고릅니다.", select("defaultSubtitleLang", [["ko", "한국어"], ["en", "영어"], ["ja", "일본어"], ["off", "끄기"]]))}
           {row("한국어 자막 자동 찾기", "애니에 한국어 자막이 없으면 애니시아·자막 블로그에서 찾아 적용합니다.", <Toggle label="한국어 자막 자동 찾기" checked={s.autoFetchSubtitles} onChange={value => void save({ autoFetchSubtitles: value })} />)}
           {translation && <TranslationModeRow mode={translationModeOf(s)} available={translation.configured && translation.enabled} korean={s.defaultSubtitleLang === "ko"} onChange={translationMode => void save({ translationMode })} />}
-          <SubtitleAdvancedSettings settings={s} admin={admin} save={patch => void save(patch)} />
+          <SubtitleAdvancedSettings settings={s} admin={false} save={patch => void save(patch)} />
         </div>
       </section>}
       {category === "subtitles" && <section className="settings-group">
@@ -271,34 +276,23 @@ export function SettingsPage() {
         <div className="settings-card"><SubtitleStyleControls settings={s} save={patch => void save(patch)} /></div>
         <p className="settings-hint">싱크는 재생 화면의 자막 설정에서 조절해요.</p>
       </section>}
-      {admin && category === "subtitles" && <section className="settings-group"><h2>보관함 · 관리자</h2><div className="settings-card">
-        {link("/subtitles", <FolderOpen size={20} />, "저장한 자막", "AI 번역·온라인·직접 가져온 자막 파일을 모든 프로필에서 관리")}
-      </div></section>}
-      {admin && category === "subtitles" && <SubtitleMemorySettings />}
       {category === "experimental" && <ShortsSettings settings={s} kids={kids} save={patch => void save(patch)} />}
       {category === "experimental" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
         {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}
         {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />)}
       </div></section>}
-      {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /></>}<section className="settings-group"><h2>크레딧</h2><div className="settings-card">{link("/about", <Info size={20} />, "정보/크레딧", "작품 정보 제공 및 오픈소스 라이선스")}</div></section></>}
+      {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /></>}<AboutPage embedded /></>}
       {category === "tabs" && <NavigationSettings />}
       {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} onChange={value => void save({ recommendationsEnabled: value }).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
-      {admin && category === "library" && <section className="settings-group">
-        <div className="settings-card">
-          {link("/sources", <Tv size={20} />, "영상 소스", "확장 저장소, 소스 설치·업데이트·설정")}
-          {link("/library", <FolderOpen size={20} />, "로컬 라이브러리", "영상 폴더 추가와 스캔")}
-          <TmdbSettings />
-          <YouTubeSettings />
-        </div>
-        <p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
-      </section>}
+      {admin && category === "sources" && <SourcesPage embedded />}
+      {admin && category === "accounts" && <AccountsPage embedded />}
+      {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}
+      {admin && category === "subtitle-library" && <><SubtitleLibrarySettings /><SubtitleMemorySettings /></>}
       {admin && category === "plugins" && <WebsitePlugins admin />}
-      {admin && category === "translation" && <TranslationSettings />}
+      {admin && category === "translation" && <><TranslationSettings /><section className="settings-group"><h2>요청 설정</h2><div className="settings-card"><RequestControls /></div></section></>}
       {admin && category === "downloads" && <DownloadSettings />}
-      {admin && category === "network" && <>
-        <section className="settings-group"><h2>원격 접속</h2><div className="settings-card">{link("/remote-access", <Globe size={20} />, "원격 접속", "집 밖에서도 MOA 열기 · 주소와 QR")}</div></section>
-        <NetworkSettings />
-      </>}
+      {admin && category === "remote-access" && <RemoteAccessPage embedded />}
+      {admin && category === "network" && <NetworkSettings />}
       </div>
       </div>
     </div>
@@ -313,13 +307,4 @@ function RecommendationSettings({ enabled, onChange }: { enabled: boolean; onCha
     <div className="setting"><div><b>취향 기반 추천</b><small>홈에 시청 기록과 내 목록을 바탕으로 작품을 추천해요.</small></div><Toggle label="취향 기반 추천" checked={enabled} onChange={onChange} /></div>
     <div className="setting"><div><b>숨긴 추천 초기화</b><small>{state === "done" ? "숨긴 작품이 다시 추천될 수 있어요." : state === "error" ? <span className="settings-error">초기화하지 못했어요. 다시 시도해 주세요.</span> : "‘관심 없음’으로 숨긴 작품을 다시 추천 후보에 넣어요."}</small></div><Button disabled={state === "busy" || state === "done"} onClick={() => void run()}>{state === "busy" ? "초기화 중…" : state === "done" ? "초기화됨" : "초기화"}</Button></div>
   </div></section>;
-}
-
-export function PluginsPage() {
-  const me = useMe();
-  return <div className="page-pad narrow"><header className="page-head"><h1>플러그인</h1></header>{me.isPending ? <Skeleton className="settings-sk" /> : me.data?.role === 'admin' ? <WebsitePlugins admin /> : <EmptyState title="관리자만 볼 수 있어요" />}</div>;
-}
-
-export function SubtitlesPage() {
-  return <div className="page-pad narrow"><header className="page-head"><h1>자막 관리</h1></header><SubtitleLibrarySettings /></div>;
 }

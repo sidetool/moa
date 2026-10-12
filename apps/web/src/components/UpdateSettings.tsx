@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
@@ -16,6 +16,7 @@ const states: Partial<Record<UpdateStatus['state'], string>> = {
 };
 const steps: UpdateStatus['state'][] = ['downloading', 'preflight', 'backup', 'applying', 'verifying'];
 const outcomes: Record<NonNullable<UpdateStatus['history']>[number]['outcome'], string> = { complete: '완료', 'rolled-back': '복구됨', failed: '실패' };
+const Markdown = lazy(() => import('react-markdown'));
 const when = (at: number) => new Date(at).toLocaleString('ko-KR');
 function ReleaseNotes({ tag, onClose }: { tag: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -27,7 +28,7 @@ function ReleaseNotes({ tag, onClose }: { tag: string; onClose: () => void }) {
   }, []);
   return <dialog ref={dialog} className="confirm-dialog release-notes-dialog" aria-label={`${tag} 릴리스`} onCancel={event => { event.preventDefault(); onClose(); }}>
     <header className="sheet-head"><h2>{tag}</h2><IconButton label="닫기" onClick={onClose}><X size={20} /></IconButton></header>
-    <div className="confirm-dialog-body">{notes.isPending ? <Skeleton className="settings-sk" /> : notes.isError ? <><p>변경 사항을 불러오지 못했습니다.</p><Button onClick={() => void notes.refetch()}>다시 시도</Button></> : <div className="release-notes-content">{notes.data?.body || '등록된 변경 사항이 없습니다.'}</div>}</div>
+    <div className="confirm-dialog-body">{notes.isPending ? <Skeleton className="settings-sk" /> : notes.isError ? <><p>변경 사항을 불러오지 못했습니다.</p><Button onClick={() => void notes.refetch()}>다시 시도</Button></> : <div className="release-notes-content"><Suspense fallback={<Skeleton className="settings-sk" />}><Markdown skipHtml components={{ a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}>{notes.data?.body || '등록된 변경 사항이 없습니다.'}</Markdown></Suspense></div>}</div>
   </dialog>;
 }
 

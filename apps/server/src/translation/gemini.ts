@@ -52,6 +52,7 @@ export class Gemini {
     }
     if (!response.ok) {
       let code = response.status === 401 ? 'translation-key-invalid'
+        : response.status === 402 ? 'translation-credit-exhausted'
         : response.status === 403 ? 'translation-permission-denied'
         : response.status === 404 ? 'translation-model-unavailable'
         : response.status === 429 ? 'translation-quota'
@@ -75,6 +76,7 @@ export class Gemini {
           else if (error?.code === 'model_not_found') code = 'translation-model-unavailable';
         } catch {}
       } else await response.body?.cancel();
+      if (signal.aborted) throw new ApiFailure(409, 'translation-cancelled');
       throw new ApiFailure(502, code);
     }
     const reader = response.body?.getReader();
@@ -94,6 +96,7 @@ export class Gemini {
       }
       return JSON.parse(Buffer.concat(chunks).toString('utf8'));
     } catch {
+      if (signal.aborted) throw new ApiFailure(409, 'translation-cancelled');
       throw new ApiFailure(502, 'translation-invalid-response');
     }
   }

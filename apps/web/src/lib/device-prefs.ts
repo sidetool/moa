@@ -43,9 +43,8 @@ export async function loadDevicePrefs(settings: Settings, signal: AbortSignal) {
   if (signal.aborted || profile !== currentProfileId()) return;
   const revision = revisions.get(key), local = record(key);
   try {
-    let result = local?.dirty
-      ? await api<{ settings: DeviceSettings }>('/settings/device', { method: 'PATCH', body: { settings: local.dirty }, signal })
-      : await api<{ settings: DeviceSettings | null }>('/settings/device', { signal });
+    if (local?.dirty) { await saveDevicePrefs(local.dirty); return; }
+    let result = await api<{ settings: DeviceSettings | null }>('/settings/device', { signal });
     if (signal.aborted || profile !== currentProfileId() || revisions.get(key) !== revision || !result) return;
     if (result.settings === null) {
       const legacy: Partial<DeviceSettings> = {};

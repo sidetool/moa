@@ -393,9 +393,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     const updated: Settings = { ...db.settings(profile(req)), ...req.body as Partial<Settings> };
     db.run('INSERT OR REPLACE INTO settings VALUES(?,?)', profile(req), JSON.stringify(updated)); return updated;
   });
-  app.get('/api/home', { schema: { querystring: object({ type: typeQuery, providers: { type: 'string', maxLength: 4096 }, continueScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, watchlistScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, titleGrouping: { type: 'string', enum: ['true', 'false'], default: 'true' } }) } }, async req => { let home=catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope);
+  app.get('/api/home', { schema: { querystring: object({ type: typeQuery, providers: { type: 'string', maxLength: 4096 }, continueScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, watchlistScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, titleGrouping: { type: 'string', enum: ['true', 'false'], default: 'true' } }) } }, async req => { const homeForProfile = () => catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope, query(req).titleGrouping === 'false' ? undefined : (recent, candidates) => groups.continueWatching(recent, candidates, profile(req))); let home=homeForProfile();
     const unlinked = [...new Set(home.rows.flatMap(r => r.items.map(c => c.id)))].filter(id => !db.get('SELECT 1 FROM tmdb_links WHERE media_id=?', id));
-    if (tmdb.enabled && unlinked.length) { await tmdb.ensure(unlinked, 1500); home = catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope); } return {...home,rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.resolve(row.items.map(c=>c.id),profile(req))} : row)}; });
+    if (tmdb.enabled && unlinked.length) { await tmdb.ensure(unlinked, 1500); home = homeForProfile(); } return {...home,rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.resolve(row.items.map(c=>c.id),profile(req))} : row)}; });
   app.get('/api/media', { schema: { querystring: object({ type: typeQuery, genre: string, provider: string, sort: { type: 'string', enum: ['recent', 'title', 'year'], default: 'recent' }, page: pageQuery }) } }, async req => {
     const q = query(req); let cards = catalog.cards(profile(req), q.type);
     if (q.genre) cards = cards.filter(c => c.genres?.includes(q.genre));
@@ -422,7 +422,11 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.get('/api/media/:id/metadata/search', { schema: { params: idParams(), querystring: object({ q: { ...string } }, ['q']) } }, async req => catalog.kids.candidates(await tmdb.search(query(req).q), profile(req)));
   app.patch('/api/media/:id/metadata', { schema: { params: idParams(), body: object({ action: { type: 'string', enum: ['link', 'off', 'auto'] }, kind: { type: 'string', enum: ['tv', 'movie'] }, tmdbId: { type: 'integer', minimum: 1 }, season: { type: 'integer', minimum: 1, maximum: 200 } }, ['action']) } }, async req => tmdb.change(params(req).id, req.body as any));
   app.get('/api/genres', { schema: { querystring: object({ type: typeQuery }) } }, async req => [...new Set(catalog.cards(profile(req), query(req).type).flatMap(c => c.genres || []))].sort());
-  app.get('/api/search', { schema: { querystring: object({ q: { type: 'string', maxLength: 200, default: '' } }) } }, async req => catalog.search(profile(req), query(req).q));
+  app.get('/api/search', { schema: { querystring: object({ q: { type: 'string', maxLength: 200, default: '' } }) } }, async req => {
+    const q = query(req).q, found = catalog.search(profile(req), q);
+    if (!tmdb.enabled || q.trim().length < 2 || found.groups.some(group => group.items.length)) return found;
+    return catalog.search(profile(req), q, await tmdb.search(q).catch(() => []));
+  });
   app.get('/api/watchlist', async req => groups.resolve(catalog.watchlist(profile(req)).map(c=>c.id),profile(req)));
   app.put('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
     const id = params(req).mediaId; if (!db.get('SELECT id FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
@@ -475,6 +479,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.get('/api/sources/:id/preferences', { schema: { params: idParams() } }, async req => sources.preferences(params(req).id));
   app.patch('/api/sources/:id/preferences', { schema: { params: idParams(), body: { type: 'object', maxProperties: 128 } } }, async req => sources.preferences(params(req).id, req.body as Record<string,unknown>));
   app.get('/api/sources/:id/filters', { schema: { params: idParams() } }, async req => sources.capabilities(params(req).id));
+  app.get('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.preloadStatus(params(req).id));
+  app.post('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.preload(params(req).id));
+  app.delete('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.cancelPreload(params(req).id));
   app.post('/api/sources/:id/browse', { schema: { params: idParams(), body: object({ mode: {type:'string',enum:['popular','latest','search'],default:'popular'}, page:pageQuery, q:{type:'string',maxLength:200,default:''}, selection:browseSelection }) } }, async req => {
     const b = req.body as any; return withMetadata(await sources.browse(params(req).id, profile(req), b.mode, b.page, b.q, b.selection), profile(req));
   });

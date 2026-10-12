@@ -70,7 +70,7 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
   return { controller: new module.namespace.SubtitleController(video), tracks, renderers, swaps, styleWrites, eventWrites };
 }
 
-test('VTT load applies controls lift with zero offset and supports saved height and keeps a minimum bottom inset', async () => {
+test('VTT restores native cue placement after controls lift or custom height is reset', async () => {
   const { controller, tracks } = await harness();
   controller.setLift(true);
   await controller.show(vtt);
@@ -78,11 +78,11 @@ test('VTT load applies controls lift with zero offset and supports saved height 
   tracks[0].dispatchEvent(new Event('load'));
   assert.equal(tracks[0].track.cues[0].line, -3);
   controller.setLift(false);
-  assert.equal(tracks[0].track.cues[0].line, -1);
+  assert.equal(tracks[0].track.cues[0].line, 'auto');
   controller.setHeight(25);
   assert.equal(tracks[0].track.cues[0].line,-5);
   controller.setHeight(0);
-  assert.equal(tracks[0].track.cues[0].line, -1);
+  assert.equal(tracks[0].track.cues[0].line, 'auto');
   const positioned = { ...cue(), line: 20, snapToLines: false, lineAlign: 'center' };
   tracks[0].track.cues = [positioned];
   controller.setLift(true);

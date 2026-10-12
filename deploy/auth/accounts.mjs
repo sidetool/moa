@@ -24,6 +24,7 @@ export function migrateAccounts(db, credentials, now) {
       created_by TEXT NOT NULL, created_at INTEGER NOT NULL);`);
   transaction(db, () => {
     if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'permissions')) db.exec(`ALTER TABLE accounts ADD COLUMN permissions TEXT NOT NULL DEFAULT '${JSON.stringify(permissions)}'`);
+    if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'session_days')) db.exec('ALTER TABLE accounts ADD COLUMN session_days INTEGER NOT NULL DEFAULT 365');
     if (!db.prepare("SELECT 1 FROM auth_migrations WHERE id='accounts-v1'").get()) {
       for (const user of credentials.users ?? []) db.prepare('INSERT INTO accounts(id,username,salt,hash,role,created_at) VALUES(?,?,?,?,?,?)')
         .run(randomUUID(), user.username, user.salt, user.hash, 'admin', now());
@@ -99,6 +100,15 @@ export function accountsService(db, origin, now) {
   }
   async function api(method, path, actor, body, requestOrigin = origin) {
     if (method === 'GET' && path === 'me') return accountView(actor);
+    if (path === 'session-settings' && method === 'GET') return { days: actor.session_days };
+    if (path === 'session-settings' && method === 'PATCH') return transaction(db, () => {
+      if (Object.keys(body).length !== 1 || !Number.isInteger(body.days) || body.days < 1 || body.days > 365) fail(400, 'invalid-request');
+      db.prepare('UPDATE accounts SET session_days=? WHERE id=?').run(body.days, actor.id);
+      const expires = now() + body.days * 86400000;
+      db.prepare('UPDATE sessions SET expires=MIN(expires,?) WHERE account_id=? AND remember=1').run(expires, actor.id);
+      db.prepare('UPDATE sessions SET expires=?,refreshed=? WHERE token_hash=? AND remember=1').run(expires, now(), actor.token_hash);
+      return { days: body.days };
+    });
     if (path === 'sessions' && method === 'GET') return db.prepare(`SELECT d.*,s.expires FROM session_devices d JOIN sessions s ON s.token_hash=d.token_hash
       WHERE s.account_id=? AND s.expires>? ORDER BY d.last_seen DESC,d.id`).all(actor.id, now()).map(row => ({
       id: row.id, name: row.name, current: row.token_hash === actor.token_hash, createdAt: row.created_at, lastSeen: row.last_seen, expiresAt: row.expires, deviceId: row.device_id,

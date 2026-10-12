@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { createAuthServer } from './server.mjs';
-import { migrateAccounts } from './accounts.mjs';
+import { migrateAccounts, passwordHash } from './accounts.mjs';
 
 test('existing sessions appear before their next request and gain device names when used', async () => {
   const db = new DatabaseSync(':memory:'), credentials = { users: [], csrfSecret: 'session-migration-test' };
@@ -68,5 +68,75 @@ test('login devices expose no credentials and revoke only the current account se
     assert.equal((await request(first, `sessions/${current.id}`, 'DELETE')).status, 204);
     assert.equal((await request(first)).status, 401);
     assert.equal(db.prepare('SELECT count(*) n FROM session_devices').get().n, 1);
+  } finally { await new Promise(resolve => server.close(resolve)); db.close(); }
+});
+
+test('remembered login duration persists per account and controls issuance, renewal and expiry', async () => {
+  const db = new DatabaseSync(':memory:'), credentials = { users: [], csrfSecret: 'duration-test' };
+  const day = 86400000;
+  let clock = Date.now();
+  const server = createAuthServer({ database: db, credentials, origin: 'http://localhost', secure: false, allowAnyHost: true, now: () => clock });
+  const salt = randomBytes(30).toString('hex'), password = 'test-duration-password';
+  const passwordValue = await passwordHash(password, salt);
+  for (const id of ['owner', 'other']) db.prepare('INSERT INTO accounts(id,username,salt,hash,role,created_at) VALUES(?,?,?,?,?,?)').run(id, id, salt, passwordValue, 'member', clock);
+  const issue = (id, remember = 1) => {
+    const token = randomBytes(32).toString('base64url');
+    db.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'), id, clock + (remember ? 365 * day : day / 2), clock, remember);
+    return token;
+  };
+  let token = issue('owner');
+  issue('owner'); issue('other');
+  const temporary = issue('owner', 0);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const request = (path, data, extra = {}) => fetch(`${origin}/__moa/${path}`, {
+    redirect: 'manual', method: data ? 'PATCH' : 'GET', headers: { Cookie: `moa_session=${token}`, Origin: origin, 'X-Moa-Request': '1', 'Content-Type': 'application/json', ...extra },
+    ...(data ? { body: JSON.stringify(data) } : {})
+  });
+  const login = async remember => {
+    const page = await fetch(`${origin}/__moa/login`);
+    const csrf = (await page.text()).match(/name="csrf" value="([^"]+)"/)[1];
+    return fetch(`${origin}/__moa/login`, { redirect: 'manual', method: 'POST', headers: { Cookie: `moa_csrf=${csrf}`, Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ csrf, username: 'owner', password, remember }) });
+  };
+  try {
+    assert.deepEqual(await (await request('api/session-settings')).json(), { days: 365 });
+    for (const data of [{ days: 0 }, { days: 366 }, { days: 1.5 }, { days: '30' }, { days: 7, accountId: 'other' }]) assert.equal((await request('api/session-settings', data)).status, 400);
+    assert.equal((await request('api/session-settings', { days: 7 }, { Origin: 'https://evil.example' })).status, 403);
+    let response = await request('api/session-settings', { days: 7 });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('set-cookie'), /Max-Age=604800/);
+    assert.deepEqual(db.prepare("SELECT DISTINCT expires FROM sessions WHERE account_id='owner' AND remember=1").all().map(row => row.expires), [clock + 7 * day]);
+    assert.equal(db.prepare("SELECT session_days FROM accounts WHERE id='other'").get().session_days, 365);
+    assert.equal(db.prepare("SELECT expires FROM sessions WHERE account_id='other'").get().expires, clock + 365 * day);
+    const temporaryExpiry = db.prepare('SELECT expires FROM sessions WHERE token_hash=?').get(createHash('sha256').update(temporary).digest('hex')).expires;
+    assert.equal(temporaryExpiry, clock + day / 2);
+    migrateAccounts(db, credentials, () => clock);
+    assert.deepEqual(await (await request('api/session-settings')).json(), { days: 7 });
+    response = await login('on');
+    assert.equal(response.status, 303);
+    assert.match(response.headers.get('set-cookie'), /Max-Age=604800/);
+    token = response.headers.getSetCookie().find(value => value.startsWith('moa_session=')).split(';')[0].slice('moa_session='.length);
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    assert.equal(db.prepare('SELECT expires FROM sessions WHERE token_hash=?').get(tokenHash).expires, clock + 7 * day);
+    clock += 2 * day;
+    response = await request('check');
+    assert.equal(response.status, 204);
+    assert.match(response.headers.get('set-cookie'), /Max-Age=604800/);
+    assert.equal(db.prepare('SELECT expires FROM sessions WHERE token_hash=?').get(tokenHash).expires, clock + 7 * day);
+    response = await request('api/session-settings', { days: 1 });
+    assert.equal(response.status, 200);
+    clock += day / 2;
+    assert.match((await request('check')).headers.get('set-cookie'), /Max-Age=86400/);
+    clock += day;
+    assert.equal((await request('check')).status, 401);
+    response = await login('');
+    const sessionCookie = response.headers.getSetCookie().find(value => value.startsWith('moa_session='));
+    assert.ok(!sessionCookie.includes('Max-Age'));
+    token = sessionCookie.split(';')[0].slice('moa_session='.length);
+    response = await request('api/session-settings', { days: 30 });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('set-cookie'), null);
+    clock += day / 2;
+    assert.equal((await request('check')).status, 401);
   } finally { await new Promise(resolve => server.close(resolve)); db.close(); }
 });

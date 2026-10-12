@@ -38,7 +38,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
   const needsSetup = () => !database.prepare('SELECT 1 FROM accounts LIMIT 1').get();
   const accounts = accountsService(database, publicUrl.origin, now);
   database.prepare('DELETE FROM sessions WHERE expires <= ?').run(now());
-  const findSession = database.prepare(`SELECT s.*,a.id,a.username,a.role,a.salt,a.hash,a.permissions FROM sessions s JOIN accounts a ON a.id=s.account_id
+  const findSession = database.prepare(`SELECT s.*,a.id,a.username,a.role,a.salt,a.hash,a.permissions,a.session_days FROM sessions s JOIN accounts a ON a.id=s.account_id
     WHERE token_hash=? AND expires>? AND a.disabled=0`);
   const rates = new Map();
   let verifying = 0;
@@ -151,17 +151,18 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
     return ip;
   }
   function issueSession(req, res, user, next, remember) {
+    const days = accounts.get(user.id)?.session_days ?? 365;
     const token = transaction(database, () => {
       const current = accounts.get(user.id);
       if (!current || current.disabled || current.hash !== user.hash) fail(401, 'login-required');
       const old = session(req);
       if (old) database.prepare('DELETE FROM sessions WHERE token_hash=?').run(old.token_hash);
       const token = randomBytes(32).toString('base64url');
-      database.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(hash(token), user.id, now() + (remember ? 365 * DAY : DAY / 2), now(), Number(remember));
+      database.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(hash(token), user.id, now() + (remember ? days * DAY : DAY / 2), now(), Number(remember));
       database.prepare('UPDATE accounts SET last_login_at=? WHERE id=?').run(now(), user.id);
       return token;
     });
-    return redirect(res, `${PREFIX}continue?next=${encodeURIComponent(target(next))}`, { 'Set-Cookie': [cookie(cookieName('session'), token, remember ? 365 * 86400 : null), cookie(cookieName('csrf'), '', 0)] });
+    return redirect(res, `${PREFIX}continue?next=${encodeURIComponent(target(next))}`, { 'Set-Cookie': [cookie(cookieName('session'), token, remember ? days * 86400 : null), cookie(cookieName('csrf'), '', 0)] });
   }
 
   const server = http.createServer((req, res) => context.run({ secure: trustProxy ? req.headers['x-forwarded-proto'] === 'https' : secure }, async () => {
@@ -179,9 +180,9 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
         const current = session(req);
         if (!current) return send(res, 401);
         const headers = { 'X-Moa-Account': current.id, 'X-Moa-Role': current.role, 'X-Moa-Permissions': accountView(current).permissions.join(','), 'X-Moa-Username': encodeURIComponent(current.username) };
-        if (current.remember && now() - current.refreshed >= DAY) {
-          database.prepare('UPDATE sessions SET expires = ?, refreshed = ? WHERE token_hash = ?').run(now() + 365 * DAY, now(), current.token_hash);
-          headers['Set-Cookie'] = cookie(cookieName('session'), cookieValue(req, 'session'), 365 * 86400);
+        if (current.remember && now() - current.refreshed >= Math.min(DAY, current.session_days * DAY / 2)) {
+          database.prepare('UPDATE sessions SET expires = ?, refreshed = ? WHERE token_hash = ?').run(now() + current.session_days * DAY, now(), current.token_hash);
+          headers['Set-Cookie'] = cookie(cookieName('session'), cookieValue(req, 'session'), current.session_days * 86400);
         }
         return send(res, 204, '', headers);
       }
@@ -208,7 +209,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
         finally { if (expensive) verifying--; }
         return send(res, result === null ? 204 : path === 'invites' && req.method === 'POST' ? 201 : 200,
           result === null ? '' : JSON.stringify(result), { 'Content-Type': 'application/json; charset=utf-8',
-          ...(path === 'password' ? { 'Set-Cookie': cookie(cookieName('session'), '', 0) } : {}) });
+          ...(path === 'password' ? { 'Set-Cookie': cookie(cookieName('session'), '', 0) } : path === 'session-settings' && req.method === 'PATCH' && current.remember ? { 'Set-Cookie': cookie(cookieName('session'), cookieValue(req, 'session'), result.days * 86400) } : {}) });
       }
       if (url.pathname === `${PREFIX}setup`) {
         if (!needsSetup()) return send(res, 404, '설정이 이미 완료되었습니다.');

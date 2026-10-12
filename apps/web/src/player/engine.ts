@@ -110,7 +110,7 @@ export class SubtitleController {
   private renderVtt = () => {
     const track = this.trackEl?.track, parent = this.video.parentElement;
     if (!track || !parent) return;
-    const native = (this.appearance.background === "original" && (this.appearance.shadow === undefined || this.appearance.shadow === "original") && (this.appearance.outline === undefined || this.appearance.outline === "original") && (this.appearance.padding === undefined || this.appearance.padding === 6)) || document.pictureInPictureElement === this.video
+    const native = (this.appearance.background === "original" && (this.appearance.shadow === undefined || this.appearance.shadow === "original") && (this.appearance.outline === undefined || this.appearance.outline === "original")) || document.pictureInPictureElement === this.video
       || (this.video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }).webkitDisplayingFullscreen;
     track.mode = native ? "showing" : "hidden";
     if (native) { this.overlay?.remove(); this.overlay = null; return; }
@@ -334,6 +334,8 @@ export class SubtitleController {
     const track = this.trackEl?.track;
     const cues = track?.cues;
     if (!cues) return;
+    const { size, scale, background, shadow = 'original', outline = 'original' } = this.appearance;
+    const originalAppearance = (scale === undefined ? size === 'medium' : scale === 100) && background === 'original' && shadow === 'original' && outline === 'original';
 
     const style = typeof getComputedStyle === "function" ? getComputedStyle(this.video) : null;
     const fontSize = parseFloat(style?.fontSize || "18") || 18;
@@ -367,7 +369,7 @@ export class SubtitleController {
         this.cueRows.set(cue, {key, rows});
         // Preserve deliberately placed/vertical cues at position zero, but keep
         // ordinary bottom captions inside the viewport even with large fonts.
-        const managed = this.height > 0 || (!cue.vertical && original.line === "auto");
+        const managed = this.height > 0 || (!cue.vertical && original.line === "auto" && (lifted || !originalAppearance));
         const line = managed ? -paddingLines - rows : original.line;
         const snap = managed ? true : original.snapToLines;
         if (cue.line === line && cue.snapToLines === snap && cached?.key === key) continue;

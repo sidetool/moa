@@ -451,6 +451,10 @@ export interface SourcePreference {
   secret: boolean; configured?: boolean; value?: string | boolean | number | string[];
   choices?: readonly { label: string; value: string | number }[];
 }
+export interface SourcePreload {
+  sourceId: string; state: 'idle' | 'running' | 'completed' | 'cancelled' | 'limited' | 'failed';
+  pages: number; items: number; cachedItems: number; startedAt?: string; updatedAt?: string; error?: string;
+}
 // GET /api/sources -> VideoSource[]
 // POST /api/sources/refresh { url? } -> VideoSource[]
 // POST /api/sources/:id/install -> VideoSource

@@ -11,7 +11,7 @@ process.env.VITE_MOCK = '0';
 const server = await createServer({ configFile: false, plugins: [react()], root: fileURLToPath(new URL('..', import.meta.url)), logLevel: 'error', server: { host: '127.0.0.1', port: 0, open: false, proxy: {} } });
 await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
-let session = 0, resolved = 0, reordered = false, resolveGate, preferenceGate, recommendation, retentionDays = 90, failDeviceSave = false;
+let session = 0, resolved = 0, reordered = false, resolveGate, preferenceGate, deviceReplayGate, recommendation, retentionDays = 90, failDeviceSave = false;
 const lookups = [], errors = [], preferences = new Map(), profileSettings = new Map(), deviceSettings = new Map();
 const upload = () => ({ id: 'upload-stable', source: 'upload', label: '선택한 파일.srt', format: 'vtt', url: `/fixture/upload-${++resolved}.vtt` });
 const translated = () => ({ id: 'translation-stable', source: 'translation', label: '한국어 · AI 번역', lang: 'ko', format: 'vtt', url: `/fixture/translation-${++resolved}.vtt` });
@@ -42,6 +42,8 @@ try {
       assert.match(request.headers()['x-moa-device'], /^[0-9a-f-]{36}$/i);
       if (request.method() === 'PATCH') {
         const body = request.postDataJSON();
+        const gate = deviceReplayGate; deviceReplayGate = undefined;
+        await gate;
         if (!body.migrate || !deviceSettings.has(key)) deviceSettings.set(key, { ...deviceSettings.get(key), ...body.settings });
       }
       return json({ settings: deviceSettings.get(key) ?? null });
@@ -52,6 +54,7 @@ try {
       return json({ defaultSubtitleLang: 'ja', subtitleSize: 'medium', autoFetchSubtitles: false, autoplayNext: false, translationMode: 'manual', ...profileSettings.get(profile) });
     }
     if (pathname === '/api/admin/updates') return json({ mode: 'none', state: 'unsupported', current: 'fixture', restartRequired: false, available: false });
+    if (pathname === '/api/admin/subtitles') return json([]);
     if (pathname === '/api/admin/subtitle-memory') {
       if (request.method() === 'PATCH') retentionDays = request.postDataJSON().retentionDays;
       if (request.method() === 'DELETE') preferences.clear();
@@ -153,6 +156,7 @@ try {
   await other.mouse.move(100, 100);
   await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
   await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await other.locator('.sub-style-details > summary').click();
   await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).fill('2.5');
   await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).press('Tab');
   await other.getByRole('spinbutton', { name: '자막 윤곽선', exact: true }).fill('1.2');
@@ -162,6 +166,7 @@ try {
   await other.getByRole('spinbutton', { name: '자막 크기', exact: true }).press('Tab');
   await other.getByRole('spinbutton', { name: '자막 높이', exact: true }).fill('12');
   await other.getByRole('spinbutton', { name: '자막 높이', exact: true }).press('Tab');
+  await other.getByRole('radio', { name: '옅게', exact: true }).click();
   await other.getByRole('spinbutton', { name: '자막 배경 여백', exact: true }).fill('8');
   await other.getByRole('spinbutton', { name: '자막 배경 여백', exact: true }).press('Tab');
   await other.waitForFunction(() => document.querySelector('.subtitle-overlay')?.getAttribute('data-shadow') === '2.5' && document.querySelector('.subtitle-overlay')?.getAttribute('data-outline') === '1.2');
@@ -178,12 +183,14 @@ try {
   await other.mouse.move(100, 100);
   await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
   await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await other.locator('.sub-style-details > summary').click();
   assert.match(await other.locator('.sync-value').innerText(), /0.5/);
   assert.equal(await other.getByRole('spinbutton', { name: '자막 크기', exact: true }).inputValue(), '125');
   assert.equal(await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).inputValue(), '2.5');
   assert.equal(await other.evaluate(async () => (await import('/src/lib/device-prefs.ts')).devicePrefs().seekStep), 30);
   await page.reload(); await ready(); await open();
   await page.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await page.locator('.sub-style-details > summary').click();
   assert.equal(await page.getByRole('spinbutton', { name: '자막 크기', exact: true }).inputValue(), '100');
   assert.equal(await page.getByRole('spinbutton', { name: '자막 그림자', exact: true }).inputValue(), '');
   assert.equal(await page.getByRole('spinbutton', { name: '자막 윤곽선', exact: true }).inputValue(), '');
@@ -196,6 +203,7 @@ try {
   await other.mouse.move(100, 100);
   await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
   await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await other.locator('.sub-style-details > summary').click();
   assert.match(await other.locator('.sync-value').innerText(), /0.0/);
   assert.equal(await other.getByRole('spinbutton', { name: '자막 그림자', exact: true }).inputValue(), '2.5');
   await other.goto(`${base}watch/e2`);
@@ -203,6 +211,7 @@ try {
   await other.mouse.move(100, 100);
   await other.getByRole('button', { name: '자막 및 음성', exact: true }).click();
   await other.getByRole('button', { name: /자막 설정/, exact: false }).click();
+  await other.locator('.sub-style-details > summary').click();
   await other.getByRole('button', { name: '자막 설정', exact: true }).click();
   const offSaved = other.waitForResponse(response => response.url().endsWith('/subtitles/preference') && response.request().method() === 'PUT');
   await other.getByRole('button', { name: '끄기', exact: true }).click();
@@ -221,8 +230,8 @@ try {
   releasePreference(); preferenceGate = undefined; await preferenceFinished;
   await selected('English');
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('moa.subtitleChoice:["first","e2"]')).label), 'English');
-  await page.goto(`${base}settings#subtitles`);
-  await page.getByRole('heading', { name: '자막 선택 기억 · 관리자' }).waitFor();
+  await page.goto(`${base}settings#subtitle-library`);
+  await page.getByRole('heading', { name: '자막 선택 기억' }).waitFor();
   await page.getByRole('combobox', { name: '자막 선택 보관 단위' }).click();
   await page.getByRole('option', { name: '개월 (30일)' }).click();
   await page.getByRole('spinbutton', { name: '자막 선택 보관 기간' }).fill('2');
@@ -260,8 +269,31 @@ try {
     await device.loadDevicePrefs({}, new AbortController().signal);
   });
   assert.equal(deviceSettings.get(`first:${deviceId}`).subtitleOutline, 4);
+  failDeviceSave = true;
+  await page.evaluate(async () => {
+    const device = await import('/src/lib/device-prefs.ts');
+    await device.saveDevicePrefs({ subtitleScale: 120 }).catch(() => {});
+  });
+  failDeviceSave = false;
+  let releaseDeviceReplay;
+  deviceReplayGate = new Promise(resolve => { releaseDeviceReplay = resolve; });
+  const replayStarted = page.waitForRequest(request => request.url().endsWith('/settings/device') && request.method() === 'PATCH');
+  await page.evaluate(async () => {
+    const device = await import('/src/lib/device-prefs.ts');
+    window.deviceReplay = device.loadDevicePrefs({}, new AbortController().signal);
+  });
+  await replayStarted;
+  await page.evaluate(async () => {
+    const device = await import('/src/lib/device-prefs.ts');
+    window.deviceEdit = device.saveDevicePrefs({ subtitleScale: 160 });
+  });
+  await page.waitForTimeout(100);
+  releaseDeviceReplay();
+  await page.evaluate(async () => { await Promise.all([window.deviceReplay, window.deviceEdit]); delete window.deviceReplay; delete window.deviceEdit; });
+  assert.equal(deviceSettings.get(`first:${deviceId}`).subtitleScale, 160);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('moa.deviceSettings:first')).dirty), null);
   const values = await page.evaluate(() => Object.entries(localStorage).filter(([key]) => key.startsWith('moa.subtitleChoice:')).map(([, value]) => JSON.parse(value)));
   assert.ok(values.every(value => !value || !('url' in value) && !('content' in value)));
   assert.deepEqual(errors, []);
-  console.log('Subtitle selection replay, fresh URL resolution, reordered tracks, off, profile/episode isolation, carried upload/translation and late-response, cross-device selection/off, isolated server-backed device appearance and controls, admin retention/deletion, expired cache removal, recommended subtitle precedence, skip ranges and subtitle shadow/outline checks passed.');
+  console.log('Subtitle selection replay, fresh URL resolution, reordered tracks, off, profile/episode isolation, carried upload/translation and late-response, cross-device selection/off, isolated server-backed device appearance and controls, delayed device replay with newer edits, admin retention/deletion, expired cache removal, recommended subtitle precedence, skip ranges and subtitle shadow/outline checks passed.');
 } finally { await browser.close(); await server.close(); }

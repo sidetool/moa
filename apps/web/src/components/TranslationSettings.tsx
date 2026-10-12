@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { KeyRound, Trash2 } from 'lucide-react';
 import { ApiError } from '../lib/api';
 import { cx } from '../lib/format';
@@ -110,7 +110,7 @@ export function TranslationSettings() {
             onChange={value => { setDraft(''); save.mutate({ provider: value as TranslationConfig['provider'] }); }} />
         </div>
         <div className="setting setting-field">
-          <div><b>API 주소</b><small>HTTPS API 또는 로컬·내부 네트워크의 HTTP API 기본 주소를 입력해 주세요. localhost는 MOA 서버를 가리켜요.</small></div>
+          <div><b>API 주소</b><small>API 기본 경로까지 입력하세요. 예: http://host.docker.internal:8317/v1. Docker 안의 localhost는 컨테이너를 가리켜요.</small></div>
           <form className="translation-model" onSubmit={event => { event.preventDefault(); if (endpoint !== null && endpoint.trim() !== c.baseUrl) { setDraft(''); save.mutate({ baseUrl: endpoint.trim() }); } }}>
             <input aria-label="번역 API 주소" type="url" value={endpoint ?? c.baseUrl} disabled={busy} required
               onChange={event => setEndpoint(event.target.value)} />
@@ -176,7 +176,6 @@ export function TranslationSettings() {
             <span>줄</span>
           </label>
         </div>
-        <p className="settings-hint translation-message">요청 간격과 실패 시 다시 시도 횟수는 <Link className="text-btn" to="/settings#subtitle-advanced">자막 고급설정</Link>에서 바꿀 수 있어요.</p>
         {message && <p className={cx('translation-message', message.error ? 'settings-error' : 'settings-hint')} role={message.error ? 'alert' : 'status'}>{message.text}</p>}
       </>}
     </div>

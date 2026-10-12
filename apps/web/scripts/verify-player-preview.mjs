@@ -90,8 +90,8 @@ try {
     await page.getByLabel('자막 파일 선택', { exact: true }).setInputFiles({ name: 'invalid.txt', mimeType: 'text/plain', buffer: Buffer.from('unsupported subtitle') });
     const notice = page.locator('.player-notice');
     await notice.waitFor({ state: 'visible' });
-    const noticeBox = await notice.boundingBox(), controls = await page.locator('.player-controls').boundingBox();
-    assert.ok(noticeBox.y >= controls.y + controls.height);
+    const noticeBox = await notice.boundingBox();
+    assert.ok(noticeBox.y + noticeBox.height <= (await page.locator('.seek').boundingBox()).y);
     assert.ok(noticeBox.y + noticeBox.height <= 844);
     await page.screenshot({ path: verificationPath(`verification-player-notice-${width}.png`) });
     results.push({ width, mode, mainPosition: before, previewRequests: previews.length });

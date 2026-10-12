@@ -10,7 +10,7 @@ import { ApkBridge, apkIconUrl, type ApkEntry, type ExtractedVideos } from './ap
 import { parseSeason } from '@moa/subtitles-ko';
 import { createHash } from 'node:crypto';
 import { publicUrl, parseOutboundProxy, compatibilityHttp, fetchRepository, fetchExtension, invokeMangayomi, preferenceSchema, trimPreferenceState, validatePreferenceState, type MangayomiEntry, type PreferenceValues, type SourceItem, type SourcePage, type SourceVideo } from '@moa/extensions';
-import type { MediaType, VideoSource, SourcePreference, BrowseSchema, BrowseSelection, SourceRemovalImpact, SourceRemovalResult } from '@moa/shared';
+import type { MediaType, VideoSource, SourcePreference, SourcePreload, BrowseSchema, BrowseSelection, SourceRemovalImpact, SourceRemovalResult } from '@moa/shared';
 import { Store } from './db.js';
 import { Catalog } from './catalog.js';
 import { ApiFailure, now } from './util.js';
@@ -31,6 +31,7 @@ export class Sources {
   }
   private queues = new SourceQueue();
   private abort = new AbortController();
+  private preloads = new Map<string, { status: SourcePreload; abort: AbortController; work?: Promise<void> }>();
   private reads: SourceReadCache;
   readonly stats = new CacheStats();
   private details: DetailPolicy;
@@ -166,7 +167,7 @@ export class Sources {
     if(this.db.get("SELECT 1 FROM sqlite_master WHERE name='download_jobs'")) {
       for(const id of unique)if(this.db.get("SELECT 1 FROM download_jobs WHERE source_id=? AND state IN ('queued','resolving','downloading','finalizing','ready') LIMIT 1",id))throw new ApiFailure(409,'source-has-downloads');
     }
-    for (const id of unique) this.removing.add(id);
+    for (const id of unique) { this.removing.add(id); this.cancelPreload(id); }
     try {
       // Drain already accepted work and reject new work until deletion and session cleanup finish.
       await Promise.allSettled(unique.flatMap(id => [...(this.reading.get(id)||[]), this.queues.drain(id)]));
@@ -283,6 +284,7 @@ export class Sources {
     this.db.run('INSERT OR REPLACE INTO source_health VALUES(?,?,?,?,?)',id,Number(ok),now(),action,ok ? null : code);
   }
   invalidate(id: string) {
+    this.cancelPreload(id);
     this.navigationRevision.set(id,(this.navigationRevision.get(id)||0)+1);
     for(const [key,value] of this.failedNavigation)if(value.source===id)this.failedNavigation.delete(key);
     this.reads.invalidate(id); this.details.invalidateSource(id); this.db.run('UPDATE source_media SET detail_at=0 WHERE source_id=?', id); }
@@ -541,6 +543,11 @@ export class Sources {
     return this.trackRead(id,()=>this.browseRead(id,profile,mode,page,query,selection));
   }
   private async browseRead(id: string, profile: string, mode: string, page: number, query: string, selection?: BrowseSelection) {
+    const result = await this.browsePage(id, mode, page, query, selection);
+    const ids=result.ids.filter(mid=>this.db.get('SELECT 1 FROM media WHERE id=?',mid));
+    return {items:this.catalog.kids.filter(ids.map(id=>({id})),profile).map(({id:mid})=>this.catalog.card(this.db.get('SELECT * FROM media WHERE id=?',mid)!,profile)),page,hasNextPage:result.more};
+  }
+  private async browsePage(id: string, mode: string, page: number, query: string, selection?: BrowseSelection) {
     if (this.removing.has(id)) throw new ApiFailure(409, 'source-removing');
     this.row(id);
     // Validation also shares its schema read. Do it outside the source lane to avoid nested queue waits.
@@ -560,8 +567,51 @@ export class Sources {
       return {ids,more:Boolean(raw.hasNextPage)};
     }, 'background'));
     this.row(id);
-    const ids=result.ids.filter(mid=>this.db.get('SELECT 1 FROM media WHERE id=?',mid));
-    return {items:this.catalog.kids.filter(ids.map(id=>({id})),profile).map(({id:mid})=>this.catalog.card(this.db.get('SELECT * FROM media WHERE id=?',mid)!,profile)),page,hasNextPage:result.more};
+    return result;
+  }
+  preloadStatus(id: string): SourcePreload {
+    this.row(id, false);
+    return { ...(this.preloads.get(id)?.status ?? { sourceId: id, state: 'idle', pages: 0, items: 0 }), cachedItems: this.db.get('SELECT count(*) AS n FROM source_media WHERE source_id=?', id)!.n };
+  }
+  cancelPreload(id: string): SourcePreload {
+    const job = this.preloads.get(id);
+    if (job?.status.state === 'running') { job.abort.abort(); job.status.state = 'cancelled'; job.status.updatedAt = now(); }
+    return this.preloadStatus(id);
+  }
+  preload(id: string): SourcePreload {
+    const source = this.row(id);
+    if (source.live) throw new ApiFailure(400, 'source-preload-live');
+    const previous = this.preloads.get(id);
+    if (previous?.work) return this.preloadStatus(id);
+    if ([...this.preloads.values()].filter(job => job.work).length >= 2) throw new ApiFailure(429, 'source-preload-busy');
+    const job: { status: SourcePreload; abort: AbortController; work?: Promise<void> } = {
+      status: { sourceId: id, state: 'running', pages: 0, items: 0, cachedItems: 0, startedAt: now(), updatedAt: now() }, abort: new AbortController()
+    };
+    this.preloads.set(id, job);
+    const signal = AbortSignal.any([job.abort.signal, this.abort.signal]);
+    job.work = this.trackRead(id, async () => {
+      const schema = await this.schema(id);
+      const mode = schema.availableModes.includes('popular') ? 'popular' : schema.availableModes.includes('latest') ? 'latest' : undefined;
+      if (!mode) throw new ApiFailure(400, 'source-preload-unavailable');
+      const seen = new Set<string>(), started = Date.now();
+      for (let page = 1; page <= 500; page++) {
+        signal.throwIfAborted();
+        const result = await this.browsePage(id, mode, page, '');
+        signal.throwIfAborted();
+        const before = seen.size;
+        for (const mid of result.ids) seen.add(mid);
+        Object.assign(job.status, { pages: page, items: seen.size, updatedAt: now() });
+        if (!result.more) { job.status.state = 'completed'; return; }
+        if (seen.size === before || seen.size >= 100000 || Date.now() - started >= 15 * 60_000 || page === 500) {
+          job.status.state = 'limited'; return;
+        }
+        await delay(250, undefined, { signal });
+      }
+    }).catch(error => {
+      job.status.state = signal.aborted ? 'cancelled' : 'failed';
+      if (!signal.aborted) job.status.error = error instanceof ApiFailure ? error.error : 'source-preload-failed';
+    }).finally(() => { job.status.updatedAt = now(); job.work = undefined; });
+    return this.preloadStatus(id);
   }
   detail(id:string) {
     const mapping=this.db.get('SELECT source_id FROM source_media WHERE media_id=?',id);

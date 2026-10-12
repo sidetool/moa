@@ -1,5 +1,3 @@
-import { AboutPage } from './pages/AboutPage';
-import { RemoteAccessPage } from './pages/RemoteAccessPage';
 import { installPlaybackFullscreen } from "./lib/playback-fullscreen";
 import { installRemoteNavigation } from "./lib/remote";
 import { StrictMode, useEffect, type ReactNode } from "react";
@@ -11,11 +9,10 @@ import { GenrePage, HomePage } from "./pages/HomePage";
 import { PlayRedirect, TitlePage } from "./pages/TitlePage";
 import { ProfilesPage } from "./pages/ProfilesPage";
 import { HistoryPage, MePage, MyListPage, SearchPage } from "./pages/ListPages";
-import { LibraryPage, PluginsPage, SettingsPage, SubtitlesPage } from "./pages/AdminPages";
-import { SourcesPage, SourceBrowsePage } from "./pages/SourcesPage";
+import { SettingsPage } from "./pages/AdminPages";
+import { SourceBrowsePage } from "./pages/SourcesPage";
 import { WatchPage } from "./pages/WatchPage";
 import { ShortsPage } from "./pages/ShortsPage";
-import { AccountsPage } from "./pages/AccountsPage";
 import { useMe } from "./api/queries";
 import { EmptyState } from "./components/ui";
 import { ApiError, currentProfileId } from "./lib/api";
@@ -81,16 +78,16 @@ const router = createBrowserRouter([
       { path: "/my-list", element: <MyListPage /> },
       { path: "/shorts", element: <ShortsPage /> },
       { path: "/history", element: <HistoryPage /> },
-      { path: "/sources", element: <RequireAdmin><SourcesPage /></RequireAdmin> },
+      { path: "/sources", element: <RequireAdmin><Navigate to="/settings#sources" replace /></RequireAdmin> },
       { path: "/sources/:id", element: <SourceBrowsePage /> },
-      { path: "/library", element: <RequireAdmin><LibraryPage /></RequireAdmin> },
-      { path: "/plugins", element: <RequireAdmin><PluginsPage /></RequireAdmin> },
-      { path: "/subtitles", element: <RequireAdmin><SubtitlesPage /></RequireAdmin> },
-      { path: "/remote-access", element: <RequireAdmin><RemoteAccessPage /></RequireAdmin> },
-      { path: "/accounts", element: <AccountsPage /> },
-      { path: "/about", element: <AboutPage /> },
+      { path: "/library", element: <RequireAdmin><Navigate to="/settings#library" replace /></RequireAdmin> },
+      { path: "/plugins", element: <RequireAdmin><Navigate to="/settings#plugins" replace /></RequireAdmin> },
+      { path: "/subtitles", element: <RequireAdmin><Navigate to="/settings#subtitle-library" replace /></RequireAdmin> },
+      { path: "/remote-access", element: <RequireAdmin><Navigate to="/settings#remote-access" replace /></RequireAdmin> },
+      { path: "/accounts", element: <RequireAdmin><Navigate to="/settings#accounts" replace /></RequireAdmin> },
+      { path: "/about", element: <Navigate to="/settings#about" replace /> },
       { path: "/settings", element: <SettingsPage /> },
-      { path: "/settings/tabs", element: <SettingsPage /> },
+      { path: "/settings/tabs", element: <Navigate to="/settings#tabs" replace /> },
       { path: "/me", element: <MePage /> },
       { path: "*", element: <Navigate to="/" replace /> }
     ]

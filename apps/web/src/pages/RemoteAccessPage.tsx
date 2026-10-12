@@ -101,7 +101,7 @@ function StatusCard({ status, onStop, onRetry, busy }: { status: RemoteAccessSta
   </section>;
 }
 
-export function RemoteAccessPage() {
+export function RemoteAccessPage({ embedded = false }: { embedded?: boolean }) {
   const client = useQueryClient();
   const status = useQuery({
     queryKey: statusKey,
@@ -144,8 +144,8 @@ export function RemoteAccessPage() {
   const pub = choice.public;
   const gateway = (s?.gatewayServiceUrl ?? 'http://moa-gateway:8080').replace(/^https?:\/\//, '');
 
-  return <div className="page-pad narrow settings-page remote-page">
-    <header className="page-head"><h1>원격 접속</h1></header>
+  return <div className={embedded ? "settings-embedded remote-page" : "page-pad narrow settings-page remote-page"}>
+    {!embedded && <header className="page-head"><h1>원격 접속</h1></header>}
     <p className="remote-lead">집 밖에서도 휴대폰이나 다른 기기로 MOA를 열 수 있게 연결해요. 연결된 주소로 들어와도 로그인은 그대로 거쳐요.</p>
 
     {status.isPending ? <Skeleton className="remote-sk" />

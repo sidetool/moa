@@ -17,9 +17,9 @@ export function SubtitleMemorySettings() {
   });
   const value = amount ?? String((memory.data?.retentionDays ?? 90) / Number(unit));
   const days = Number(value) * Number(unit);
-  return <section className="settings-group"><h2>자막 선택 기억 · 관리자</h2><div className="settings-card">
+  return <section className="settings-group"><h2>자막 선택 기억</h2><div className="settings-card">
     <div className="setting setting-stack"><div><b>보관 기간</b><small>프로필별 선택과 끄기를 {memory.data?.count ?? 0}개 기억하고 있어요. 마지막 선택부터 기간이 지나면 자동으로 지워져요. 추천은 남아 있는 프로필별 선택을 집계해요.</small></div>
-      <div className="network-actions"><input type="number" className="setting-input" aria-label="자막 선택 보관 기간" min="1" max={Math.floor(3650 / Number(unit))} step="1" value={value} onChange={event => setAmount(event.target.value)} />
+      <div className="network-actions retention-controls"><input type="number" className="setting-input" aria-label="자막 선택 보관 기간" min="1" max={Math.floor(3650 / Number(unit))} step="1" value={value} onChange={event => setAmount(event.target.value)} />
         <Select aria-label="자막 선택 보관 단위" value={unit} onChange={next => { setAmount(String(Math.max(1, Math.round(days / Number(next))))); setUnit(next); }} options={[{ value: '1', label: '일' }, { value: '30', label: '개월 (30일)' }]} />
         <Button disabled={change.isPending || !memory.data || !Number.isInteger(Number(value)) || days < 1 || days > 3650 || days === memory.data.retentionDays} onClick={() => change.mutate(days)}>저장</Button>
       </div>

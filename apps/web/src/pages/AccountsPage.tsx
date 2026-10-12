@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ACCOUNT_PERMISSIONS, type AccountSummary, type AccountPermission, type Invite } from "@moa/shared";
 import { useMe } from "../api/queries";
-import { Button, ConfirmDialog, EmptyState, IconButton, PasswordInput, Select, Skeleton } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, PasswordInput, Skeleton } from "../components/ui";
 import { ApiError, api, authApi } from "../lib/api";
 import { cx } from "../lib/format";
 
@@ -152,27 +152,27 @@ function AccountRow({ account, me }: { account: AccountSummary; me: string }) {
   const self = account.id === me;
   const error = patch.error ?? reset.error ?? remove.error;
   return <li className={cx("account-row", account.disabled && "is-inactive")}>
-    <button className="account-main" aria-expanded={open} onClick={() => setOpen(v => !v)}>
+    <button className="account-main" aria-expanded={account.role === "member" ? open : undefined} onClick={() => { if (account.role === "member") setOpen(v => !v); }}>
       <span className="account-icon" aria-hidden="true">{account.role === "admin" ? <ShieldCheck size={20} /> : <UserRound size={20} />}</span>
       <span className="account-name"><b>{account.username}{self && <small> · 나</small>}</b><small>{[ago(account.lastLoginAt), account.inviteLabel && `초대: ${account.inviteLabel}`].filter(Boolean).join(" · ")}</small></span>
-      {account.disabled ? <span className="status-pill">사용 중지</span> : account.role === "admin" && <span className="status-pill is-ok">관리자</span>}
+      <span className="account-badges">{account.disabled ? <span className="status-pill">사용 중지</span> : account.role === "admin" && <span className="status-pill is-ok">관리자</span>}{account.role === "member" && <span className="account-permissions-trigger" aria-hidden="true">권한<ChevronRight size={16} /></span>}</span>
     </button>
-    {open && <div className="account-actions">
+    <div className="account-actions">
       {temp ? <div className="temp-password">
         <p>임시 비밀번호예요. 지금만 볼 수 있으니 전달해 주세요. 로그인 후 설정에서 바꾸면 돼요.</p>
         <p className="invite-code">{temp}</p>
         <CopyButton text={temp} label="복사" />
       </div> : <>
         <Button disabled={patch.isPending} onClick={() => { patch.reset(); setConfirmRole(true); }}>{account.role === "admin" ? "관리자 해제" : "관리자로 지정"}</Button>
-        {account.role === "member" && <Select multiple className="account-permissions" aria-label={`${account.username} 권한`} value={account.permissions} disabled={patch.isPending} options={ACCOUNT_PERMISSIONS.map(value => ({ value, label: PERMISSION_LABELS[value] }))} onChange={permissions => patch.mutate({ permissions })} />}
         {!self && <Button disabled={patch.isPending} onClick={() => patch.mutate({ disabled: !account.disabled })}>{account.disabled ? "다시 사용" : "사용 중지"}</Button>}
         {!self && <Button icon={<KeyRound size={16} />} disabled={reset.isPending} onClick={() => reset.mutate()}>비밀번호 초기화</Button>}
         {!self && (confirm
           ? <span className="account-confirm">프로필과 시청 기록도 모두 지워져요. <Button variant="ghost" className="btn-danger" disabled={remove.isPending} onClick={() => remove.mutate()}>삭제</Button><Button variant="ghost" onClick={() => setConfirm(false)}>취소</Button></span>
           : <Button variant="ghost" className="btn-danger" icon={<Trash2 size={16} />} onClick={() => setConfirm(true)}>계정 삭제</Button>)}
       </>}
+      {open && !temp && account.role === "member" && <fieldset className="account-permissions"><legend>권한</legend>{ACCOUNT_PERMISSIONS.map(permission => <label key={permission}><input type="checkbox" checked={account.permissions.includes(permission)} aria-disabled={patch.isPending} onClick={event => { if (patch.isPending) event.preventDefault(); }} onChange={event => { if (!patch.isPending) patch.mutate({ permissions: event.target.checked ? [...account.permissions, permission] : account.permissions.filter(value => value !== permission) }); }} />{PERMISSION_LABELS[permission]}</label>)}</fieldset>}
       {error && <p className="settings-error" role="alert">{errorText(error)}</p>}
-    </div>}
+    </div>
     {confirmRole && <ConfirmDialog title={account.role === "admin" ? "관리자 해제" : "관리자로 지정"} confirmLabel={account.role === "admin" ? "해제" : "지정"} busy={patch.isPending} onClose={() => setConfirmRole(false)} onConfirm={() => patch.mutate({ role: account.role === "admin" ? "member" : "admin" }, { onSuccess: () => setConfirmRole(false) })}>
       <p>{account.role === "admin" ? `${account.username} 님의 관리자 권한을 해제할까요?` : `${account.username} 님을 관리자로 지정할까요? 계정, 플러그인과 서버 설정을 변경할 수 있어요.`}</p>
       {patch.error && <p className="settings-error" role="alert">{errorText(patch.error)}</p>}
@@ -180,7 +180,7 @@ function AccountRow({ account, me }: { account: AccountSummary; me: string }) {
   </li>;
 }
 
-export function AccountsPage() {
+export function AccountsPage({ embedded = false }: { embedded?: boolean }) {
   const me = useMe();
   const admin = me.data?.role === "admin";
   const invites = useQuery({ queryKey: INVITES, queryFn: () => authApi<Invite[]>("/invites"), enabled: admin });
@@ -192,8 +192,8 @@ export function AccountsPage() {
   const list = invites.data ?? [];
   const active = list.filter(i => i.status === "active");
   const old = list.filter(i => i.status !== "active");
-  return <div className="page-pad narrow settings-page accounts-page">
-    <header className="page-head"><h1>계정과 초대</h1></header>
+  return <div className={embedded ? "settings-embedded accounts-page" : "page-pad narrow settings-page accounts-page"}>
+    {!embedded && <header className="page-head"><h1>계정과 초대</h1></header>}
     <section className="settings-group">
       <div className="settings-group-head"><h2>초대</h2></div>
       <div className="invite-hero">
@@ -256,7 +256,7 @@ export function AccountSection() {
       <div className="setting"><span className="setting-icon">{admin ? <ShieldCheck size={20} /> : <UserRound size={20} />}</span><div><b>{me.data.username}</b><small>{admin ? "관리자" : "일반 계정"} · 프로필 최대 5개</small></div>
         <Button variant="ghost" onClick={() => void logout()}>로그아웃</Button></div>
       <button className="setting setting-link" onClick={() => setPassword(true)}><span className="setting-icon"><KeyRound size={20} /></span><div><b>비밀번호 변경</b><small>모든 기기에서 다시 로그인해야 해요.</small></div><ChevronRight size={18} /></button>
-      {admin && <Link to="/accounts" className="setting setting-link"><span className="setting-icon"><Users size={20} /></span><div><b>계정과 초대</b><small>초대 코드 만들기, 계정 관리</small></div><ChevronRight size={18} /></Link>}
+      {admin && <Link to="/settings#accounts" className="setting setting-link"><span className="setting-icon"><Users size={20} /></span><div><b>계정과 초대</b><small>초대 코드 만들기, 계정 관리</small></div><ChevronRight size={18} /></Link>}
     </div>
     {password && <PasswordSheet onClose={() => setPassword(false)} />}
   </section><LoginDevices /></>;
