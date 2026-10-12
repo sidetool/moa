@@ -24,6 +24,7 @@ export function migrateAccounts(db, credentials, now) {
       created_by TEXT NOT NULL, created_at INTEGER NOT NULL);`);
   transaction(db, () => {
     if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'permissions')) db.exec(`ALTER TABLE accounts ADD COLUMN permissions TEXT NOT NULL DEFAULT '${JSON.stringify(permissions)}'`);
+    if (!db.prepare('PRAGMA table_info(accounts)').all().some(column => column.name === 'session_days')) db.exec('ALTER TABLE accounts ADD COLUMN session_days INTEGER NOT NULL DEFAULT 365');
     if (!db.prepare("SELECT 1 FROM auth_migrations WHERE id='accounts-v1'").get()) {
       for (const user of credentials.users ?? []) db.prepare('INSERT INTO accounts(id,username,salt,hash,role,created_at) VALUES(?,?,?,?,?,?)')
         .run(randomUUID(), user.username, user.salt, user.hash, 'admin', now());
@@ -34,7 +35,12 @@ export function migrateAccounts(db, credentials, now) {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       expires INTEGER NOT NULL, refreshed INTEGER NOT NULL, remember INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);`);
+      CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
+      CREATE TABLE IF NOT EXISTS session_devices (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE REFERENCES sessions(token_hash) ON DELETE CASCADE,
+        name TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, device_id TEXT);`);
+    const device = db.prepare('INSERT INTO session_devices(id,token_hash,name,created_at,last_seen) VALUES(?,?,?,?,?)');
+    for (const session of db.prepare('SELECT s.token_hash,s.refreshed FROM sessions s LEFT JOIN session_devices d ON d.token_hash=s.token_hash WHERE d.id IS NULL').all()) device.run(randomUUID(), session.token_hash, '브라우저', session.refreshed, session.refreshed);
   });
 }
 export function accountsService(db, origin, now) {
@@ -94,6 +100,28 @@ export function accountsService(db, origin, now) {
   }
   async function api(method, path, actor, body, requestOrigin = origin) {
     if (method === 'GET' && path === 'me') return accountView(actor);
+    if (path === 'session-settings' && method === 'GET') return { days: actor.session_days };
+    if (path === 'session-settings' && method === 'PATCH') return transaction(db, () => {
+      if (Object.keys(body).length !== 1 || !Number.isInteger(body.days) || body.days < 1 || body.days > 365) fail(400, 'invalid-request');
+      db.prepare('UPDATE accounts SET session_days=? WHERE id=?').run(body.days, actor.id);
+      const expires = now() + body.days * 86400000;
+      db.prepare('UPDATE sessions SET expires=MIN(expires,?) WHERE account_id=? AND remember=1').run(expires, actor.id);
+      db.prepare('UPDATE sessions SET expires=?,refreshed=? WHERE token_hash=? AND remember=1').run(expires, now(), actor.token_hash);
+      return { days: body.days };
+    });
+    if (path === 'sessions' && method === 'GET') return db.prepare(`SELECT d.*,s.expires FROM session_devices d JOIN sessions s ON s.token_hash=d.token_hash
+      WHERE s.account_id=? AND s.expires>? ORDER BY d.last_seen DESC,d.id`).all(actor.id, now()).map(row => ({
+      id: row.id, name: row.name, current: row.token_hash === actor.token_hash, createdAt: row.created_at, lastSeen: row.last_seen, expiresAt: row.expires, deviceId: row.device_id,
+    }));
+    if (path === 'sessions' && method === 'DELETE') {
+      db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash<>?').run(actor.id, actor.token_hash);
+      return null;
+    }
+    const device = /^sessions\/([a-f0-9-]{36})$/.exec(path);
+    if (device && method === 'DELETE') {
+      if (!db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash=(SELECT token_hash FROM session_devices WHERE id=?)').run(actor.id, device[1]).changes) fail(404, 'session-not-found');
+      return null;
+    }
     if (method === 'POST' && path === 'password') {
       if (!await verify(actor, body.current)) fail(400, 'incorrect-password');
       await changePassword(actor, body.next); return null;

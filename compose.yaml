@@ -11,6 +11,7 @@ services:
     init: true
     environment:
       MOA_REQUIRE_ACCOUNT: "1"
+      MOA_UPDATER_DIR: /run/moa-updater
       MOA_DOWNLOAD_ROOT: /downloads
       MOA_DOWNLOADS_ENABLED: ${MOA_DOWNLOADS_ENABLED:-1}
       MOA_APK_URL: http://moa-apk:8797
@@ -27,6 +28,7 @@ services:
     volumes:
       - ${MOA_APK_SECRET_PATH:-moa-apk-secret}:/run/moa-apk:ro
       - ${MOA_CONNECTOR_SECRET_PATH:-moa-connector-secret}:/run/moa-connector:ro
+      - moa-updater-mailbox:/run/moa-updater
       - ${MOA_DATA_PATH:-moa-data}:/data
       - ${MOA_DOWNLOAD_PATH:-moa-downloads}:/downloads
       - ${MEDIA_PATH:-moa-media}:${MEDIA_CONTAINER_PATH:-/media/library}:ro
@@ -42,6 +44,26 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 3
+  moa-updater:
+    image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa:${MOA_VERSION:-latest}
+    user: "0:1000"
+    command: [flock, -n, -F, /state/updater.lock, node, scripts/container-updater.mjs]
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/installation:ro
+      - moa-updater-state:/state
+      - moa-updater-mailbox:/state/data/updater
+    depends_on:
+      moa: {condition: service_healthy}
+      moa-auth: {condition: service_healthy}
+      moa-gateway: {condition: service_started}
+      moa-connector: {condition: service_started}
+    restart: unless-stopped
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "3"}}
+
   moa-auth:
     image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa-auth:${MOA_VERSION:-latest}
     pull_policy: always
@@ -126,6 +148,8 @@ services:
       retries: 3
     # No host port and no gateway/tunnel route. MOA is the only API client.
 volumes:
+  moa-updater-state:
+  moa-updater-mailbox:
   moa-apk-data:
   moa-apk-secret:
   moa-data:

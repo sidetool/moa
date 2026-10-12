@@ -19,7 +19,7 @@ export function useUpdateAction(onDone?: () => void) {
 
 export const busyStates: UpdateStatus['state'][] = ['checking', 'updating', 'downloading', 'preflight', 'backup', 'applying', 'verifying', 'rolling-back'];
 export const updateErrors: Record<string, string> = {
-  'updater-unavailable': '호스트 업데이트 도구에 연결하지 못했어요.',
+  'updater-unavailable': '업데이트 서비스에 연결하지 못했습니다.',
   'update-dirty': '수정한 파일을 커밋하거나 정리한 뒤 다시 확인해 주세요.',
   'update-diverged': '현재 브랜치와 원격 기록이 갈라졌어요. 호스트에서 먼저 병합해 주세요.',
   'update-deployment-diverged': '실행 중인 이미지가 현재 소스보다 앞서거나 기록이 달라요. 호스트에서 배포 브랜치를 확인해 주세요.',
@@ -47,6 +47,7 @@ export const updateErrors: Record<string, string> = {
   'update-rolled-back': '이전 버전으로 복구했어요. 업데이트 기록을 확인해 주세요.',
   'update-recovery-required': '자동 복구를 마치지 못했어요. 설치 안내의 복구 방법을 확인해 주세요.',
   'update-invalid-policy': '업데이트 채널을 다시 선택해 주세요.',
+  'update-layout-unsupported': '현재 Compose 구성을 확인할 수 없습니다. 설치 폴더와 볼륨 구성을 확인해 주세요.',
   'update-not-available': '업데이트 상태가 바뀌었어요. 다시 확인해 주세요.'
 };
 export const errorCode = (error: unknown) => error instanceof ApiError ? error.code : error ? 'update-failed' : null;

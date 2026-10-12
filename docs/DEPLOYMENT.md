@@ -74,7 +74,7 @@ Linux에서 `.env`의 `COMPOSE_FILE`에 콜론으로 override를 추가한다. �
 | APK 실행 환경 끄기 | `compose.no-apk.yaml` | 선택 사항, `apk` profile을 활성화하지 않음 |
 | Linux VAAPI | `compose.vaapi.yaml` | render 장치의 GID와 GPU 드라이버 |
 | Cloudflare tunnel | `compose.tunnel.yaml` | 배포자 소유 tunnel config와 credentials |
-| 웹에서 서버 업데이트 | `compose.updates.yaml` | 호스트 업데이트 도구와 상태 디렉터리 연결, [설정 안내](UPDATES.md) |
+| 기존 호스트 업데이터 유지 | `compose.updates.yaml` | 기본 업데이트 컨테이너 대신 기존 도구와 상태 디렉터리 연결, [설정 안내](UPDATES.md) |
 
 ### APK 기본 구성과 기존 설치
 
@@ -117,14 +117,7 @@ MOA_REVISION=$(git rev-parse HEAD) docker compose build
 docker compose up -d --pull never
 ```
 
-설치 후 호스트에 Node.js 22 이상을 준비하면 업데이트 도구를 사용할 수 있다.
-
-```sh
-node scripts/update.mjs check
-node scripts/update.mjs apply
-```
-
-업데이트 도구는 현재 Git 추적 브랜치와 Docker 실행 여부를 확인한다. 웹에서 실행하려면 [업데이트 안내](UPDATES.md)에 따라 호스트 도구를 연결한다. 기본 이미지 소유자는 `sidetool`이며 `MOA_IMAGE_OWNER`로 변경할 수 있다. workflow는 main push와 `v*` 태그에서 해당 저장소 소유자의 앱·인증·APK·connector 이미지를 amd64/arm64로 빌드한다. 로컬 빌드 검증과 ARM 실제 기기 검증은 별개다. 백업·운영 측정 결과를 공개 저장소에 추가하지 않는다.
+기본 Compose의 `moa-updater`가 릴리스 확인·백업·설치를 처리한다. 별도 호스트 도구 없이 설정 → 정보에서 채널을 선택하고 업데이트한다. Docker socket은 이 서비스에만 연결되며 호스트 컨테이너 관리 권한을 가진다. 기존 설치 전환과 Git 서버의 선택적 호스트 도구는 [업데이트 안내](UPDATES.md)를 참고한다. 기본 이미지 소유자는 `sidetool`이며 `MOA_IMAGE_OWNER`로 변경할 수 있다. 서명된 릴리스가 없는 개발 빌드는 자동 설치를 사용할 수 없다. 백업·운영 측정 결과를 공개 저장소에 추가하지 않는다.
 
 
 ## APK 기본 포함 변경의 검증

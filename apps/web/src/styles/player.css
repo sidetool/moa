@@ -13,9 +13,10 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
   touch-action: manipulation;
 }
 .player.is-idle { cursor: none; }
-.player-video { font-size: var(--subtitle-font-size, 16px); position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transition: transform .25s var(--ease); }
+.player-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transition: transform .25s var(--ease); }
+.player.cue-custom .player-video { font-size: var(--subtitle-font-size, 16px); }
 @font-face { font-family: "Noto Sans CJK JP"; src: url('../assets/fonts/NotoSansCJKjp-Regular.woff2') format('woff2'); font-style: normal; font-weight: 400; font-display: swap; }
-.player-video::cue { font-size: var(--subtitle-font-size, 16px); font-family: "Pretendard Variable", Pretendard, "Noto Sans CJK JP", sans-serif; font-weight: 600; background: rgba(0, 0, 0, .5); color: #fff; line-height: 1.35; }
+.player.cue-custom .player-video::cue { font-size: var(--subtitle-font-size, 16px); }
 .subtitle-overlay { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; font: 600 var(--subtitle-font-size, 16px)/1.35 "Pretendard Variable", Pretendard, "Noto Sans CJK JP", sans-serif; color: #fff; }
 .subtitle-cue { position: absolute; white-space: pre-wrap; overflow-wrap: break-word; unicode-bidi: plaintext; }
 .subtitle-cue > span { padding: .12em .3em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
@@ -71,7 +72,11 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .seek-fill { background: var(--accent); }
 .seek-thumb { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(123, 97, 255, .25); transform: scale(0); transition: transform .15s; }
 .seek:hover .seek-thumb, .seek:active .seek-thumb, .seek:focus-visible .seek-thumb { transform: scale(1); }
-.seek-tip { position: absolute; bottom: 24px; transform: translateX(-50%); padding: 4px 8px; border-radius: 4px; background: rgba(20, 20, 24, .92); font-size: .8rem; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; }
+.seek-tip { position: absolute; bottom: 24px; transform: translateX(-50%); padding: 4px; border-radius: 7px; background: rgba(20, 20, 24, .96); box-shadow: 0 4px 18px #0008; font-size: .8rem; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; text-align: center; animation: fade .15s var(--ease); }
+.seek-tip > span:last-child { display: block; padding: 3px 5px; white-space: nowrap; }
+.seek-preview { position: relative; display: grid; place-items: center; width: 160px; height: 90px; overflow: hidden; border-radius: 4px; background: #080808; }
+.seek-preview video, .seek-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.seek-preview .spinner { position: absolute; }
 
 .player-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
 .controls-left, .controls-right { display: flex; align-items: center; gap: 4px; }
@@ -105,13 +110,22 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
   margin: -44px 0 0 -44px;
   display: grid;
   place-items: center;
-  padding-left: 6px;
+  padding: 0;
   border-radius: 50%;
   background: rgba(0, 0, 0, .5);
   border: 2px solid rgba(255, 255, 255, .85);
   backdrop-filter: blur(6px);
-  animation: pop .2s var(--ease);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(.94);
+  transition: opacity .2s var(--ease), transform .2s var(--ease), visibility .2s;
 }
+.player-bigplay.is-visible { opacity: 1; visibility: visible; pointer-events: auto; transform: scale(1); }
+.player-bigplay.is-feedback { pointer-events: none; }
+.player-bigplay .lucide-play, .center-play .lucide-play { transform: translateX(3px); }
+.controls-left .lucide-play { transform: translateX(2px); }
+.center-play > svg, .center-play > .spinner { animation: fade .16s var(--ease); }
 .player-bigplay:hover { background: rgba(0, 0, 0, .7); }
 /* Seek feedback: a soft arc on the tapped side, like the big streaming apps. */
 .player-flash { position: absolute; top: 0; bottom: 0; z-index: 4; width: 38%; display: grid; place-items: center; pointer-events: none; animation: flash .75s var(--ease) forwards; }
@@ -132,7 +146,7 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 @media (hover: none) and (pointer: coarse) {
   .player-center { display: flex; }
   .player-bigplay { display: none; }
-  .player.is-chrome .player-loading { display: none; }
+  .player-loading.has-center-control { display: none; }
   .controls-left .icon-btn-l:nth-child(2), .controls-left .icon-btn-l:nth-child(3) { display: none; }
 }
 .player-boost { position: absolute; top: calc(70px + var(--safe-top)); left: 50%; z-index: 6; display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; background: rgba(0, 0, 0, .6); font-weight: 700; font-size: .88rem; transform: translateX(-50%); }
@@ -336,12 +350,14 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 @keyframes sheet-left { from { transform: translateX(40px); opacity: 0; } }
 
 
-.player-notice { bottom: calc(176px + var(--safe-bottom)); }
+.player-notice { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; margin: 0 0 8px auto; padding: 6px 8px 6px 10px; border-radius: var(--radius-s); background: #151519d9; font-size: .78rem; line-height: 1.4; animation: fade .2s var(--ease); }
+.player-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.player-notice > svg { flex: none; }
+.player-notice button { flex: none; padding: 5px 8px; border-radius: 5px; background: #ffffff18; font-weight: 700; }
 .player-notice svg { color: var(--accent-strong); }
 
 .live-label { color: #f87171; letter-spacing: .08em; font-size: 13px; }
 
-.player canvas.JASSUB { transform: translateY(calc(-1 * var(--subtitle-lift, 0%))); }
 .playback-source-dialog { position:absolute; inset:0; z-index:100; display:grid; place-items:center; background:rgba(0,0,0,.85); padding:20px; }
 .playback-source-dialog>div { width:min(600px,100%); max-height:90dvh; overflow:auto; background:#19191f; padding:24px; border-radius:14px; display:grid; gap:18px; }
 
@@ -357,7 +373,7 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
   .controls-right .icon-btn-l { flex-shrink: 0; }
   .player-time { margin-left: auto; }
   .player-chip, .player-skip, .next-card { bottom: calc(148px + var(--safe-bottom)); }
-  .player-notice { bottom: calc(224px + var(--safe-bottom)); }
+  .player-notice { margin-top: 4px; }
 }
 
 /* Manual online subtitle search */

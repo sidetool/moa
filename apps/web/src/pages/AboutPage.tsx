@@ -1,8 +1,8 @@
 import tmdbLogo from '../assets/tmdb.svg';
 
-export function AboutPage() {
-  return <div className="page-pad narrow">
-    <header className="page-head"><h1>정보/크레딧</h1></header>
+export function AboutPage({ embedded = false }: { embedded?: boolean }) {
+  return <div className={embedded ? "settings-embedded" : "page-pad narrow"}>
+    {!embedded && <header className="page-head"><h1>정보/크레딧</h1></header>}
     <section className="settings-group">
       <h2>작품 정보</h2>
       <div className="settings-card about-credit">

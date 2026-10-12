@@ -1,6 +1,6 @@
 import { useNavigation, tabPath } from "../lib/navigation";
 import { hasLoginGate } from "../lib/api";
-import { Info, Bookmark, Clapperboard, FolderOpen, History, House, LogOut, Puzzle, Search, Settings, Subtitles, UserRound, Users, UsersRound, X } from "lucide-react";
+import { Bookmark, Clapperboard, History, House, LogOut, Search, Settings, UserRound, UsersRound, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import type { Profile } from "@moa/shared";
@@ -90,7 +90,6 @@ function ProfileMenu({ profile }: { profile?: Profile }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const me = useMe();
-  const admin = me.data?.role === "admin";
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -112,14 +111,8 @@ function ProfileMenu({ profile }: { profile?: Profile }) {
         <div className="menu" role="menu">
           <div className="menu-head"><Avatar profile={profile} size={36} /><b>{profile?.name}</b></div>
           {item("/history", <History size={18} />, "시청 기록")}
-          {admin && item("/sources", <FolderOpen size={18} />, "영상 소스")}
-          {admin && item("/library", <FolderOpen size={18} />, "라이브러리 관리")}
-          {admin && item("/plugins", <Puzzle size={18} />, "플러그인")}
           <PluginShortcuts onSelect={() => setOpen(false)} />
-          {admin && item("/subtitles", <Subtitles size={18} />, "저장한 자막")}
-          {admin && hasLoginGate && item("/accounts", <Users size={18} />, "계정과 초대")}
           {item("/settings", <Settings size={18} />, "설정")}
-          {item("/about", <Info size={18} />, "정보/크레딧")}
           <button className="menu-item" role="menuitem" onClick={() => { setCurrentProfileId(null); navigate("/profiles"); }}>
             <UsersRound size={18} />프로필 전환
           </button>

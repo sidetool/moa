@@ -90,3 +90,55 @@ test('expanded cache retains more than the old limit and upgrades persisted byte
   cache.invalidate('s');assert.equal(db.get('SELECT count(*) AS n FROM source_read_cache')!.n,0);
  }finally{await sources.close();db.close();await rm(root,{recursive:true,force:true});}
 });
+
+test('source preloading follows supported pages, reuses the persistent cache and avoids hydrating profile cards', async t => {
+ const {root,db,catalog}=await fixture();let lists=0;
+ const sources=new Sources(db,catalog,async input=>{
+  if(input.action==='filters')return{result:{browse:{filters:[],availableModes:['latest','search']}},changes:{}};
+  assert.equal(input.params?.mode,'latest');lists++;
+  const page=Number(input.params?.page);
+  return{result:{list:[{name:'Cached title '+page,link:'/title/'+page}],hasNextPage:page<3},changes:{}};
+ });seed(db);
+ const cards=t.mock.method(catalog,'card');
+ const settled=async()=>{for(let i=0;i<100&&sources.preloadStatus('s').state==='running';i++)await sleep(20);return sources.preloadStatus('s');};
+ try{
+  assert.equal(sources.preload('s').state,'running');assert.equal(sources.preload('s').state,'running');
+  let status=await settled();assert.equal(status.state,'completed');assert.equal(status.pages,3);assert.equal(status.items,3);assert.equal(status.cachedItems,3);assert.equal(lists,3);assert.equal(cards.mock.callCount(),0);
+  sources.preload('s');status=await settled();assert.equal(status.state,'completed');assert.equal(lists,3);
+  assert.equal(catalog.search('p','Cached title 3').groups.flatMap(group=>group.items).length,1);
+ }finally{await sources.close();db.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('source preloading stops repeated pages and cancellation prevents further shared reads', async()=>{
+ const {root,db,catalog}=await fixture();let lists=0,release:(()=>void)|undefined,blocked=false;
+ const sources=new Sources(db,catalog,async input=>{
+  if(input.action==='filters')return{result:{browse:{filters:[],availableModes:['popular']}},changes:{}};
+  lists++;if(blocked)await new Promise<void>(resolve=>{release=resolve;});
+  return{result:{list:[{name:'Repeated title',link:'/title'}],hasNextPage:true},changes:{}};
+ });seed(db);
+ try{
+  sources.preload('s');for(let i=0;i<100&&sources.preloadStatus('s').state==='running';i++)await sleep(20);
+  assert.equal(sources.preloadStatus('s').state,'limited');assert.equal(lists,2);
+  sources.invalidate('s');blocked=true;sources.preload('s');
+  for(let i=0;i<100&&!release;i++)await sleep(10);
+  assert.ok(release);assert.equal(sources.cancelPreload('s').state,'cancelled');release();
+  await sleep(300);assert.equal(lists,3);assert.equal(sources.preloadStatus('s').state,'cancelled');
+  sources.configure('s',{enabled:false});assert.throws(()=>sources.preload('s'),/source-unavailable/);
+ }finally{release?.();await sources.close();db.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('source preloading rejects unsupported modes and limits concurrent sources', async()=>{
+ const {root,db,catalog}=await fixture();let release!:(()=>void),blocked=false;
+ const gate=new Promise<void>(resolve=>{release=resolve;});
+ const sources=new Sources(db,catalog,async input=>{
+  if(input.action==='filters'){if(blocked)await gate;return{result:{browse:{filters:[],availableModes:['search']}},changes:{}};}
+  throw Error('list must not run');
+ });seed(db);
+ for(const id of ['second','third'])db.run('INSERT INTO source_entries(id,repository,entry,installed_entry,code,enabled) SELECT ?,repository,entry,installed_entry,code,enabled FROM source_entries WHERE id=?',id,'s');
+ try{
+  sources.preload('s');for(let i=0;i<100&&sources.preloadStatus('s').state==='running';i++)await sleep(10);
+  assert.equal(sources.preloadStatus('s').state,'failed');assert.equal(sources.preloadStatus('s').error,'source-preload-unavailable');
+  blocked=true;sources.preload('s');sources.preload('second');assert.throws(()=>sources.preload('third'),/source-preload-busy/);
+  sources.cancelPreload('s');sources.cancelPreload('second');release();
+ }finally{release();await sources.close();db.close();await rm(root,{recursive:true,force:true});}
+});

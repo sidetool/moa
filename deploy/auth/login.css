@@ -45,3 +45,22 @@ footer { margin-top: 25px; color: #777783; text-align: center; font-size: 12px; 
 .where code { display: block; margin: 0 13px 12px; padding: 9px 11px; overflow-x: auto; border-radius: 6px; background: #09090b; color: #e4e4e7; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal; overflow-wrap: anywhere; }
 .where b { color: #e4e4e7; font-weight: 650; }
 footer { line-height: 1.6; }
+
+.reveal { display: grid; place-items: center; width: 35px; }
+.reveal .eye-slash { display: none; }
+.reveal[aria-pressed=true] .eye-slash { display: block; }
+.description:empty { display: none; }
+.panel h1 { margin-bottom: 24px; }
+
+@view-transition { navigation: auto; }
+::view-transition-old(root) { animation: auth-out .16s ease-out both; }
+::view-transition-new(root) { animation: auth-in .24s ease-out both; }
+main { animation: auth-in .28s ease-out; }
+.submit, .logout, .reveal, input { transition: background-color .2s, border-color .2s, opacity .2s; }
+.remember input { appearance: none; display: grid; place-content: center; flex: none; border: 1px solid #52525b; border-radius: 5px; background: #202024; }
+.remember input:checked { border-color: #7b61ff; background: #7b61ff; }
+.remember input::before { content: ''; width: 8px; height: 4px; border: solid #fff; border-width: 0 0 2px 2px; opacity: 0; transform: translateY(-1px) rotate(-45deg) scale(.5); transition: opacity .2s, transform .2s; }
+.remember input:checked::before { opacity: 1; transform: translateY(-1px) rotate(-45deg) scale(1); }
+@keyframes auth-in { from { opacity: 0; transform: translateY(5px); } }
+@keyframes auth-out { to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after, ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

@@ -1,8 +1,9 @@
 import { playbackMediaType } from './tmdb.js';
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { mkdir, stat, readFile, writeFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { AudioTrack, ClientCapabilities, PlaybackSession, SubtitleTrack } from '@moa/shared';
 import { Store } from './db.js';
 import { Catalog } from './catalog.js';
@@ -47,6 +48,8 @@ export class Playback {
   active = new Set<Run>();
   subtitleCache: SubtitleCache;
   private janitor: NodeJS.Timeout;
+  private previewing = 0;
+  private previews = new WeakMap<Session, { at: number; image: Promise<Buffer> }>();
   constructor(private db: Store, private catalog: Catalog, public config: Config, private log: (value: Record<string, unknown>) => void, private online?: OnlineSubtitles, private enrichment?: Enrichment) {
     this.subtitleCache = new SubtitleCache(config);
     this.janitor = setInterval(() => {
@@ -125,6 +128,22 @@ export class Playback {
     if (profile && profile !== s.profile) throw new ApiFailure(403, 'session-profile-mismatch');
     // Session URL is an unguessable bearer capability, so <video>/<track>/libass can use it without custom headers.
     s.touched = Date.now(); return s;
+  }
+  async preview(s: Session, at: number): Promise<Buffer> {
+    if (!Number.isFinite(at) || at < 0 || at >= s.probe.duration) throw new ApiFailure(400, 'invalid-preview-time');
+    const time = Math.floor(at / 2) * 2, cached = this.previews.get(s);
+    if (cached?.at === time) return cached.image;
+    if (this.previewing >= 2) throw new ApiFailure(429, 'preview-busy');
+    this.previewing++;
+    const image = (async () => {
+      const file = await safePath(s.root, s.file);
+      if (s.deleted) throw new ApiFailure(404, 'session-expired');
+      const result = await promisify(execFile)(this.config.ffmpeg, ['-v', 'error', '-nostdin', '-ss', String(time), '-i', file, '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=240:-2', '-threads', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer', timeout: 8000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
+      if (!result.stdout.length) throw new ApiFailure(502, 'preview-unavailable');
+      return result.stdout;
+    })().catch(error => { if (this.previews.get(s)?.image === image) this.previews.delete(s); throw error instanceof ApiFailure ? error : new ApiFailure(502, 'preview-unavailable'); }).finally(() => { this.previewing--; });
+    this.previews.set(s, { at: time, image });
+    return image;
   }
   playlist(s: Session) {
     const lengths = s.timeline.map((t, i) => (s.timeline[i + 1] ?? s.probe.duration) - t);

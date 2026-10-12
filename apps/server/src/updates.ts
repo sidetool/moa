@@ -1,4 +1,4 @@
-import { readFile, writeFile, link, rm } from 'node:fs/promises';
+import { readFile, writeFile, link, rm, mkdir, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -53,42 +53,67 @@ export class Updates {
   private installed?: ReturnType<typeof installationInfo>;
   private discovery?: ReleaseDiscovery;
   private pending?: Promise<ReleaseDiscovery>;
+  private generation = 0;
   private nextCheck = 0;
+  private channel?: UpdatePolicy;
   constructor(private dir = process.env.MOA_UPDATER_DIR, private fetcher = fetch, private env = process.env, private cwd = root) {}
   private installation() { return this.installed ??= installationInfo(this.env, this.cwd); }
+  private async policy(): Promise<UpdatePolicy> {
+    if (!this.channel) {
+      try {
+        const saved = await readFile(path.join(this.env.MOA_DATA_DIR || path.join(this.cwd, 'data'), 'update-policy.json'), 'utf8');
+        this.channel ??= validatePolicy(JSON.parse(saved));
+      } catch {
+        const installed = await this.installation();
+        this.channel ??= { channel: installed.version?.includes('-beta.') ? 'beta' : 'stable' };
+      }
+    }
+    return this.channel;
+  }
+  private async github(endpoint: string) {
+    const installed = await this.installation();
+    const response = await this.fetcher(`https://api.github.com/repos/${installed.repository}/${endpoint}`, { headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, redirect: 'error', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) { await response.body?.cancel(); throw new ApiFailure(response.status === 404 ? 404 : 502, response.status === 403 || response.status === 429 ? 'update-rate-limited' : 'update-check-failed'); }
+    const reader = response.body?.getReader();
+    if (!reader) throw new ApiFailure(502, 'update-check-failed');
+    const chunks: Uint8Array[] = []; let size = 0;
+    try {
+      for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 2 * 1024 * 1024) throw new ApiFailure(502, 'update-response-limit'); chunks.push(value); }
+    } finally { await reader.cancel(); }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  }
+  async notes(tag: string) {
+    if (!versionParts(tag)) throw new ApiFailure(400, 'update-invalid-version');
+    const release = await this.github(`releases/tags/${encodeURIComponent(tag)}`);
+    if (!release || release.draft || release.tag_name !== tag) throw new ApiFailure(404, 'update-no-releases');
+    return { version: tag, body: typeof release.body === 'string' ? release.body.slice(0, 65536) : '', publishedAt: typeof release.published_at === 'string' ? release.published_at : '' };
+  }
   private async discover(force = false): Promise<ReleaseDiscovery> {
     if (this.pending) return this.pending;
     if (this.discovery && Date.now() < (force ? this.discovery.checkedAt + 60_000 : this.nextCheck)) return this.discovery;
+    const generation = this.generation;
     this.pending = (async () => {
-      const installed = await this.installation();
+      const installed = await this.installation(), policy = await this.policy();
       const result: ReleaseDiscovery = { repository: installed.repository, currentVersion: installed.version, latestVersion: null, updateAvailable: null, releases: [], checkedAt: Date.now(), error: null };
       try {
         const releases: Record<string, any>[] = [];
         for (let page = 1; page <= 5; page++) {
-          const response = await this.fetcher(`https://api.github.com/repos/${installed.repository}/releases?per_page=100&page=${page}`, { headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, redirect: 'error', signal: AbortSignal.timeout(10000) });
-          if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 403 || response.status === 429 ? 'update-rate-limited' : 'update-check-failed'); }
-          const reader = response.body?.getReader();
-          if (!reader) throw new Error('update-check-failed');
-          const chunks: Uint8Array[] = []; let size = 0;
-          try {
-            for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 2 * 1024 * 1024) throw new Error('update-response-limit'); chunks.push(value); }
-          } finally { await reader.cancel(); }
-          const items = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          const items = await this.github(`releases?per_page=100&page=${page}`);
           if (!Array.isArray(items)) throw new Error('update-check-failed');
           releases.push(...items);
           if (items.length < 100) break;
           if (page === 5) throw new Error('update-feed-truncated');
         }
-        const published = releases.filter(item => item && !item.draft && typeof item.tag_name === 'string' && versionParts(item.tag_name) && (item.prerelease ? versionParts(item.tag_name)![3] !== Infinity : true) && typeof item.published_at === 'string' && Number.isFinite(Date.parse(item.published_at)))
+        const published = releases.filter(item => item && !item.draft && (policy.channel === 'beta' || !item.prerelease && versionParts(item.tag_name || '')?.[3] === Infinity) && typeof item.tag_name === 'string' && versionParts(item.tag_name) && (item.prerelease ? versionParts(item.tag_name)![3] !== Infinity : true) && typeof item.published_at === 'string' && Number.isFinite(Date.parse(item.published_at)))
           .sort((a, b) => compareVersions(b.tag_name, a.tag_name));
-        const latest = published.find(item => installed.version && (versionParts(installed.version)![3] !== Infinity || !item.prerelease && versionParts(item.tag_name)![3] === Infinity));
+        const latest = published[0];
         result.latestVersion = latest?.tag_name ?? null;
         result.releases = published.slice(0, 5).map(item => ({ version: item.tag_name, url: `https://github.com/${installed.repository}/releases/tag/${encodeURIComponent(item.tag_name)}`, publishedAt: item.published_at }));
         if (latest && installed.version) result.updateAvailable = compareVersions(latest.tag_name, installed.version) > 0;
       } catch (error) { result.error = error instanceof Error && /^update-[a-z-]+$/.test(error.message) ? error.message : 'update-check-failed'; }
-      this.discovery = result; this.nextCheck = Date.now() + (result.error ? 3600000 : 6 * 3600000);
+      if (generation === this.generation) { this.discovery = result; this.nextCheck = Date.now() + (result.error ? 3600000 : 6 * 3600000); }
       return result;
-    })().finally(() => { this.pending = undefined; });
+    })().finally(() => { if (generation === this.generation) this.pending = undefined; });
     return this.pending;
   }
   private async hostStatus(): Promise<UpdateStatus> {
@@ -108,7 +133,7 @@ export class Updates {
   }
   async status(): Promise<UpdateStatus> {
     const status = await this.hostStatus();
-    return status.connected ? status : { ...status, discovery: await this.discover() };
+    return status.connected ? status : { ...status, policy: await this.policy(), discovery: await this.discover() };
   }
   async system(): Promise<SystemInfo> {
     const installed = await this.installation();
@@ -118,7 +143,16 @@ export class Updates {
   }
   async request(action: 'check' | 'apply' | 'configure', policy?: UpdatePolicy) {
     const status = await this.hostStatus();
-    if (action === 'check' && !status.connected) return { ...status, discovery: await this.discover(true) };
+    if (action === 'configure' && !status.connected) {
+      const selected = validatePolicy(policy), directory = this.env.MOA_DATA_DIR || path.join(this.cwd, 'data');
+      await mkdir(directory, { recursive: true });
+      const target = path.join(directory, 'update-policy.json'), temp = `${target}-${randomUUID()}.tmp`;
+      try { await writeFile(temp, JSON.stringify(selected), { flag: 'wx', mode: 0o600 }); await rename(temp, target); }
+      finally { await rm(temp, { force: true }); }
+      this.channel = selected; this.generation++; this.pending = undefined; this.discovery = undefined; this.nextCheck = 0;
+      return this.status();
+    }
+    if (action === 'check' && !status.connected) return { ...status, policy: await this.policy(), discovery: await this.discover(true) };
     if (!this.dir || !status.connected) throw new ApiFailure(503, 'updater-unavailable');
     if (['checking', 'updating', 'downloading', 'preflight', 'backup', 'applying', 'verifying', 'rolling-back'].includes(status.state)) throw new ApiFailure(409, 'update-busy');
     if (action === 'apply' && status.state !== 'available') throw new ApiFailure(409, 'update-not-available');
@@ -154,6 +188,7 @@ export function registerUpdates(app: FastifyInstance, jobs?:{prepare:()=>Promise
   },10000):undefined;
   timer?.unref();app.addHook('onClose',async()=>{clearInterval(timer);});
   app.get('/api/admin/system', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.system()));
+  app.get<{ Params: { version: string } }>('/api/admin/updates/releases/:version', async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.notes(req.params.version)));
   app.get('/api/admin/updates', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.status()));
   app.patch('/api/admin/updates/settings', async (req, reply) => reply.code(202).header('Cache-Control', 'private, no-store').send(await updates.request('configure', validatePolicy(req.body))));
   for (const action of ['check', 'apply'] as const) app.post(`/api/admin/updates/${action}`, async (req, reply) => {

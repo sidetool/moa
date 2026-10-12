@@ -1,4 +1,6 @@
 services:
+  moa-updater:
+    profiles: [container-updater]
   moa:
     environment:
       MOA_UPDATER_DIR: /run/moa-updater

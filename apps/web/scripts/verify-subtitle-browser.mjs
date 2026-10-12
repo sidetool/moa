@@ -14,6 +14,7 @@ const webRoot = fileURLToPath(new URL('..', import.meta.url));
 const evidence = process.env.MOA_SUBTITLE_EVIDENCE_DIR || await mkdtemp(path.join(tmpdir(), 'moa-subtitle-'));
 await mkdir(evidence, { recursive: true });
 const vtt = 'WEBVTT\n\n00:00:02.000 --> 00:00:04.000\nSYNC 자막\n';
+const styledVtt = 'WEBVTT\n\nSTYLE\n::cue { color: lime; background-color: transparent; font-family: monospace; font-size: 22px; font-style: italic; }\n\n00:00:02.000 --> 00:00:04.000 line:25% position:30% size:50% align:start\nOriginal cue style\n';
 const ass = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 640
@@ -67,6 +68,7 @@ const server = await createServer({
           return;
         }
         const body = pathname === '/fixture.vtt' ? Buffer.from(vtt)
+          : pathname === '/styled.vtt' ? Buffer.from(styledVtt)
           : pathname === '/fixture.ass' ? Buffer.from(ass)
           : pathname === '/fixture.webm' ? clip : null;
         if (!body) return next();
@@ -244,12 +246,26 @@ try {
   assert.equal(await page.locator('canvas.JASSUB, track').count(), 0);
   await sample('cleared', 2.5, false);
 
+  await page.evaluate(async () => {
+    document.querySelector('.stage').className = 'stage'; video.className = '';
+    controller.setLift(false); controller.setHeight(0);
+    await controller.setAppearance({ size: 'medium', background: 'original' });
+    await controller.show({ format: 'vtt', label: 'Original', url: '/styled.vtt' });
+  });
+  await page.waitForFunction(() => video.textTracks[video.textTracks.length - 1]?.cues?.length > 0);
+  await sample('vtt-authored-native', 2.5, false);
+  await page.evaluate(() => { document.querySelector('.stage').className = 'stage player cue-medium cue-bg-original'; video.className = 'player-video'; });
+  await sample('vtt-authored-player', 2.5, false);
+  assert.deepEqual(await readFile(path.join(evidence, 'vtt-authored-player.png')), await readFile(path.join(evidence, 'vtt-authored-native.png')), 'Default player appearance must preserve native VTT style pixels');
+  assert.deepEqual(await page.evaluate(() => { const cue = video.textTracks[video.textTracks.length - 1].cues[0]; return { line: cue.line, position: cue.position, size: cue.size, align: cue.align }; }), { line: 25, position: 30, size: 50, align: 'start' });
+  assert.equal(await page.locator('.subtitle-overlay').count(), 0);
+
   // Exercise the actual VTT CSS against a solid video, including inherited
   // custom properties inside the browser's native ::cue renderer.
   await page.evaluate(async () => {
     const stage = document.querySelector('.stage');
     stage.style.position = 'relative';
-    stage.className = 'stage player cue-large';
+    stage.className = 'stage player cue-custom cue-large';
     stage.style.setProperty('--video-height', '360px');
     video.className = 'player-video';
     controller.setOffset(0);
@@ -259,13 +275,13 @@ try {
   const largeVtt = await sample('vtt-css-large', 2.5, true);
   await page.evaluate(() => controller.setAppearance({ size: 'large', background: 'original', padding: 20 }));
   await sample('vtt-original-padding', 2.5, true);
-  assert.equal(await page.locator('.subtitle-cue > span').first().evaluate(element => getComputedStyle(element).paddingLeft), '20px');
+  assert.equal(await page.locator('.subtitle-overlay').count(), 0);
   await page.evaluate(() => controller.setAppearance({ size: 'large', background: 'original' }));
   assert.equal(await page.locator('.subtitle-overlay').count(), 0);
 
   let noBackground;
   for (const background of ['none', 'soft', 'solid']) {
-    await page.evaluate(background => { document.querySelector('.stage').className = `stage player cue-large cue-bg-${background}`; return controller.setAppearance({size:'large',background}); }, background);
+    await page.evaluate(background => { document.querySelector('.stage').className = `stage player cue-custom cue-large cue-bg-${background}`; return controller.setAppearance({size:'large',background}); }, background);
     const measured = await sample(`vtt-background-${background}`, 2.5, true);
     if (background === 'none') { noBackground = measured; assert.ok(measured.dark < largeVtt.dark / 2); }
     else assert.ok(measured.dark > noBackground.dark + 300, `${background}: VTT background changes must affect the active cue`);
@@ -303,7 +319,7 @@ try {
   await page.evaluate(() => controller.setAppearance({ size: 'large', background: 'original' }));
   assert.equal(await page.locator('.subtitle-overlay').count(), 0);
   assert.equal(await page.evaluate(() => video.textTracks[0].mode), 'showing');
-  await page.evaluate(() => { document.querySelector('.stage').className = 'stage player cue-xlarge'; controller.setAppearance({size:'xlarge',background:'original'}); });
+  await page.evaluate(() => { document.querySelector('.stage').className = 'stage player cue-custom cue-xlarge'; controller.setAppearance({size:'xlarge',background:'original'}); });
   const xlargeVtt = await sample('vtt-css-xlarge', 2.6, true);
   assert.ok(xlargeVtt.maxY-xlargeVtt.minY > largeVtt.maxY-largeVtt.minY, 'VTT extra large must increase visible glyph height');
   await page.setViewportSize({ width: 640, height: 900 });
@@ -343,7 +359,7 @@ try {
     const stage = document.querySelector('.stage');
     stage.style.width = '844px'; stage.style.height = '390px';
     stage.style.setProperty('--video-height', '390px');
-    stage.className = 'stage player cue-xlarge';
+    stage.className = 'stage player cue-custom cue-xlarge';
     controller.setOffset(0); controller.setHeight(0); controller.setLift(false);
   });
   await show('vtt');
@@ -359,19 +375,19 @@ try {
     assert.ok(measured.maxY < 389, 'All subtitle lines must stay inside the viewport');
   }
   await page.evaluate(() => {
-    document.querySelector('.stage').className = 'stage player cue-small';
+    document.querySelector('.stage').className = 'stage player cue-custom cue-small';
     const t=video.textTracks[0], c=t.cues[0];
     t.removeCue(c); c.text='원하신다면 목욕탕도\n이용하실 수 있습니다'; t.addCue(c);
   });
   await sample('multiline-small', 2.8, true);
-  await page.evaluate(() => { document.querySelector('.stage').className = 'stage player cue-xlarge'; controller.setAppearance({size:'xlarge',background:'original'}); });
+  await page.evaluate(() => { document.querySelector('.stage').className = 'stage player cue-custom cue-xlarge'; controller.setAppearance({size:'xlarge',background:'original'}); });
   const changed = await sample('multiline-active-enlarged', 2.8, true);
   await page.evaluate(() => { const t=video.textTracks[0], c=t.cues[0]; t.removeCue(c); t.addCue(c); });
   const refreshed = await sample('multiline-active-refreshed', 2.8, true);
   assert.ok(changed.white >= refreshed.white * .98, 'Changing size must not crop the active subtitle');
   for (const size of ['large', 'xlarge']) for (const height of [0, 8, 30]) {
     await page.evaluate(({size,height}) => {
-      document.querySelector('.stage').className = `stage player cue-${size}`;
+      document.querySelector('.stage').className = `stage player cue-custom cue-${size}`;
       controller.setAppearance({size,background:'soft'});
       controller.setHeight(height);
     }, {size,height});
@@ -389,7 +405,7 @@ try {
     }
   }
   await page.evaluate(() => {
-    document.querySelector('.stage').className='stage player cue-large';
+    document.querySelector('.stage').className='stage player cue-custom cue-large';
     const t=video.textTracks[0],c=t.cues[0];
     t.removeCue(c);c.text='긴 자막도 화면 아래로 벗어나지 않도록 자동 줄바꿈을 확인합니다. '.repeat(3);t.addCue(c);
     controller.setAppearance({size:'large',background:'soft'});controller.setHeight(8);

@@ -41,7 +41,6 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`${base}settings`);
   await page.getByRole('heading', { name: '설정', exact: true }).waitFor();
-  // Old off/track choices migrate, server choices win, and a synced cache isn't imported again.
   preferences.set('/api/episodes/server/subtitles/preference', null);
   const imported = await page.evaluate(async () => {
     const module = await import('/src/player/subtitle-preference.ts');
@@ -52,11 +51,11 @@ try {
     const off = await load('off'), selected = await load('track'), server = await load('server');
     return { off, selected, server };
   });
-  assert.equal(imported.off, null); assert.equal(imported.selected.label, 'English'); assert.equal(imported.server, null);
-  assert.equal(writes.length, 2); assert.ok(writes.every(item => item.body.migrate === true));
+  assert.equal(imported.off, undefined); assert.equal(imported.selected, undefined); assert.equal(imported.server, null);
+  assert.equal(writes.length, 0);
   preferences.delete('/api/episodes/track/subtitles/preference');
   assert.equal(await page.evaluate(async () => (await import('/src/player/subtitle-preference.ts')).loadSubtitlePreference('track', new AbortController().signal)), undefined);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 0);
   // The dialog must outlive closing the profile menu; management remains admin-only.
   await page.getByRole('button', { name: '프로필 메뉴', exact: true }).click();
   await page.getByRole('menuitem', { name: tool.name, exact: true }).click();
@@ -71,5 +70,5 @@ try {
   await page.getByRole('button', { name: '프로필 메뉴', exact: true }).click();
   assert.equal(await page.getByRole('menuitem', { name: tool.name }).count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS: legacy migration, server precedence, no stale reimport, member HTML launch, management boundary and disabled tool');
+  console.log('PASS: server precedence, expired cache removal, no stale reimport, member HTML launch, management boundary and disabled tool');
 } finally { await browser?.close(); await server.close(); }

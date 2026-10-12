@@ -73,7 +73,7 @@ export class Translations {
   private assets = new Map<string, Asset>();
   private active?: Promise<void>;
   private closed = false;
-  private cooldown = new Map<string, number>();
+  private cooldown = new Map<string, { until: number; error: string }>();
   private preferredKey = 0;
   private keyTests = new Map<string, { ok: boolean; error?: string }>();
   private testingKeys = new Set<string>();
@@ -255,11 +255,9 @@ export class Translations {
     for (let offset = 0; offset < keys.length; offset++) {
       const index = (this.preferredKey + offset) % keys.length,
         key = keys[index];
-      if ((this.cooldown.get(key) || 0) > Date.now()) {
-        last = new ApiFailure(
-          502,
-          this.cooldown.get(key) === Infinity ? 'translation-key-invalid' : 'translation-quota',
-        );
+      const blocked = this.cooldown.get(key);
+      if (blocked && blocked.until > Date.now()) {
+        last = new ApiFailure(502, blocked.error);
         continue;
       }
       try {
@@ -269,7 +267,7 @@ export class Translations {
       } catch (error) {
         if (!(error instanceof ApiFailure) || !['translation-quota', 'translation-credit-exhausted', 'translation-key-invalid', 'translation-permission-denied'].includes(error.error))
           throw error;
-        this.cooldown.set(key, ['translation-key-invalid', 'translation-permission-denied'].includes(error.error) ? Infinity : Date.now() + 60000);
+        this.cooldown.set(key, { until: error.error === 'translation-quota' ? Date.now() + 60000 : Infinity, error: error.error });
         last = error;
       }
     }
@@ -280,16 +278,17 @@ export class Translations {
     const retryCount = this.secret.retryCount;
     const retryable = new Set(['translation-quota', 'translation-credit-exhausted', 'translation-key-invalid', 'translation-permission-denied', 'translation-unavailable', 'translation-invalid-response', 'translation-incomplete']);
     let last: unknown = new ApiFailure(502, 'translation-quota');
+    let backoff = 0;
     for (let attempt = 0; attempt <= retryCount; attempt++) {
       signal.throwIfAborted();
       const keys = this.secret.apiKeys;
       if (!keys.length || !this.secret.enabled) throw new ApiFailure(409, 'translation-cancelled');
       const ordered = Array.from({ length: keys.length }, (_, i) => (this.preferredKey + i) % keys.length);
-      const index = ordered.find(i => (this.cooldown.get(keys[i]) || 0) <= Date.now())
-        ?? ordered.filter(i => this.cooldown.get(keys[i]) !== Infinity).sort((a, b) => (this.cooldown.get(keys[a]) || 0) - (this.cooldown.get(keys[b]) || 0))[0];
-      if (index === undefined) throw last instanceof ApiFailure && last.error !== 'translation-quota' ? last : new ApiFailure(502, 'translation-key-invalid');
+      const index = ordered.find(i => (this.cooldown.get(keys[i])?.until || 0) <= Date.now())
+        ?? ordered.filter(i => this.cooldown.get(keys[i])?.until !== Infinity).sort((a, b) => (this.cooldown.get(keys[a])?.until || 0) - (this.cooldown.get(keys[b])?.until || 0))[0];
+      if (index === undefined) throw last instanceof ApiFailure && last.error !== 'translation-quota' ? last : new ApiFailure(502, this.cooldown.get(keys[ordered[0]])?.error ?? 'translation-key-invalid');
       const key = keys[index];
-      const wait = Math.max(0, this.lastTranslationFinishedAt + this.secret.requestIntervalMs - Date.now(), (this.cooldown.get(key) || 0) - Date.now());
+      const wait = Math.max(0, this.lastTranslationFinishedAt + Math.max(this.secret.requestIntervalMs, backoff) - Date.now(), (this.cooldown.get(key)?.until || 0) - Date.now());
       if (wait) await delay(wait, undefined, { signal });
       signal.throwIfAborted();
       // An admin may remove a key or disable translation while this request is waiting.
@@ -302,9 +301,10 @@ export class Translations {
         last = error;
         if (!(error instanceof ApiFailure) || !retryable.has(error.error) || signal.aborted) throw error;
         if (['translation-key-invalid', 'translation-permission-denied', 'translation-quota', 'translation-credit-exhausted'].includes(error.error)) {
-          this.cooldown.set(key, ['translation-key-invalid', 'translation-permission-denied'].includes(error.error) ? Infinity : Date.now() + 60000);
+          this.cooldown.set(key, { until: error.error === 'translation-quota' ? Date.now() + 60000 : Infinity, error: error.error });
           this.preferredKey = (index + 1) % keys.length;
-        }
+          backoff = 0;
+        } else backoff = 250 * 2 ** attempt;
       } finally {
         this.lastTranslationFinishedAt = Date.now();
       }

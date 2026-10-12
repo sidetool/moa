@@ -57,6 +57,7 @@ export async function install(args = process.argv.slice(2), dependencies = {}) {
     const files = ['-f', path.join(runtime, 'compose.yaml')];
     if (options.browser === 'true') files.push('-f', path.join(runtime, 'compose.source-browser.yaml'));
     config = JSON.parse(await run('docker', ['compose', '--project-name', project, '--project-directory', cwd, ...files, 'config', '--format', 'json']));
+    delete config.services['moa-updater'];
     services = SERVICES.filter(n => config.services[n] && !config.services[n].profiles?.length);
     for (const mount of config.services['moa-gateway']?.volumes ?? []) if (mount.target === '/etc/nginx/templates/default.conf.template') mount.source = path.join(runtime, 'deploy/gateway/default.conf.template');
   }

@@ -491,6 +491,41 @@ test('Gemini classifies Google invalid-key 400 without exposing provider error d
   await assert.rejects(new Gemini(async()=>Response.json({models:'bad'})).models(secret,new AbortController().signal), /translation-invalid-response/);
 });
 
+test('translation retains permanent key failures without retrying exhausted credit', async () => {
+  for (const [status, code, expected] of [[402, '', 'translation-credit-exhausted'], [429, 'insufficient_quota', 'translation-credit-exhausted'], [403, '', 'translation-permission-denied']] as const) {
+    let calls = 0, recovered = false;
+    const f = await fixture(async (url, init) => { calls++; return recovered ? fake(url, init) : Response.json({ error: { code, message: secret } }, { status }); });
+    try {
+      f.service.configure({ retryCount: 2 });
+      const tested = await f.service.testKey(f.service.config().keys[0].id);
+      assert.deepEqual(tested.keys[0].test, { ok: false, error: expected });
+      assert.equal(calls, 1);
+      for (let n = 0; n < 2; n++) {
+        const job = await wait(f.service, f.service.start('e', 'p', input).id);
+        assert.equal(job.state, 'failed');
+        assert.equal(job.error, expected);
+      }
+      await assert.rejects(f.service.models(), (error: any) => error.error === expected && !error.message.includes(secret));
+      assert.equal(calls, 2);
+      recovered = true;
+      assert.deepEqual((await f.service.testKey(tested.keys[0].id)).keys[0].test, { ok: true });
+      assert.equal((await wait(f.service, f.service.start('e', 'p', input).id)).state, 'completed');
+      assert.equal(calls, 4);
+    } finally { await f.close(); }
+  }
+});
+
+test('cancellation while reading translation responses stays a cancellation', async () => {
+  for (const status of [200, 403]) {
+    const controller = new AbortController();
+    const client = new Gemini(async () => new Response(new ReadableStream({
+      start(stream) { stream.enqueue(new TextEncoder().encode('{')); },
+      pull(stream) { controller.abort(); stream.error(controller.signal.reason); },
+    }), { status }));
+    await assert.rejects(client.models(secret, controller.signal), /translation-cancelled/);
+  }
+});
+
 const timedContent = (count: number) => 'WEBVTT\n\n' + Array.from({length: count}, (_,i) => {
   const clock = (n:number) => `${String(Math.floor(n/3600)).padStart(2,'0')}:${String(Math.floor(n/60)%60).padStart(2,'0')}:${String(n%60).padStart(2,'0')}.000`;
   return `${clock(i*4)} --> ${clock(i*4+3)}\nLine ${i}`;
@@ -607,6 +642,49 @@ test('translation request spacing covers retries, batches and subsequent jobs', 
     assert.equal(starts.length, 4);
     for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - finishes[i - 1] >= 35, 'gap applies after request completion');
   } finally { await f.close(); }
+});
+
+test('transient retries back off even with zero request spacing and can be cancelled', async () => {
+  const starts: number[] = [];
+  const f = await fixture(async (url, init) => { starts.push(Date.now()); return starts.length < 3 ? new Response('', { status: 503 }) : fake(url, init); });
+  try {
+    f.service.configure({ retryCount: 2 });
+    assert.equal((await wait(f.service, f.service.start('e', 'p', input).id)).state, 'completed');
+    assert.ok(starts[1] - starts[0] >= 225);
+    assert.ok(starts[2] - starts[1] >= 475);
+  } finally { await f.close(); }
+  let calls = 0;
+  const cancelled = await fixture(async () => { calls++; return new Response('', { status: 503 }); });
+  try {
+    cancelled.service.configure({ retryCount: 2 });
+    const job = cancelled.service.start('e', 'p', input);
+    await until(() => calls > 0);
+    cancelled.service.cancel(job.id, 'p');
+    await cancelled.service.close();
+    assert.equal(cancelled.service.get(job.id, 'p').state, 'cancelled');
+    assert.equal(calls, 1);
+  } finally { await cancelled.close(); }
+});
+
+test('incomplete responses retry without writing incomplete cues to the cache', async () => {
+  for (const truncated of [false, true]) {
+    let calls = 0;
+    const f = await fixture(async (url, init) => {
+      const lines = JSON.parse(JSON.parse(String(init?.body)).contents[0].parts[0].text).lines;
+      if (++calls === 1) return truncated ? Response.json({ candidates: [{ finishReason: 'MAX_TOKENS' }] }) : success(lines.slice(1));
+      const cache = f.db.get('SELECT chunks,complete FROM translation_cache');
+      assert.equal(cache.chunks, '{}');
+      assert.equal(cache.complete, 0);
+      return fake(url, init);
+    });
+    try {
+      f.service.configure({ retryCount: 1 });
+      const job = await wait(f.service, f.service.start('e', 'p', input).id);
+      assert.equal(job.state, 'completed');
+      assert.equal(job.done, 2);
+      assert.equal(calls, 2);
+    } finally { await f.close(); }
+  }
 });
 
 test('retry count bounds transient failures and key failover; permanent errors are not retried', async () => {

@@ -1,6 +1,6 @@
 import { TitleSources } from '../components/TitleSources';
 import { InlinePlugins } from '../components/WebsitePlugins';
-import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
+import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Download, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Episode, MediaDetail } from "@moa/shared";
@@ -17,11 +17,11 @@ import { Button, ButtonLink, EmptyState, ProgressBar, Skeleton } from "../compon
 import { ApiError } from "../lib/api";
 import { foreignCode, foreignLang, langLabel, seasonInfo, type SeasonInfo } from "../lib/card-meta";
 import { useFranchise, type FranchiseSeason } from "../lib/franchise";
-import { devicePrefs } from "../lib/device-prefs";
+import { useDevicePrefs } from "../lib/device-prefs";
 import { SeasonPicker, type SeasonChoice } from "../components/SeasonPicker";
 import { TYPE_LABEL, cx, fileSize, humanDuration, episodeTitle } from "../lib/format";
 
-type ServerSaves = { entry: (episodeId: string) => DownloadEntry; start: (episodeId: string) => void };
+type ServerSaves = { configured: boolean; entry: (episodeId: string) => DownloadEntry; start: (episodeId: string) => void };
 
 const watchPath = (episodeId: string, position?: number) =>
   `/watch/${encodeURIComponent(episodeId)}${position !== undefined ? `?t=${Math.floor(position)}` : ""}`;
@@ -75,7 +75,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   const [highlight, setHighlight] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const section = useRef<HTMLElement>(null);
-  const franchise = useFranchise(media.id, devicePrefs().seasonSwitcher);
+  const franchise = useFranchise(media.id, useDevicePrefs().seasonSwitcher);
 
   // Switching seasons opens another title; land on its episode list, not the top of the page.
   useEffect(() => { if (switched?.episodes) section.current?.scrollIntoView({ block: "start" }); }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -134,6 +134,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
           <SeasonPicker choices={choices} count={episodes.length} onPick={pick} />
         </div>
       </header>
+      {saves && !saves.configured && <p className="source-muted">회차를 다운로드하려면 <Link to="/settings#downloads">서버 저장소와 다운로드를 설정해 주세요.</Link></p>}
       {long && (
         <div className="range-tabs no-scrollbar" role="tablist" aria-label="회차 구간">
           {ranges.map(i => {
@@ -145,8 +146,8 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
       )}
       <ol className="episode-list" ref={list}>
         {shown.map(episode => <EpisodeItem key={episode.id} episode={episode} highlight={episode.id === highlight}
-          save={saves && <EpisodeDownloadButton entry={saves.entry(episode.id)} title={episode.name ? `${episode.number}화 ${episode.name}` : episodeTitle(episode.title)} onStart={() => saves.start(episode.id)} />}
-          status={saves && <DownloadStatusLine entry={saves.entry(episode.id)} />} />)}
+          save={saves && (saves.configured ? <EpisodeDownloadButton entry={saves.entry(episode.id)} title={episode.name ? `${episode.number}화 ${episode.name}` : episodeTitle(episode.title)} onStart={() => saves.start(episode.id)} /> : <Link to="/settings#downloads" className="icon-btn icon-btn-s episode-save" aria-label={`${episode.number}화 다운로드 설정`} title="다운로드 설정"><Download size={20} /></Link>)}
+          status={saves?.configured && <DownloadStatusLine entry={saves.entry(episode.id)} />} />)}
       </ol>
     </section>
   );
@@ -215,10 +216,9 @@ export function TitlePage() {
   const targetEpisode = episodes.find(episode => episode.id === target?.episodeId);
   const resuming = Boolean(target && target.position > 30);
   const ratio = resuming && targetEpisode?.duration ? target!.position / targetEpisode.duration : 0;
-  // Only admins who turned downloads on (with storage and quota ready) see download controls; everyone else sees nothing new.
-  const jobs = downloads.data?.configured ? jobsByEpisode(downloads.data.jobs) : undefined;
-  const saves: ServerSaves | undefined = admin && m.badge !== "LIVE" && sourceMedia && jobs
-    ? { entry: episodeId => oneTap.entry(episodeId, jobs.get(episodeId)), start: episodeId => void oneTap.start(episodeId) }
+  const jobs = jobsByEpisode(downloads.data?.jobs ?? []);
+  const saves: ServerSaves | undefined = admin && m.badge !== "LIVE" && sourceMedia && downloads.data
+    ? { configured: downloads.data.configured, entry: episodeId => oneTap.entry(episodeId, jobs.get(episodeId)), start: episodeId => void oneTap.start(episodeId) }
     : undefined;
   const meta = [
     m.year,
@@ -261,7 +261,7 @@ export function TitlePage() {
               aria-pressed={Boolean(m.inWatchlist)}
               onClick={() => toggle.mutate({ id: m.id, add: !m.inWatchlist })}
             >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
-            {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
+            {isMovie && saves && episodes[0] && (saves.configured ? <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} /> : <ButtonLink to="/settings#downloads" variant="secondary" size="l" icon={<Download size={20} />}>다운로드 설정</ButtonLink>)}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
