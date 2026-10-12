@@ -237,7 +237,7 @@ export class NativeShorts {
     return {content:caption.content!,format:'vtt',sourceLabel:caption.label,sourceLanguage:caption.lang,title:s.title,videoId:s.videoId};
   }
   /** Initial bytes only, no playback. A cancelled warmer never cancels foreground media. */
-  async warm(id:string,profile:string,signal:AbortSignal):Promise<{ready:boolean}>{
+  async warm(id:string,profile:string,signal:AbortSignal,quality:'auto'|'360p'|'480p'|'720p'='auto'):Promise<{ready:boolean}>{
     const s=this.current(id,profile);
     if(s.warming)return s.warming;
     if(this.warming>=2)return {ready:false};
@@ -254,7 +254,7 @@ export class NativeShorts {
           if(![200,206].includes(response.statusCode||0)||!/^(video\/|audio\/|application\/(?:octet-stream|[^;]*mpegurl))/i.test(type))throw fail();
           const chunks:Buffer[]=[];let bytes=0;
           for await(const chunk of response){bytes+=chunk.length;received+=chunk.length;s.bytes+=chunk.length;
-            if(bytes>(asset.playlist?512*1024:2*1024*1024)||received>4*1024*1024||s.bytes>BYTE_LIMIT)throw fail();
+            if(bytes>(asset.playlist?512*1024:2*1024*1024)||received>8*1024*1024||s.bytes>BYTE_LIMIT)throw fail();
             chunks.push(Buffer.from(chunk));
           }
           combined.throwIfAborted();
@@ -277,10 +277,20 @@ export class NativeShorts {
       await load(asset);
       const body=asset.cached!.body.toString('utf8');
       if(!body.startsWith('#EXTM3U')||/#EXT-X-(?:SESSION-)?KEY:[^\n]*METHOD=(?!NONE)/.test(body))throw fail();
-      const map=/#EXT-X-MAP:[^\n]*URI="([^"]+)"/.exec(body)?.[1];
+      // Up to six seconds/three fragments, with the matching initialization segment only.
+      const urls:string[]=[];let map:string|undefined,duration=0,nextDuration=0;
+      for(const line of body.split(/\r?\n/).map(x=>x.trim())){
+        if(line.startsWith('#EXT-X-BYTERANGE:'))throw fail();
+        if(line.startsWith('#EXT-X-MAP:')){if(urls.length)break;map=/URI="([^"]+)"/.exec(line)?.[1];if(!map||/BYTERANGE=/.test(line))throw fail();}
+        if(line==='#EXT-X-DISCONTINUITY'&&urls.length)break;
+        if(line.startsWith('#EXTINF:'))nextDuration=parseFloat(line.slice(8));
+        if(line&&!line.startsWith('#')){
+          urls.push(line);duration+=Number.isFinite(nextDuration)?nextDuration:0;nextDuration=0;
+          if(urls.length>=3||duration>=6)break;
+        }
+      }
       if(map)await load(child(asset,map,false));
-      const first=body.split(/\r?\n/).find(line=>line.trim()&&!line.startsWith('#'));
-      if(first)await load(child(asset,first.trim(),false));
+      for(const url of urls)await load(child(asset,url,false));
     };
     s.warming=(async()=>{
       try{
@@ -290,13 +300,14 @@ export class NativeShorts {
         if(!root.master){await segment(root);return {ready:true};}
         const body=selectTrailerMaster(root.cached!.body.toString('utf8')),lines=body.split('\n');
         const variants=lines.flatMap((line,i)=>{const h=Number(/RESOLUTION=\d+x(\d+)/.exec(line)?.[1]);return line.startsWith('#EXT-X-STREAM-INF:')&&h?[{height:h,url:lines[i+1],audio:/AUDIO="([^"]+)"/.exec(line)?.[1]}]:[];}).sort((a,b)=>a.height-b.height);
-        const height=(variants.filter(v=>v.height<=360).at(-1)||variants[0])?.height;
+        const height=(variants.filter(v=>v.height<=(quality==='auto'?360:parseInt(quality,10))).at(-1)||variants[0])?.height;
         const picked=variants.find(v=>v.height===height);if(!picked)throw fail();
-        // Match the player's initial 360p choice. ABR can move up after the first fragment.
+        // Match the player's initial quality; auto begins at 360p.
         const audio=lines.find(line=>line.startsWith('#EXT-X-MEDIA:')&&line.includes('TYPE=AUDIO')&&line.includes(`GROUP-ID="${picked.audio}"`));
         const audioUrl=audio&&/URI="([^"]+)"/.exec(audio)?.[1];
-        if(audioUrl)await segment(child(root,audioUrl,true));
-        await segment(child(root,picked.url,true));
+        // At most two tracks per warmer, two warmers globally; wait for both before freeing capacity.
+        const tracks=await Promise.allSettled([segment(child(root,picked.url,true)),...(audioUrl?[segment(child(root,audioUrl,true))]:[])]);
+        if(tracks.some(r=>r.status==='rejected'))return {ready:false};
         return {ready:true};
       }catch{return {ready:false};}finally{this.warming--;}
     })();

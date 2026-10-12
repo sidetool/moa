@@ -230,7 +230,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.post('/api/shorts/native/:sessionId/warm',{schema:{body:object({})}},async(req,reply)=>{
     const id=params(req).sessionId,owner=assertNativeShort(req,id),abort=new AbortController();
     const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
-    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal));}
+    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal,db.settings(owner).shortsQuality??'auto'));}
     finally{reply.raw.off('close',disconnect);}
   });
   app.get('/api/playback/:sessionId/shorts-captions/:trackId',async(req,reply)=>{

@@ -401,3 +401,48 @@ test('config and one-click HTTP contracts retain explicit selection compatibilit
   for(const key of ['selectionToken','choiceId'])assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads',headers,payload:{episodeId:'ep',[key]:'partial'}})).statusCode,400);
   assert.equal(preferred,1);assert.equal(manual,1);
 });
+
+
+test('HLS transfers three fragments concurrently, preserves order and compares serialized transport',async t=>{
+  const {dir,cfg}=await layout();t.after(()=>rm(dir,{recursive:true,force:true}));await fakeProbe(cfg.ffprobe,18);
+  const body='#EXTM3U\n'+Array.from({length:9},(_,i)=>`#EXTINF:2,\n${i}.ts\n`).join('')+'#EXT-X-ENDLIST\n';
+  const run=async(serial:boolean)=>{
+    const out=path.join(dir,serial?'serial':'parallel');await mkdir(out);
+    let active=0,peak=0,queue=Promise.resolve();const started=performance.now();
+    await transferVideo(cfg,out,{url:'https://source.test/list.m3u8'},async url=>{
+      if(url.endsWith('.m3u8'))return {url,response:incoming(body,'application/vnd.apple.mpegurl')};
+      const n=Number(new URL(url).pathname.slice(1).split('.')[0]);
+      const work=async()=>{active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,90+(2-n%3)*15));active--;};
+      if(serial){queue=queue.then(work);await queue;}else await work();
+      return {url,response:incoming(String(n),'video/mp2t')};
+    },new AbortController().signal,async()=>{},()=>{
+      // Files must already be completely written before finalizing starts.
+    });
+    const saved=JSON.parse(await readFile(path.join(dir,'remux-call.json'),'utf8')).playlists[0];
+    assert.deepEqual(saved.split('\n').filter((x:string)=>x.endsWith('.bin')),Array.from({length:9},(_,i)=>`part-${i+1}.bin`));
+    return {ms:Math.round(performance.now()-started),peak};
+  };
+  const serial=await run(true),parallel=await run(false);
+  assert.equal(serial.peak,1);assert.equal(parallel.peak,3);
+  t.diagnostic(`Synthetic per-fragment latency: serial ${serial.ms}ms, three-way ${parallel.ms}ms (includes remux/probe doubles)`);
+});
+test('malformed HLS drains already started writers before rejecting and starts no later fragments',async t=>{
+  const {dir,cfg}=await layout();t.after(()=>rm(dir,{recursive:true,force:true}));const out=path.join(dir,'out');await mkdir(out);
+  let active=0,calls=0;
+  await assert.rejects(transferVideo(cfg,out,{url:'https://source.test/list.m3u8'},async url=>{
+    if(url.endsWith('.m3u8'))return {url,response:incoming('#EXTM3U\n#EXTINF:2,\n0.ts\n#EXTINF:2,\n1.ts\n#EXTINF:invalid,\n2.ts\n#EXT-X-ENDLIST\n','application/vnd.apple.mpegurl')};
+    calls++;active++;await new Promise(r=>setTimeout(r,30));active--;return {url,response:incoming('fragment')};
+  },new AbortController().signal,async()=>{},()=>assert.fail('must not finalize')),{error:'download-playlist-invalid'});
+  assert.equal(active,0);assert.equal(calls,2);assert.equal((await readdir(out)).length,2);
+});
+
+test('parallel HLS cancellation settles all three transfers before returning',async t=>{
+  const {dir,cfg}=await layout();t.after(()=>rm(dir,{recursive:true,force:true}));const out=path.join(dir,'out');await mkdir(out);
+  const abort=new AbortController();let calls=0,active=0;
+  await assert.rejects(transferVideo(cfg,out,{url:'https://source.test/list.m3u8'},async url=>{
+    if(url.endsWith('.m3u8'))return {url,response:incoming('#EXTM3U\n'+Array.from({length:6},(_,i)=>`#EXTINF:2,\n${i}.ts\n`).join('')+'#EXT-X-ENDLIST\n','application/vnd.apple.mpegurl')};
+    calls++;active++;if(calls===3)abort.abort();
+    await new Promise(r=>setTimeout(r,30));active--;return {url,response:incoming('fragment')};
+  },abort.signal,async()=>{},()=>assert.fail('must not finalize')),{name:'AbortError'});
+  assert.equal(active,0);assert.equal(calls,3);
+});
