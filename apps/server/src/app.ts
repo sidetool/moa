@@ -21,7 +21,7 @@ import { createReadStream } from 'node:fs';
 import { access, readdir, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import { ACCOUNT_PERMISSIONS } from '@moa/shared';
+import { ACCOUNT_PERMISSIONS, DEFAULT_DEVICE_SETTINGS } from '@moa/shared';
 import type { Account, Profile, Settings, MediaType, ClientCapabilities, NavigationTab, DefaultNavigationUpdate } from '@moa/shared';
 import { config as makeConfig, type Config } from './config.js';
 import { DEFAULT_SETTINGS, Store } from './db.js';
@@ -113,6 +113,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const jimaku = new Jimaku(db, catalog, services.jimakuFetch);
   const translations = new Translations(db, catalog, cfg.dataDir, new Gemini(services.translationFetch));
   const subtitleLibrary = new SubtitleLibrary(db, catalog, translations, online, groups);
+  const subtitleMemoryTimer = setInterval(() => subtitleLibrary.memory(), 60 * 60_000); subtitleMemoryTimer.unref();
   const remotePlayback = new RemotePlayback(db, catalog, sources, undefined, online);
   const generalMarkers = new GeneralMarkers(db,services.generalMarkerFetch);
   const enrichment = new Enrichment(db, cfg, online, value => app.log.info(value), services);
@@ -369,6 +370,23 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     return { navigation };
   });
   app.get('/api/settings', async req => db.settings(profile(req)));
+  const deviceFields = { ...Object.fromEntries(Object.keys(DEFAULT_DEVICE_SETTINGS).filter(key => key in settingsFields).map(key => [key, settingsFields[key as keyof typeof settingsFields]])), fullscreenOnPlay: { type: 'boolean' }, autoSkip: { type: 'boolean' }, seekStep: { type: 'integer', enum: [5, 10, 15, 30] }, videoFill: { type: 'boolean' }, seasonSwitcher: { type: 'boolean' }, titleGrouping: { type: 'boolean' } };
+  const deviceScope = (req: FastifyRequest) => {
+    const id = req.headers['x-moa-device'];
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new ApiFailure(400, 'invalid-device');
+    return [req.moaAccount.id, profile(req), id.toLowerCase()] as const;
+  };
+  app.get('/api/settings/device', async (req, reply) => {
+    const row = db.get('SELECT value FROM device_settings WHERE account_id=? AND profile_id=? AND device_id=?', ...deviceScope(req));
+    return reply.header('Cache-Control', 'private, no-store').send({ settings: row ? JSON.parse(row.value) : null });
+  });
+  app.patch('/api/settings/device', { schema: { body: object({ settings: object(deviceFields), migrate: { type: 'boolean' } }, ['settings']) } }, async (req, reply) => {
+    const scope = deviceScope(req), body = req.body as { settings: Partial<import('@moa/shared').DeviceSettings>; migrate?: boolean };
+    const row = db.get('SELECT value FROM device_settings WHERE account_id=? AND profile_id=? AND device_id=?', ...scope);
+    const settings = row && body.migrate ? JSON.parse(row.value) : { ...DEFAULT_DEVICE_SETTINGS, ...JSON.parse(row?.value || '{}'), ...body.settings };
+    db.run('INSERT OR REPLACE INTO device_settings VALUES(?,?,?,?)', ...scope, JSON.stringify(settings));
+    return reply.header('Cache-Control', 'private, no-store').send({ settings });
+  });
   app.patch('/api/settings', { schema: { body: object(settingsFields) } }, async req => {
     const tabs = (req.body as Partial<Settings>).navigation;
     validateNavigation(tabs);
@@ -512,6 +530,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     format: { type: 'string', enum: ['ass', 'vtt'] }, source: { type: 'string', enum: ['embedded', 'local', 'extension', 'upload', 'online', 'translation'] },
   }, ['id', 'episodeId', 'label', 'format'])] } }, ['choice']) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.remember(params(req).id, profile(req), (req.body as { choice: import('@moa/shared').SubtitlePreference | null }).choice, (req.body as { migrate?: boolean }).migrate)));
   app.get('/api/admin/subtitles', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.list()));
+  app.get('/api/admin/subtitle-memory', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.memory()));
+  app.patch('/api/admin/subtitle-memory', { schema: { body: object({ retentionDays: { type: 'integer', minimum: 1, maximum: 3650 } }, ['retentionDays']) } }, async req => subtitleLibrary.memory((req.body as { retentionDays: number }).retentionDays));
+  app.delete('/api/admin/subtitle-memory', async () => subtitleLibrary.memory(undefined, true));
   const savedSubtitleParams = object({ kind: { type: 'string', enum: ['upload', 'translation', 'online'] }, id: string }, ['kind', 'id']);
   app.get('/api/admin/subtitles/:kind/:id/content', { schema: { params: savedSubtitleParams } }, async (req, reply) => {
     const row = subtitleLibrary.content(params(req).kind as 'upload' | 'translation' | 'online', params(req).id);
@@ -580,6 +601,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   casting.asset(app, '/api/playback/:sessionId/remote/:asset', async (req, reply) => remotePlayback.proxy(req, reply, params(req).sessionId, params(req).asset));
   const session = (req: FastifyRequest) => playback.get(params(req).sessionId, req.moaProfile);
+  app.get('/api/playback/:sessionId/preview', { schema: { params: idParams('sessionId'), querystring: object({ at: { type: 'number', minimum: 0, maximum: 864000 } }, ['at']) } }, async (req, reply) => {
+    return reply.type('image/jpeg').header('Cache-Control', 'private, max-age=1800').send(await playback.preview(session(req), query(req).at));
+  });
   casting.asset(app, '/api/playback/:sessionId/index.m3u8', async (req, reply) => {
     const s = session(req); if (s.response.mode === 'direct') throw new ApiFailure(404, 'not-hls');
     return reply.type('application/vnd.apple.mpegurl').header('Cache-Control', 'no-store').send(playback.playlist(s));
@@ -653,6 +677,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

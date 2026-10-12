@@ -45,3 +45,9 @@ footer { margin-top: 25px; color: #777783; text-align: center; font-size: 12px; 
 .where code { display: block; margin: 0 13px 12px; padding: 9px 11px; overflow-x: auto; border-radius: 6px; background: #09090b; color: #e4e4e7; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: normal; overflow-wrap: anywhere; }
 .where b { color: #e4e4e7; font-weight: 650; }
 footer { line-height: 1.6; }
+
+.reveal { display: grid; place-items: center; width: 35px; }
+.reveal .eye-slash { display: none; }
+.reveal[aria-pressed=true] .eye-slash { display: block; }
+.description:empty { display: none; }
+.panel h1 { margin-bottom: 24px; }

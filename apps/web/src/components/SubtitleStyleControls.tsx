@@ -1,8 +1,6 @@
 import type { Settings } from '@moa/shared';
-import { useQueryClient } from '@tanstack/react-query';
 import { RotateCcw } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { keys } from '../api/queries';
 import { cx } from '../lib/format';
 
 type Background = NonNullable<Settings['subtitleBackground']>;
@@ -113,38 +111,9 @@ function Range({ label, value, min, max, step, unit, empty, disabled, onSlide, o
   );
 }
 
-/**
- * Subtitle appearance, with a preview on the settings page. Changes show at once (also in a playing
- * video through the settings cache) and are saved to the profile shortly after the last adjustment.
- */
 export function SubtitleStyleControls({ settings, save, variant = 'page' }: { settings: Settings; save: (patch: Partial<Settings>) => void; variant?: 'page' | 'player' }) {
-  const client = useQueryClient();
-  const [look, setLook] = useState(() => lookOf(settings));
-  const pending = useRef<Partial<SubtitleLook>>({});
-  const timer = useRef<number | undefined>(undefined);
-  const saveRef = useRef(save);
-  saveRef.current = save;
-  const flush = () => {
-    window.clearTimeout(timer.current);
-    timer.current = undefined;
-    if (!Object.keys(pending.current).length) return;
-    const patch = patchOf(pending.current);
-    pending.current = {};
-    saveRef.current(patch);
-  };
-  useEffect(() => () => flush(), []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Follow saved settings (another device, a reset) unless the user is still adjusting.
-  const saved = lookOf(settings);
-  const savedKey = JSON.stringify(saved);
-  useEffect(() => { if (timer.current === undefined) setLook(saved); }, [savedKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const change = (next: Partial<SubtitleLook>, immediate = false) => {
-    setLook(old => ({ ...old, ...next }));
-    client.setQueryData<Settings>(keys.settings, old => old ? { ...old, ...patchOf(next) } : old);
-    pending.current = { ...pending.current, ...next };
-    window.clearTimeout(timer.current);
-    if (immediate) flush(); else timer.current = window.setTimeout(flush, 400);
-  };
+  const look = lookOf(settings);
+  const change = (next: Partial<SubtitleLook>) => save(patchOf(next));
   const changed = (key: keyof SubtitleLook) => look[key] !== DEFAULT[key];
   const anyChanged = (Object.keys(DEFAULT) as Array<keyof SubtitleLook>).some(changed);
   const preset = PRESETS.find(([, , scale]) => scale === look.scale);
@@ -156,7 +125,7 @@ export function SubtitleStyleControls({ settings, save, variant = 'page' }: { se
       <span className="sub-style-label">
         {label}
         <button type="button" className="sub-style-reset" aria-label={`${label} 기본값으로`} title="기본값으로" tabIndex={changed(key) ? 0 : -1} aria-hidden={!changed(key)}
-          onClick={() => change({ [key]: DEFAULT[key] }, true)}><RotateCcw size={13} /></button>
+          onClick={() => change({ [key]: DEFAULT[key] })}><RotateCcw size={13} /></button>
       </span>
       <div className="sub-style-control">{control}{hint && <small className="sub-style-hint">{hint}</small>}</div>
     </div>
@@ -167,24 +136,24 @@ export function SubtitleStyleControls({ settings, save, variant = 'page' }: { se
       {/* In the player the video itself shows each change. */}
       {variant === 'page' && <div className="sub-style-preview">
         <SubtitlePreview look={look} size={settings.subtitleScale == null ? settings.subtitleSize : undefined} />
-        {anyChanged && <button type="button" className="sub-style-reset-all" onClick={() => change(DEFAULT, true)}>모두 기본값</button>}
+        {anyChanged && <button type="button" className="sub-style-reset-all" onClick={() => change(DEFAULT)}>모두 기본값</button>}
       </div>}
       <div className="sub-style-rows">
         {row('scale', '크기', <>
-          <Range label="자막 크기" value={look.scale} min={50} max={250} step={1} unit="%" onSlide={scale => change({ scale })} onCommit={scale => change({ scale }, true)} />
+          <Range label="자막 크기" value={look.scale} min={50} max={250} step={1} unit="%" onSlide={scale => change({ scale })} onCommit={scale => change({ scale })} />
           <div className="sub-style-presets" role="group" aria-label="자막 크기 빠른 선택">
-            {PRESETS.map(([size, label, scale]) => <button key={size} type="button" className={cx(preset?.[0] === size && 'is-active')} aria-pressed={preset?.[0] === size} onClick={() => change({ scale }, true)}>{label}</button>)}
+            {PRESETS.map(([size, label, scale]) => <button key={size} type="button" className={cx(preset?.[0] === size && 'is-active')} aria-pressed={preset?.[0] === size} onClick={() => change({ scale })}>{label}</button>)}
           </div>
         </>)}
         {row('background', '배경', <div className="seg" role="radiogroup" aria-label="자막 배경">
-          {BACKGROUNDS.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={look.background === value} className={cx(look.background === value && 'is-active')} onClick={() => change({ background: value }, true)}>{label}</button>)}
+          {BACKGROUNDS.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={look.background === value} className={cx(look.background === value && 'is-active')} onClick={() => change({ background: value })}>{label}</button>)}
         </div>)}
-        {row('padding', '배경 여백', <Range label="자막 배경 여백" value={look.padding} min={0} max={20} step={1} unit="px" disabled={!boxed} onSlide={padding => change({ padding })} onCommit={padding => change({ padding }, true)} />, boxed ? undefined : '배경을 켜면 조절할 수 있어요.')}
-        {row('outline', '윤곽선', <Range label="자막 윤곽선" value={look.outline} min={0} max={6} step={.1} unit="px" empty="원본" onSlide={outline => change({ outline })} onCommit={outline => change({ outline }, true)} />)}
-        {row('shadow', '그림자', <Range label="자막 그림자" value={look.shadow} min={0} max={10} step={.1} unit="px" empty="원본" onSlide={shadow => change({ shadow })} onCommit={shadow => change({ shadow }, true)} />)}
-        {row('height', '위치', <Range label="자막 높이" value={look.height} min={0} max={40} step={1} unit="%" onSlide={height => change({ height })} onCommit={height => change({ height }, true)} />)}
+        {row('padding', '배경 여백', <Range label="자막 배경 여백" value={look.padding} min={0} max={20} step={1} unit="px" disabled={!boxed} onSlide={padding => change({ padding })} onCommit={padding => change({ padding })} />, boxed ? undefined : '배경을 켜면 조절할 수 있어요.')}
+        {row('outline', '윤곽선', <Range label="자막 윤곽선" value={look.outline} min={0} max={6} step={.1} unit="px" empty="원본" onSlide={outline => change({ outline })} onCommit={outline => change({ outline })} />)}
+        {row('shadow', '그림자', <Range label="자막 그림자" value={look.shadow} min={0} max={10} step={.1} unit="px" empty="원본" onSlide={shadow => change({ shadow })} onCommit={shadow => change({ shadow })} />)}
+        {row('height', '위치', <Range label="자막 높이" value={look.height} min={0} max={40} step={1} unit="%" onSlide={height => change({ height })} onCommit={height => change({ height })} />)}
       </div>
-      {variant === 'player' && anyChanged && <button type="button" className="sub-style-reset-all is-inline" onClick={() => change(DEFAULT, true)}>모양 모두 기본값</button>}
+      {variant === 'player' && anyChanged && <button type="button" className="sub-style-reset-all is-inline" onClick={() => change(DEFAULT)}>모양 모두 기본값</button>}
       <small className="sub-style-note">‘원본’은 자막 파일의 모양을 그대로 써요. ASS 자막은 글꼴·위치가 파일을 따르고, 배경을 켜면 그림자 대신 배경 상자가 적용돼요.</small>
     </div>
   );

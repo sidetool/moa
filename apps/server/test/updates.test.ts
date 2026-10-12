@@ -73,9 +73,9 @@ test('release discovery sorts versions, uses installed metadata, caches and neve
   assert.equal(calls, 1);
   assert.equal(first.connected, false);
   assert.equal(first.discovery?.updateAvailable, true);
-  assert.deepEqual(first.discovery?.releases.map(r => r.version), ['v3.0.0-beta.1', 'v2.0.0', 'v1.10.0', 'v1.9.0']);
+  assert.deepEqual(first.discovery?.releases.map(r => r.version), ['v2.0.0', 'v1.10.0', 'v1.9.0']);
   assert.equal(first.discovery?.latestVersion, 'v2.0.0');
-  assert.equal(first.discovery?.releases[0].url, 'https://github.com/fixture/moa/releases/tag/v3.0.0-beta.1');
+  assert.equal(first.discovery?.releases[0].url, 'https://github.com/fixture/moa/releases/tag/v2.0.0');
   await updates.request('check');
   assert.equal(calls, 1);
   await assert.rejects(updates.request('apply'), /updater-unavailable/);
@@ -130,4 +130,71 @@ test('update handoff serializes apply and releases the queue if preparation fail
   rejectPreparation(Error('synthetic preparation failure'));assert.equal((await first).statusCode,500);assert.equal(resumes,1);
   assert.equal((await app.inject({method:'POST',url:'/api/admin/updates/apply'})).statusCode,202);
   assert.equal(calls,2);assert.equal(JSON.parse(await readFile(path.join(dir,'request.json'),'utf8')).action,'apply');
+});
+
+test('release channels persist without a host agent and notes are bounded to the configured repository', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'moa-update-channel-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const calls: string[] = [];
+  const fetcher = async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return String(input).includes('/tags/') ? Response.json({ ...release('v3.0.0-beta.1'), body: '<script>untrusted</script>\n' + 'x'.repeat(70000) }) : Response.json([release('v2.0.0'), release('v3.0.0-beta.1', { prerelease: true })]);
+  };
+  const env = { ...installed, MOA_DATA_DIR: dir };
+  const updates = new Updates('', fetcher, env);
+  assert.equal((await updates.status()).discovery?.latestVersion, 'v2.0.0');
+  const beta = await updates.request('configure', { channel: 'beta' });
+  assert.equal(beta.policy?.channel, 'beta');
+  assert.equal(beta.discovery?.latestVersion, 'v3.0.0-beta.1');
+  assert.equal((await new Updates('', fetcher, env).status()).policy?.channel, 'beta');
+  assert.equal((await updates.notes('v3.0.0-beta.1')).body.length, 65536);
+  assert.equal(calls.at(-1), 'https://api.github.com/repos/fixture/moa/releases/tags/v3.0.0-beta.1');
+  await assert.rejects(updates.notes('../secrets'), /update-invalid-version/);
+  await assert.rejects(updates.request('apply'), /updater-unavailable/);
+});
+
+test('changing release channels isolates pending discovery results and requests', async t => {
+  for (const previousFirst of [true, false]) {
+    const dir = await mkdtemp(path.join(tmpdir(), 'moa-update-channel-race-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const deferred = <T>() => {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>(done => { resolve = done; });
+      return { promise, resolve };
+    };
+    const entered = [deferred<void>(), deferred<void>()];
+    const responses = [deferred<Response>(), deferred<Response>()];
+    let calls = 0;
+    const env = { ...installed, MOA_VERSION: 'v1.9.1-beta.1', MOA_DATA_DIR: dir };
+    const updates = new Updates('', async () => {
+      const index = calls++;
+      entered[index]?.resolve();
+      return responses[index]?.promise ?? Response.json([]);
+    }, env);
+    const feed = () => Response.json([release('v2.0.0'), release('v3.0.0-beta.1', { prerelease: true })]);
+    const previous = updates.status();
+    await entered[0].promise;
+    const configured = updates.request('configure', { channel: 'stable' });
+    await entered[1].promise;
+    let concurrent: ReturnType<Updates['status']> | undefined;
+    if (previousFirst) {
+      responses[0].resolve(feed());
+      assert.equal((await previous).discovery?.latestVersion, 'v3.0.0-beta.1');
+      concurrent = updates.status();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(calls, 2);
+    }
+    responses[1].resolve(feed());
+    const current = await configured;
+    assert.equal(current.policy?.channel, 'stable');
+    assert.equal(current.discovery?.latestVersion, 'v2.0.0');
+    if (concurrent) assert.equal((await concurrent).discovery?.latestVersion, 'v2.0.0');
+    if (!previousFirst) {
+      responses[0].resolve(feed());
+      await previous;
+    }
+    assert.equal((await updates.status()).discovery?.latestVersion, 'v2.0.0');
+    assert.equal(calls, 2);
+    assert.deepEqual(JSON.parse(await readFile(path.join(dir, 'update-policy.json'), 'utf8')), { channel: 'stable' });
+  }
 });

@@ -231,8 +231,11 @@ export interface WebsitePlugin {
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
   enabled: boolean;
+  updateUrl?: string;
+  storage?: { bytes: number; profiles: number };
 }
-export interface WebsitePluginPackage extends Omit<WebsitePlugin, 'enabled' | 'revision' | 'kind' | 'compatibility'> { html?: string; script?: string }
+export interface WebsitePluginPackage extends Omit<WebsitePlugin, 'enabled' | 'revision' | 'kind' | 'compatibility' | 'storage'> { html?: string; script?: string }
+export interface WebsitePluginData { profileId: string; profileName: string; bytes: number; value: Record<string, unknown> }
 export type WebsitePluginRuntime = Pick<WebsitePlugin, 'id' | 'name' | 'revision' | 'kind' | 'placements' | 'permissions' | 'actions' | 'hooks' | 'enabled'>;
 
 export interface SubtitleTrack {
@@ -251,6 +254,8 @@ export interface SubtitleTrack {
 }
 
 export type SubtitlePreference = Pick<SubtitleTrack, 'id' | 'source' | 'label' | 'lang' | 'format'> & { episodeId: string };
+export interface SubtitleMemory { retentionDays: number; count: number }
+export interface SubtitleSelection { choice?: SubtitlePreference | null; recommendation?: SubtitlePreference }
 
 export interface SavedSubtitle {
   id: string;
@@ -466,6 +471,11 @@ export interface BrowseSelection { revision: string; filters: FilterChange[] }
 export interface TitleGroup { id: string; manual: boolean; members: MediaCard[] }
 
 /* ---------- Accounts (auth service: /__moa/api) ---------- */
+export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | 'subtitleBackground' | 'subtitleShadow' | 'subtitleOutline' | 'subtitleHeight' | 'subtitlePadding'> & {
+  fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
+};
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { fullscreenOnPlay: true, autoSkip: false, seekStep: 10, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6 };
+
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];
 export interface Account { id: string; username: string; role: 'admin' | 'member'; permissions: AccountPermission[] }

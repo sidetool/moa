@@ -36,6 +36,8 @@ COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN corepack pnpm --filter @moa/server... install --prod --frozen-lockfile
 
+FROM docker:28-cli AS docker-cli
+
 FROM node:22-bookworm-slim AS runtime
 # Jellyfin's own 7.x ffmpeg includes the Radeon VAAPI userspace drivers.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
@@ -45,6 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir -p /data && chown node:node /data \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+COPY scripts/container-updater.mjs scripts/release.mjs scripts/update-files.mjs scripts/release-bundle.mjs scripts/update-launcher.mjs ./scripts/
+COPY deploy/release-trust.json ./deploy/release-trust.json
 COPY --from=runtime-deps /app/ ./
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/packages/extensions/dist ./packages/extensions/dist

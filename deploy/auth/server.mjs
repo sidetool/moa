@@ -2,7 +2,7 @@ import http from 'node:http';
 import { openState, setupCode } from './state.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { migrateAccounts, accountsService, accountView, fail, transaction } from './accounts.mjs';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -55,7 +55,17 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
   function session(req) {
     const token = cookieValue(req, 'session');
     if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
-    return findSession.get(hash(token), now()) ?? null;
+    const current = findSession.get(hash(token), now());
+    if (!current) return null;
+    const ua = String(req.headers['user-agent'] || '').slice(0, 512);
+    const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : /Macintosh/i.test(ua) ? 'macOS' : /Tizen|Web0S|WebOS|SMART-TV/i.test(ua) ? 'TV' : /Linux/i.test(ua) ? 'Linux' : '';
+    const browser = /Edg[A-Za-z]*\//.test(ua) ? 'Edge' : /Firefox|FxiOS/.test(ua) ? 'Firefox' : /Chrome|CriOS/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : '브라우저';
+    database.prepare('INSERT OR IGNORE INTO session_devices(id,token_hash,name,created_at,last_seen) VALUES(?,?,?,?,?)').run(randomUUID(), current.token_hash, [browser, os].filter(Boolean).join(' · '), current.refreshed, now());
+    const name = [browser, os].filter(Boolean).join(' · ');
+    database.prepare("UPDATE session_devices SET last_seen=?,name=CASE WHEN name='브라우저' THEN ? ELSE name END WHERE token_hash=? AND (last_seen<? OR (name='브라우저' AND name<>?))").run(now(), name, current.token_hash, now() - 300000, name);
+    const device = req.headers['x-moa-device'];
+    if (typeof device === 'string' && /^[a-f0-9-]{36}$/.test(device)) database.prepare('UPDATE session_devices SET device_id=? WHERE token_hash=? AND device_id IS NOT ?').run(device, current.token_hash, device);
+    return current;
   }
   function target(value) {
     if (typeof value !== 'string' || value.length > 4096 || !value.startsWith('/') || value.startsWith('//') || /[\\\x00-\x1f]/.test(value)) return '/';
@@ -111,7 +121,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
       ERROR_CODE: errorCode, CODE: inviteCode, CSRF: csrf, NEXT: target(next), ERROR: error,
       USERNAME: account?.username ?? username,
       TITLE: account ? '로그인한 브라우저' : 'MOA에 로그인',
-      DESCRIPTION: account ? '이 브라우저의 로그인 상태를 관리하세요.' : '기존 아이디와 비밀번호로 접속하세요.',
+      DESCRIPTION: '',
       LOGIN_HIDDEN: account ? 'hidden' : '', ACCOUNT_HIDDEN: account ? '' : 'hidden',
     };
     const html = (settingUp ? setupTemplate : joining ? joinTemplate : template).replace(/\{\{([A-Z_]+)\}\}/g, (_, key) => escapeHtml(fields[key] ?? ''));

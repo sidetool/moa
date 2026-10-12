@@ -383,11 +383,19 @@
 .dropdown-trigger:hover:not(:disabled), .dropdown-trigger[aria-expanded=true] { border-color: var(--text-3); }
 .dropdown-trigger:disabled { opacity: .5; }
 .dropdown-menu { position: fixed; inset: auto; margin: 0; padding: 5px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-m); background: var(--surface-2); color: var(--text); box-shadow: var(--shadow-pop); overflow: auto; overscroll-behavior: contain; }
-.dropdown-menu:popover-open { animation: pop .16s var(--ease); transform-origin: top center; }
+.dropdown-menu { opacity: 0; transform: translateY(-5px); transition: opacity .16s var(--ease), transform .16s var(--ease), display .16s allow-discrete, overlay .16s allow-discrete; }
+.dropdown-menu:popover-open { opacity: 1; transform: translateY(0); transform-origin: top center; }
+@starting-style { .dropdown-menu:popover-open { opacity: 0; transform: translateY(-5px); } }
 .dropdown-option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 9px 10px; border-radius: var(--radius-s); font-size: .9rem; font-weight: 500; text-align: left; }
 .dropdown-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .dropdown-option.is-active { background: var(--surface-3); }
 .dropdown-option[aria-selected=true] { color: var(--accent-strong); font-weight: 700; }
+.dropdown-option > .option-check { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--hairline-strong); border-radius: 4px; }
+.dropdown-option > .option-check.is-checked { border-color: var(--accent); background: var(--accent); color: #fff; }
+.password-field { position: relative; display: flex; width: 100%; min-width: 0; }
+.password-field input { width: 100%; padding-right: 44px !important; }
+.password-toggle { position: absolute; top: 0; right: 0; bottom: 0; width: 42px; display: grid; place-items: center; color: var(--text-3); border-radius: var(--radius-s); }
+.password-toggle:hover, .password-toggle[aria-pressed=true] { color: var(--text); }
 .field { display: grid; gap: 6px; font-size: .85rem; color: var(--text-3); font-weight: 600; }
 .field input:not([type=checkbox]) { height: 40px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-1); color: var(--text); }
 .field input:focus { outline: none; border-color: rgba(255, 255, 255, .5); }
@@ -404,13 +412,30 @@
 .home-plugin { margin: clamp(22px, 3vw, 38px) var(--gutter); }
 .home-plugin iframe { display: block; width: 100%; height: var(--plugin-height, 320px); border: 0; }
 .home-plugin > p { padding: 12px 0; color: var(--text-3); }
-.plugin-row { flex-wrap: wrap; }
-.plugin-dropzone { border: 1px dashed var(--hairline-strong); border-radius: var(--radius-l); transition: border-color .16s, background-color .16s; }
-.plugin-dropzone.is-dragging { border-color: var(--accent-strong); background: var(--surface-2); }
-.plugin-row > div:first-child { flex: 1 1 220px; }
+.setting.plugin-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: start; gap: 14px; }
+.plugin-row > .selection-checkbox { margin-top: 4px; }
+.plugin-summary { overflow-wrap: anywhere; }
+.plugin-install { display: grid; gap: 14px; padding: 18px; border-bottom: 1px solid var(--hairline); transition: background-color .16s; }
+.plugin-install.is-dragging { background: var(--surface-2); }
+.plugin-install-files { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.plugin-install-link { display: flex; align-items: center; gap: 10px; }
+.plugin-install-link input { flex: 1; min-width: 0; }
 .plugin-actions, .plugin-row > .plugin-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.plugin-row > .plugin-actions { max-width: 420px; }
 .plugin-preview, .plugin-empty { padding: 18px 22px; overflow-wrap: anywhere; }
 .plugin-preview p { margin: 8px 0; color: var(--text-3); font-size: .85rem; }
+.plugin-data { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.plugin-data summary { cursor: pointer; }
+.plugin-data pre { max-height: 240px; overflow: auto; padding: 12px; border-radius: var(--radius-s); background: var(--surface-2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+.plugin-data-url { overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .setting.plugin-row { grid-template-columns: 20px minmax(0, 1fr); }
+  .plugin-row > .plugin-actions { grid-column: 2; max-width: none; }
+}
+@media (max-width: 520px) {
+  .plugin-install-link { flex-wrap: wrap; }
+  .plugin-install-link input { flex-basis: 100%; }
+}
 input[type=checkbox] { appearance: none; display: inline-grid; place-content: center; flex: none; width: 18px; height: 18px; margin: 0; padding: 0; vertical-align: -3px; border: 1px solid var(--hairline-strong); border-radius: 5px; background: var(--surface-2); cursor: pointer; }
 input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
 input[type=checkbox]:checked::before { content: ''; width: 8px; height: 4px; border: solid var(--accent-ink); border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
@@ -431,6 +456,8 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 .sheet-path { min-width: 0; color: var(--text-3); font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .confirm-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); margin: auto; padding: 0; border: 1px solid var(--hairline-strong); border-radius: var(--radius-l); background: var(--bg-raised); color: var(--text); box-shadow: 0 30px 80px #0009; }
 .confirm-dialog::backdrop { background: #000a; backdrop-filter: blur(4px); }
+.confirm-dialog[open] { animation: pop .18s var(--ease); }
+.confirm-dialog[open]::backdrop { animation: fade .18s var(--ease); }
 .confirm-dialog-body { padding: 12px 22px 24px; color: var(--text-2); line-height: 1.6; overflow-wrap: anywhere; }
 .confirm-dialog .sheet-foot { justify-content: flex-end; }
 
@@ -558,3 +585,6 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
   .sub-style.is-page .sub-style-row:first-child > .sub-style-label { margin-top: 0; }
   .sub-style .seg button { padding: 0 4px; font-size: .84rem; }
 }
+
+.release-notes-dialog { width: min(760px, calc(100vw - 32px)); }
+.release-notes-content { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; line-height: 1.75; }

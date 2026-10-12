@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { pluginCompatibility, pluginPackage, unpackPlugin } from '../src/website-plugins.js';
+import { fetchPluginPackage, pluginCompatibility, pluginPackage, unpackPlugin } from '../src/website-plugins.js';
 import { buildApp } from '../src/app.js';
 
 const template = { ...JSON.parse(await readFile(new URL('../../../plugins/template/examples/subtitle-helper/manifest.json', import.meta.url), 'utf8')), html: '<p>Plugin test</p>' };
@@ -16,6 +16,8 @@ test('plugin packages validate permissions, sizes, origins and API versions', ()
     assert.throws(() => pluginPackage({ ...template, ...patch }));
   }
   assert.doesNotThrow(() => pluginPackage({ ...template, connect: ['https://example.org'] }));
+  assert.doesNotThrow(() => pluginPackage({ ...template, updateUrl: 'https://example.org/plugin.zip' }));
+  for (const updateUrl of ['http://example.org/plugin.zip', 'file:///tmp/plugin.zip', 'https://user:pass@example.org/plugin.zip', 'https://example.org/plugin.zip#fragment', null, 1]) assert.throws(() => pluginPackage({ ...template, updateUrl }));
   const { html: _, ...manifest } = template;
   const script = { ...manifest, script: 'moa.on("ready", () => {});', placements: ['app', 'player'], permissions: ['app.context', 'app.navigate', 'ui', 'storage', 'notifications', 'player.control'], actions: [{ id: 'bookmark', label: '책갈피' }] };
   assert.deepEqual(pluginPackage(script), script);
@@ -51,6 +53,9 @@ test('whole plugin folders and ZIPs select their root manifest and reject unsafe
     const archive = (...names: string[]) => { const output = path.join(directory, 'test.zip'); execFileSync('bsdtar', ['-cf', output, '--format', 'zip', '-C', directory, ...names]); return readFileSync(output); };
     const zip = archive('root');
     assert.deepEqual(await unpackPlugin({ archive: zip.toString('base64') }), template);
+    await mkdir(path.join(directory, '__MACOSX/root'), { recursive: true });
+    await writeFile(path.join(directory, '__MACOSX/root/._manifest.json'), 'Finder metadata');
+    assert.deepEqual(await unpackPlugin({ archive: archive('root', '__MACOSX').toString('base64') }), template);
     await assert.rejects(unpackPlugin({ archive: archive('root/manifest.json').toString('base64') }), { error: 'plugin-entry-missing' });
     await assert.rejects(unpackPlugin({ archive: archive('root/manifest.json', 'root/manifest.json', 'root/index.html').toString('base64') }));
     await assert.rejects(unpackPlugin({ archive: Buffer.from(zip.toString('latin1').replaceAll('root/', '../x/'), 'latin1').toString('base64') }));
@@ -62,6 +67,34 @@ test('whole plugin folders and ZIPs select their root manifest and reject unsafe
     assert.equal(built.id, 'playback-bookmark');
     assert.equal(built.script, await readFile(path.join(templateRoot, 'plugin.js'), 'utf8'));
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('plugin update links fetch bounded packages, preserve the source and reject unsafe redirects', async () => {
+  const requests: string[] = [];
+  const request: Parameters<typeof fetchPluginPackage>[2] = async (input, _signal, privateOrigins, maximum, _proxy, followRedirects) => {
+    requests.push(input.url);
+    assert.deepEqual(privateOrigins, []);
+    assert.equal(maximum, 4 * 1024 * 1024);
+    assert.equal(followRedirects, false);
+    return { bytes: Buffer.from(JSON.stringify(template)), statusCode: requests.length === 1 ? 302 : 200, headers: requests.length === 1 ? { location: '/download/plugin.json' } : {}, url: input.url, contentType: 'application/json' };
+  };
+  const result = await fetchPluginPackage('https://example.org/latest', AbortSignal.timeout(1000), request);
+  assert.deepEqual(requests, ['https://example.org/latest', 'https://example.org/download/plugin.json']);
+  assert.deepEqual(result, { ...template, updateUrl: 'https://example.org/latest' });
+  const directory = await mkdtemp(path.join(tmpdir(), 'moa-plugin-link-'));
+  try {
+    await writeFile(path.join(directory, 'package.moa-plugin.json'), JSON.stringify(template));
+    execFileSync('bsdtar', ['-cf', path.join(directory, 'plugin.zip'), '--format', 'zip', '-C', directory, 'package.moa-plugin.json']);
+    const bytes = await readFile(path.join(directory, 'plugin.zip'));
+    const zipped = await fetchPluginPackage('https://example.org/plugin.zip', AbortSignal.timeout(1000), async input => ({ bytes, statusCode: 200, headers: {}, url: input.url, contentType: 'application/zip' }));
+    assert.equal(zipped.id, template.id);
+    assert.equal(zipped.updateUrl, 'https://example.org/plugin.zip');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+  for (const location of ['http://example.org/plain.zip', 'https://user:pass@example.org/plugin.zip']) {
+    await assert.rejects(fetchPluginPackage('https://example.org/latest', AbortSignal.timeout(1000), async input => ({ bytes: Buffer.alloc(0), statusCode: 302, headers: { location }, url: input.url, contentType: '' })), { error: 'plugin-url-invalid' });
+  }
+  await assert.rejects(fetchPluginPackage('https://127.0.0.1/plugin.zip', AbortSignal.timeout(1000)), { error: 'plugin-fetch-failed' });
+  await assert.rejects(fetchPluginPackage('https://example.org/latest', AbortSignal.timeout(1000), async input => ({ bytes: Buffer.alloc(4 * 1024 * 1024 + 1), statusCode: 200, headers: {}, url: input.url, contentType: '' })), { error: 'plugin-package-too-large' });
 });
 
 test('script plugin storage enforces permission, revision, profile boundaries, size and deletion', async () => {
@@ -85,6 +118,16 @@ test('script plugin storage enforces permission, revision, profile boundaries, s
     assert.deepEqual((await storage(1)).json(), {});
     assert.deepEqual((await storage(1, { position: 7 })).json(), { position: 7 });
     assert.deepEqual((await storage(0)).json(), { position: 42, name: '첫 프로필' });
+    const storedData = await env.app.inject({ url: `/api/admin/plugins/${script.id}/data`, headers: admin });
+    assert.equal(storedData.statusCode, 200);
+    assert.equal(storedData.headers['cache-control'], 'private, no-store');
+    assert.deepEqual(storedData.json(), [
+      { profileId: profiles[0].id, profileName: 'First', bytes: Buffer.byteLength(JSON.stringify({ position: 42, name: '첫 프로필' })), value: { position: 42, name: '첫 프로필' } },
+      { profileId: profiles[1].id, profileName: 'Second', bytes: Buffer.byteLength(JSON.stringify({ position: 7 })), value: { position: 7 } },
+    ]);
+    const savedListing = (await env.app.inject({ url: '/api/plugins', headers: headers[0] })).json()[0];
+    assert.deepEqual(savedListing.storage, { profiles: 2, bytes: storedData.json().reduce((sum: number, row: { bytes: number }) => sum + row.bytes, 0) });
+    assert.equal((await env.app.inject({ url: `/api/admin/plugins/${script.id}/data`, headers: { 'x-moa-account': 'member', 'x-moa-role': 'member' } })).statusCode, 403);
     assert.equal((await env.app.inject({ method: 'POST', url: endpoint, headers: viewer, payload: { revision } })).statusCode, 401);
     assert.equal((await env.app.inject({ method: 'POST', url: endpoint, headers: { ...admin, 'x-moa-profile': profiles[0].id }, payload: { revision } })).statusCode, 401);
     assert.equal((await storage(0, { text: '가'.repeat(5500) })).statusCode, 413);
@@ -124,10 +167,14 @@ test('plugin installation persists, admin controls are protected and network acc
     assert.equal((await env.app.inject({ method: 'POST', url: '/api/admin/plugins', headers: member, payload: template })).statusCode, 403);
     const preview = { files: [{ name: 'package.moa-plugin.json', content: JSON.stringify(template) }] };
     assert.equal((await env.app.inject({ method: 'POST', url: '/api/admin/plugins/preview', headers: member, payload: preview })).statusCode, 403);
+    assert.equal((await env.app.inject({ method: 'POST', url: '/api/admin/plugins/preview', headers: admin, payload: { url: 'http://example.org/plugin.zip' } })).statusCode, 400);
+    assert.equal((await env.app.inject({ method: 'POST', url: '/api/admin/plugins/preview', headers: admin, payload: { url: 'https://example.org/plugin.zip', files: [] } })).statusCode, 400);
     assert.deepEqual((await env.app.inject({ method: 'POST', url: '/api/admin/plugins/preview', headers: admin, payload: preview })).json(), template);
     assert.equal(env.db.get('SELECT count(*) AS n FROM website_plugins')!.n, 0);
     assert.equal((await env.app.inject({ method: 'POST', url: '/api/admin/plugins', payload: template })).statusCode, 401);
     assert.equal((await env.app.inject({ method: 'POST', url: '/api/admin/plugins', headers: admin, payload: template })).statusCode, 200);
+    assert.equal((await env.app.inject({ method: 'POST', url: `/api/admin/plugins/${template.id}/preview`, headers: member })).statusCode, 403);
+    assert.equal((await env.app.inject({ method: 'POST', url: `/api/admin/plugins/${template.id}/preview`, headers: admin })).statusCode, 400);
     assert.equal((await env.app.inject({ url: '/api/plugins', headers: member })).statusCode, 403);
     const listing = (await env.app.inject({ url: '/api/plugins', headers: profile })).json();
     assert.equal(listing.length, 1); assert.equal(listing[0].html, undefined);

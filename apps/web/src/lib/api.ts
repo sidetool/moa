@@ -1,5 +1,6 @@
 import { PROFILE_HEADER } from "@moa/shared";
 import { transformPluginCatalog } from './plugin-hooks';
+import { deviceId } from './device-id';
 
 export const hasLoginGate = document.querySelector('meta[name="moa-auth"]')?.getAttribute("content") === "enabled";
 
@@ -29,7 +30,7 @@ export const api = <T>(path: string, init: ApiInit = {}) => request<T>(`/api${pa
 export const authApi = <T>(path: string, init: ApiInit = {}) => request<T>(`/__moa/api${path}`, init, true);
 
 async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: "application/json", 'X-Moa-Device': deviceId() };
   const profile = currentProfileId();
   if (profile && !auth) headers[PROFILE_HEADER] = profile;
   const mutation = !['GET', 'HEAD'].includes(init.method ?? 'GET');

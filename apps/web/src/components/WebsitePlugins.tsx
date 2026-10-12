@@ -3,7 +3,7 @@ import { Puzzle, Upload, X } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useMatch, useNavigate } from 'react-router-dom';
-import type { WebsitePlugin, WebsitePluginPackage, WebsitePluginRuntime } from '@moa/shared';
+import type { WebsitePlugin, WebsitePluginData, WebsitePluginPackage, WebsitePluginRuntime } from '@moa/shared';
 import { useMe } from '../api/queries';
 import { api, ApiError, currentProfileId } from '../lib/api';
 import { Button, ButtonLink, ConfirmDialog, IconButton } from './ui';
@@ -305,25 +305,53 @@ export function WebsitePlugins({ admin }: { admin: boolean }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [updateUrl, setUpdateUrl] = useState('');
+  const [dataPlugin, setDataPlugin] = useState<WebsitePlugin | null>(null);
+  const data = useQuery({ queryKey: ['website-plugin-data', dataPlugin?.id], queryFn: () => api<WebsitePluginData[]>(`/admin${path(dataPlugin!.id)}/data`), enabled: admin && !!dataPlugin, retry: false });
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true); setError('');
     try { await operation(); }
     catch (error) { setError(error instanceof ApiError ? '플러그인을 처리하지 못했어요. 파일 형식과 연결을 확인해 주세요.' : error instanceof Error ? error.message : '플러그인을 처리하지 못했어요.'); }
     finally { await client.invalidateQueries({ predicate: query => ['website-plugins', 'website-plugin-runtime', ...catalogQueries].includes(String(query.queryKey[0])) }); setBusy(false); }
   };
-  const choose = async (files: File[]) => {
-    if (!files.length || busy) return;
+  const choose = async (selection: Array<{ file: File; name: string }> | Promise<Array<{ file: File; name: string }>>) => {
+    if (busy) return;
     setBusy(true); setError(''); setDraft(null);
     try {
-      if (files.length > 256 || files.reduce((sum, file) => sum + file.size, 0) > 4 * 1024 * 1024) throw new Error('플러그인 패키지는 4MB, 256개 파일 이하여야 해요.');
+      const files = await selection;
+      if (!files.length) return;
+      if (files.length > 256 || files.reduce((sum, { file }) => sum + file.size, 0) > 4 * 1024 * 1024) throw new Error('플러그인 패키지는 4MB, 256개 파일 이하여야 해요.');
       const body = files.length === 1 && /\.zip$/i.test(files[0].name)
-        ? { archive: await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = () => reject(new Error('ZIP 파일을 읽지 못했어요.')); reader.readAsDataURL(files[0]); }) }
-        : { files: await Promise.all(files.filter(file => /^(?:manifest\.json|plugin\.js|index\.html)$|\.moa-plugin\.json$/i.test(file.name)).map(async file => ({ name: file.webkitRelativePath || file.name, content: await file.text() }))) };
+        ? { archive: await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = () => reject(new Error('ZIP 파일을 읽지 못했어요.')); reader.readAsDataURL(files[0].file); }) }
+        : { files: await Promise.all(files.filter(({ name }) => /(?:^|\/)(?:manifest\.json|plugin\.js|index\.html)$|\.moa-plugin\.json$/i.test(name) && !name.startsWith('__MACOSX/') && !/(?:^|\/)\._/.test(name)).map(async ({ file, name }) => ({ name, content: await file.text() }))) };
       setDraft(await api<WebsitePluginPackage>('/admin/plugins/preview', { method: 'POST', body }));
     } catch (error) {
       setError(error instanceof ApiError ? error.code === 'plugin-package-too-large' ? '플러그인 패키지가 너무 커요. 패키지는 4MB, 실행 코드는 200KB 이하여야 해요.' : error.code === 'plugin-manifest-missing' ? '플러그인 정보가 없거나 여러 개예요. 설치할 플러그인의 ZIP 또는 폴더를 선택해 주세요.' : error.code === 'plugin-entry-missing' ? '실행 파일이 없거나 여러 개예요. manifest.json과 plugin.js 또는 index.html이 함께 있는 ZIP이나 폴더를 선택해 주세요.' : '플러그인 패키지를 읽지 못했어요. ZIP 또는 폴더의 파일을 확인해 주세요.' : error instanceof Error ? error.message : '플러그인 파일을 읽지 못했어요.');
     }
     finally { setBusy(false); }
+  };
+  const dropped = async (entries: FileSystemEntry[]) => {
+    const files: Array<{ file: File; name: string }> = [];
+    let count = 0, size = 0;
+    const visit = async (entry: FileSystemEntry, parent = ''): Promise<void> => {
+      if (++count > 512) throw new Error('플러그인 폴더에 파일이 너무 많아요.');
+      const name = parent + entry.name;
+      if (entry.name === '__MACOSX' || entry.name.startsWith('._') || entry.name === '.DS_Store') return;
+      if (entry.isFile) {
+        const file = await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject));
+        if ((size += file.size) > 4 * 1024 * 1024 || files.length >= 256) throw new Error('플러그인 패키지는 4MB, 256개 파일 이하여야 해요.');
+        files.push({ file, name });
+      } else if (entry.isDirectory) {
+        const reader = (entry as FileSystemDirectoryEntry).createReader();
+        for (;;) {
+          const children = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject));
+          if (!children.length) break;
+          for (const child of children) await visit(child, name + '/');
+        }
+      }
+    };
+    for (const entry of entries) await visit(entry);
+    return files;
   };
   const shown = plugins.data ?? [];
   const selectedPlugins = shown.filter(plugin => selected.has(plugin.id));
@@ -339,21 +367,25 @@ export function WebsitePlugins({ admin }: { admin: boolean }) {
   });
   if (!admin) return null;
   return <section className="settings-group" id="plugins"><h2>웹사이트 플러그인</h2><div className="settings-card">
-    {admin && <div className={`setting plugin-row plugin-dropzone${dragging ? ' is-dragging' : ''}`} aria-busy={busy}
+    <div className={`plugin-install${dragging ? ' is-dragging' : ''}`} aria-busy={busy}
       onDragOver={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; if (!busy) setDragging(true); }}
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }}
-      onDrop={event => { event.preventDefault(); setDragging(false); void choose(Array.from(event.dataTransfer.files)); }}>
-      <div><b>플러그인 설치</b><small>{dragging ? '여기에 놓아 설치 정보를 확인하세요.' : 'ZIP 파일을 여기에 놓거나 파일·폴더를 선택해 주세요.'}</small></div><div className="plugin-actions"><Button icon={<Upload size={16} />} disabled={busy} onClick={() => input.current?.click()}>ZIP 파일 선택</Button><Button disabled={busy} onClick={() => folder.current?.click()}>폴더 선택</Button></div><input ref={input} type="file" accept=".zip,.moa-plugin.json" hidden aria-label="플러그인 파일" onChange={event => { void choose(Array.from(event.target.files || [])); event.target.value = ''; }} /><input ref={folder} type="file" {...{ webkitdirectory: '' }} multiple hidden aria-label="플러그인 폴더" onChange={event => { void choose(Array.from(event.target.files || [])); event.target.value = ''; }} /></div>}
-    {draft && <div className="plugin-preview"><b>{draft.name} · {draft.version}</b><p>{draft.description}</p>{draft.script !== undefined && <p>이 JavaScript 플러그인은 지정된 페이지에서 자동 실행됩니다.</p>}<p>최소 지원: {draft.minMoaVersion ? `MOA ${draft.minMoaVersion} · ` : ''}플러그인 API {draft.apiVersion}</p><p>권한: {draft.permissions.map(p => permissionLabels[p]).join(', ') || '없음'}</p><p>외부 연결: {draft.connect.join(', ') || '없음'}</p><div className="plugin-actions"><Button disabled={busy} variant="primary" onClick={() => void run(async () => { await api('/admin/plugins', { method: 'POST', body: { ...draft } }); setDraft(null); })}>설치·업데이트</Button><Button disabled={busy} onClick={() => { setDraft(null); setError(''); }}>취소</Button></div></div>}
+      onDrop={event => { event.preventDefault(); setDragging(false); if (busy) return; const entries = Array.from(event.dataTransfer.items).map(item => item.webkitGetAsEntry?.()).filter((entry): entry is FileSystemEntry => !!entry); void choose(entries.length ? dropped(entries) : Array.from(event.dataTransfer.files, file => ({ file, name: file.webkitRelativePath || file.name }))); }}>
+      <div className="plugin-install-files"><b>{dragging ? '여기에 놓기' : '플러그인 설치'}</b><div className="plugin-actions"><Button icon={<Upload size={16} />} disabled={busy} onClick={() => input.current?.click()}>ZIP·파일 선택</Button><Button disabled={busy} onClick={() => folder.current?.click()}>폴더 선택</Button></div></div>
+      <form className="plugin-install-link" onSubmit={event => { event.preventDefault(); void run(async () => setDraft(await api<WebsitePluginPackage>('/admin/plugins/preview', { method: 'POST', body: { url: updateUrl.trim() } }))); }}><input type="url" aria-label="플러그인 업데이트 링크" placeholder="https://…/plugin.zip" value={updateUrl} onChange={event => setUpdateUrl(event.target.value)} disabled={busy} required /><Button type="submit" disabled={busy || !updateUrl.trim()}>링크 불러오기</Button></form>
+      <input ref={input} type="file" accept=".zip,.json,.js,.html" multiple hidden aria-label="플러그인 파일" onChange={event => { void choose(Array.from(event.target.files || [], file => ({ file, name: file.name }))); event.target.value = ''; }} /><input ref={folder} type="file" {...{ webkitdirectory: '' }} multiple hidden aria-label="플러그인 폴더" onChange={event => { void choose(Array.from(event.target.files || [], file => ({ file, name: file.webkitRelativePath || file.name }))); event.target.value = ''; }} /></div>
+    {draft && <div className="plugin-preview"><b>{draft.name} · {draft.version}</b><p>{draft.description}</p><p>최소 지원: {draft.minMoaVersion ? `MOA ${draft.minMoaVersion} · ` : ''}플러그인 API {draft.apiVersion}</p><p>권한: {draft.permissions.map(p => permissionLabels[p]).join(', ') || '없음'}</p><p>외부 연결: {draft.connect.join(', ') || '없음'}</p>{draft.updateUrl && <p>업데이트 링크: {draft.updateUrl}</p>}<div className="plugin-actions"><Button disabled={busy} variant="primary" onClick={() => void run(async () => { await api('/admin/plugins', { method: 'POST', body: { ...draft } }); setDraft(null); })}>{shown.some(plugin => plugin.id === draft.id) ? '업데이트' : '설치'}</Button><Button disabled={busy} onClick={() => { setDraft(null); setError(''); }}>취소</Button></div></div>}
     {!!shown.length && <div className="list-selection"><label><input className="selection-checkbox" type="checkbox" aria-label="플러그인 전체 선택" checked={selectedPlugins.length === shown.length} disabled={busy} onChange={event => setSelected(new Set(event.target.checked ? shown.map(plugin => plugin.id) : []))} /> 전체 선택 · {selectedPlugins.length}개</label><div className="plugin-actions"><Button disabled={busy || !selectedPlugins.length} onClick={() => void bulk(selectedPlugins, 'enable')}>선택 사용</Button><Button disabled={busy || !selectedPlugins.length} onClick={() => void bulk(selectedPlugins, 'disable')}>선택 중지</Button><Button disabled={busy || !selectedPlugins.length} onClick={() => { setError(''); setDeleting(selectedPlugins); }}>선택 삭제</Button></div></div>}
-    {shown.map(plugin => <div className="setting plugin-row" key={plugin.id}><input className="selection-checkbox" type="checkbox" aria-label={`${plugin.name} 선택`} checked={selected.has(plugin.id)} disabled={busy} onChange={event => setSelected(previous => { const next = new Set(previous); if (event.target.checked) next.add(plugin.id); else next.delete(plugin.id); return next; })} /><div><b>{plugin.name} <small>{plugin.version}</small></b><small>{plugin.description}</small><small>최소 지원: {plugin.minMoaVersion ? `MOA ${plugin.minMoaVersion} · ` : ''}플러그인 API {plugin.apiVersion}</small>{plugin.compatibility?.supported === false && <small className="form-error">현재 MOA {plugin.compatibility.moaVersion ?? '개발 빌드'} · API {plugin.compatibility.apiVersion}에서는 실행할 수 없어요.</small>}</div><div className="plugin-actions">
+    {shown.map(plugin => <div className="setting plugin-row" key={plugin.id}><input className="selection-checkbox" type="checkbox" aria-label={`${plugin.name} 선택`} checked={selected.has(plugin.id)} disabled={busy} onChange={event => setSelected(previous => { const next = new Set(previous); if (event.target.checked) next.add(plugin.id); else next.delete(plugin.id); return next; })} /><div className="plugin-summary"><b>{plugin.name} <small>{plugin.version}</small></b><small>{plugin.description}</small><small>권한: {plugin.permissions.map(p => permissionLabels[p]).join(', ') || '없음'}</small><small>저장 데이터 {(plugin.storage?.bytes ?? 0).toLocaleString()}B · {plugin.storage?.profiles ?? 0}개 프로필</small><small>최소 지원: {plugin.minMoaVersion ? `MOA ${plugin.minMoaVersion} · ` : ''}플러그인 API {plugin.apiVersion}</small>{plugin.compatibility?.supported === false && <small className="form-error">MOA {plugin.minMoaVersion ?? `플러그인 API ${plugin.apiVersion}`} 이상이 필요해요.</small>}</div><div className="plugin-actions">
       {plugin.compatibility?.supported === false && <ButtonLink to="/settings#updates">MOA 업데이트</ButtonLink>}
       {plugin.compatibility?.supported !== false && plugin.enabled && plugin.placements.includes('home') && <ButtonLink to="/">홈에서 보기</ButtonLink>}
       {plugin.compatibility?.supported !== false && plugin.enabled && plugin.permissions.includes('ui') && plugin.kind === 'script' && plugin.placements.some(place => place === 'app' || place === 'settings') && <Button onClick={() => act(plugin.id)}>열기</Button>}
       {plugin.compatibility?.supported !== false && plugin.enabled && plugin.placements.some(place => place === 'app' || place === 'settings') && (plugin.kind === 'script' ? plugin.actions?.map(action => <Button key={action.id} onClick={() => act(plugin.id, action.id)}>{action.label}</Button>) : <Button onClick={() => setOpened(plugin)}>열기</Button>)}
+      <Button onClick={() => setDataPlugin(plugin)}>데이터 보기</Button>
+      {plugin.updateUrl && <Button disabled={busy} onClick={() => void run(async () => setDraft(await api<WebsitePluginPackage>(`/admin${path(plugin.id)}/preview`, { method: 'POST' })))}>업데이트 확인</Button>}
       {admin && <><button role="switch" aria-label={`${plugin.name} 사용`} aria-checked={plugin.enabled} className={`switch ${plugin.enabled ? 'is-on' : ''}`} disabled={busy} onClick={() => void run(() => api(`/admin${path(plugin.id)}`, { method: 'PATCH', body: { enabled: !plugin.enabled } }))}><i /></button><Button disabled={busy} onClick={() => { setError(''); setDeleting([plugin]); }}>삭제</Button></>}
     </div></div>)}
     {!shown.length && <p className="plugin-empty">설치된 플러그인이 없습니다.</p>}
     {(error || plugins.isError) && <p className="plugin-empty form-error" role="alert">{error || '플러그인 목록을 불러오지 못했어요.'}</p>}
-  </div>{opened && <PluginWindow key={opened.id} plugin={opened} onClose={() => setOpened(null)} />}{deleting && <ConfirmDialog title="플러그인 삭제" confirmLabel="삭제" busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void bulk(deleting, 'delete')}><p>{deleting.map(plugin => plugin.name).join(', ')} {deleting.length}개 플러그인과 저장 데이터를 삭제할까요?</p>{error && <p className="form-error" role="alert">{error}</p>}</ConfirmDialog>}</section>;
+  </div>{opened && <PluginWindow key={opened.id} plugin={opened} onClose={() => setOpened(null)} />}{dataPlugin && <ConfirmDialog title={`${dataPlugin.name} 데이터`} onClose={() => setDataPlugin(null)}><p>권한: {dataPlugin.permissions.map(p => permissionLabels[p]).join(', ') || '없음'}</p><p>외부 연결: {dataPlugin.connect.join(', ') || '없음'}</p>{dataPlugin.updateUrl && <p className="plugin-data-url">업데이트 링크: {dataPlugin.updateUrl}</p>}{data.isPending ? <p>불러오는 중…</p> : data.isError ? <p role="alert" className="form-error">저장 데이터를 불러오지 못했어요.</p> : data.data?.length ? data.data.map(row => <details className="plugin-data" key={row.profileId}><summary>{row.profileName} · {row.bytes.toLocaleString()}B</summary><pre>{JSON.stringify(row.value, null, 2)}</pre></details>) : <p>저장된 데이터가 없습니다.</p>}</ConfirmDialog>}{deleting && <ConfirmDialog title="플러그인 삭제" confirmLabel="삭제" busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void bulk(deleting, 'delete')}><p>{deleting.map(plugin => plugin.name).join(', ')} {deleting.length}개 플러그인과 저장 데이터를 삭제할까요?</p>{error && <p className="form-error" role="alert">{error}</p>}</ConfirmDialog>}</section>;
 }

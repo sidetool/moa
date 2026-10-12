@@ -172,3 +172,42 @@ test('legacy choice migration fills missing choices without overwriting another 
     assert.equal((await put('missing', null)).statusCode, 404);
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('subtitle memory expires and recommends the most selected accessible track without sharing private uploads', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'moa-subtitle-memory-'));
+  const { app, db } = await buildApp({ dataDir: directory, mediaRoot: directory }, false);
+  try {
+    const profiles: string[] = [];
+    for (const name of ['First', 'Second', 'Third', 'Viewer']) profiles.push((await app.inject({ method: 'POST', url: '/api/profiles', payload: { name } })).json().id);
+    db.run("INSERT INTO media VALUES('a',NULL,'A','anime','{}','2026'),('b',NULL,'B','anime','{}','2026')");
+    db.run("INSERT INTO episodes VALUES('a1','a',1,1,'1',600,NULL),('a2','a',1,2,'2',600,NULL),('a3','a',2,1,'1',600,NULL),('b1','b',1,1,'1',600,NULL)");
+    const content = 'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n공유 자막\n';
+    db.run("INSERT INTO online_subtitles VALUES('online','a1','제작자','https://example.com/sub','vtt',?,'hash','token',?)", content, Date.now());
+    const choice = { id: 'online', episodeId: 'a1', source: 'online', format: 'vtt', label: '한국어', lang: 'ko' };
+    const get = (episode = 'a1', profile = profiles[3]) => app.inject({ url: `/api/episodes/${episode}/subtitles/preference`, headers: { 'x-moa-profile': profile } });
+    const put = (profile: string, value: unknown, episode = 'a1') => app.inject({ method: 'PUT', url: `/api/episodes/${episode}/subtitles/preference`, headers: { 'x-moa-profile': profile }, payload: { choice: value } });
+    await put(profiles[0], choice); await put(profiles[1], choice);
+    await put(profiles[2], { ...choice, id: 'embedded-english', source: 'embedded', label: 'English', lang: 'en' });
+    assert.deepEqual((await get()).json(), { recommendation: choice });
+    for (const episode of ['a2', 'a3', 'b1']) assert.deepEqual((await get(episode)).json(), {});
+    await put(profiles[3], null);
+    assert.deepEqual((await get()).json(), { choice: null });
+    await put(profiles[3], { ...choice, id: 'embedded-personal', source: 'embedded', label: 'Japanese', lang: 'ja' });
+    assert.equal((await get()).json().choice.id, 'embedded-personal');
+    const privateTrack = (await app.inject({ method: 'POST', url: '/api/subtitles/import', headers: { 'x-moa-profile': profiles[0] }, payload: { episodeId: 'a2', filename: 'private.vtt', data: Buffer.from(content).toString('base64') } })).json()[0];
+    await put(profiles[0], { id: privateTrack.id, episodeId: 'a2', source: 'upload', format: 'vtt', label: 'private.vtt' }, 'a2');
+    assert.deepEqual((await get('a2')).json(), {});
+    const member = { 'x-moa-account': 'member', 'x-moa-role': 'member' };
+    for (const method of ['GET', 'PATCH', 'DELETE'] as const) assert.equal((await app.inject({ method, url: '/api/admin/subtitle-memory', headers: member, ...(method === 'PATCH' ? { payload: { retentionDays: 30 } } : {}) })).statusCode, 403);
+    for (const retentionDays of [0, -1, 3651, 1.5]) assert.equal((await app.inject({ method: 'PATCH', url: '/api/admin/subtitle-memory', payload: { retentionDays } })).statusCode, 400);
+    db.run('UPDATE subtitle_preferences SET updated_at=? WHERE profile_id=?', Date.now() - 31 * 86_400_000, profiles[0]);
+    const retention = await app.inject({ method: 'PATCH', url: '/api/admin/subtitle-memory', payload: { retentionDays: 30 } });
+    assert.equal(retention.json().retentionDays, 30);
+    assert.equal(db.get('SELECT count(*) AS count FROM subtitle_preferences WHERE profile_id=?', profiles[0])!.count, 0);
+    const clear = await app.inject({ method: 'DELETE', url: '/api/admin/subtitle-memory' });
+    assert.deepEqual(clear.json(), { retentionDays: 30, count: 0 });
+    assert.deepEqual((await get()).json(), {});
+    assert.equal(db.get('SELECT count(*) AS count FROM uploaded_subtitles')!.count, 1);
+    assert.equal(db.get('SELECT count(*) AS count FROM online_subtitles')!.count, 1);
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
+});

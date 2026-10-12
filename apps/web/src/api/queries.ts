@@ -1,4 +1,4 @@
-import { useTitleGrouping } from "../lib/device-prefs";
+import { deviceSettingsPatch, loadDevicePrefs, saveDevicePrefs, useDevicePrefs, useTitleGrouping } from "../lib/device-prefs";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Account, HomeResponse, LibraryFolder, MediaCard, MediaDetail, MediaType, Page, Profile, ScanStatus, SearchGroup, Settings, HistoryEntry } from "@moa/shared";
 import { api, currentProfileId } from "../lib/api";
@@ -50,27 +50,25 @@ export const useHistory = () => useQuery({ queryKey: keys.history, queryFn: () =
 export const useFolders = () => useQuery({ queryKey: keys.folders, queryFn: () => api<LibraryFolder[]>("/library/folders") });
 export const useScanStatus = (poll: boolean) =>
   useQuery({ queryKey: keys.scan, queryFn: () => api<ScanStatus>("/library/status"), refetchInterval: poll ? 1500 : false });
-export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: async ({ signal }) => {
-  const profile = currentProfileId(), settings = await api<Settings>('/settings', { signal });
-  if (!settings || settings.subtitleBackground !== undefined || settings.subtitleHeight !== undefined || settings.subtitleScale !== undefined || settings.subtitleOutline !== undefined || settings.subtitleShadow !== undefined || settings.subtitlePadding !== undefined) return settings;
-  try {
-    const old = JSON.parse(localStorage.getItem('moa.subtitleAppearance') || 'null'), height = localStorage.getItem('moa.subtitleHeight');
-    if (!old && height === null || currentProfileId() !== profile || signal.aborted) return settings;
-    const patch: Partial<Settings> = { subtitleBackground: 'original' };
-    if (old && ['small', 'medium', 'large', 'xlarge'].includes(old.size) && ['original', 'none', 'soft', 'solid'].includes(old.background)) {
-      patch.subtitleSize = old.size; patch.subtitleBackground = old.background;
-      patch.subtitleShadow = ({ none: 0, soft: 2, strong: 4 } as Record<string, number>)[old.shadow] ?? null;
-      patch.subtitleOutline = ({ none: 0, thin: 1, thick: 3 } as Record<string, number>)[old.outline] ?? null;
-    }
-    if (height !== null && Number.isFinite(Number(height))) patch.subtitleHeight = Math.max(0, Math.min(40, Number(height)));
-    return await api<Settings>('/settings', { method: 'PATCH', body: patch, signal });
-  } catch { return settings; }
-} });
+export const useSettings = () => {
+  const device = useDevicePrefs();
+  const result = useQuery({ queryKey: keys.settings, queryFn: async ({ signal }) => {
+    const profile = currentProfileId();
+    const settings = await api<Settings>('/settings', { signal });
+    if (settings && currentProfileId() === profile) await loadDevicePrefs(settings, signal);
+    return settings;
+  } });
+  return { ...result, data: result.data ? { ...result.data, ...deviceSettingsPatch(device) } as Settings : result.data };
+};
 
 const settingsSaves = new Map<string | null, Promise<void>>();
 export function useSaveSettings() {
   const client = useQueryClient();
   return (patch: Partial<Settings>) => {
+    const device = deviceSettingsPatch(patch);
+    const deviceSave = Object.keys(device).length ? saveDevicePrefs(device) : Promise.resolve();
+    patch = Object.fromEntries(Object.entries(patch).filter(([key]) => !(key in device)));
+    if (!Object.keys(patch).length) return deviceSave;
     const profile = currentProfileId();
     client.setQueryData<Settings>(keys.settings, old => old ? { ...old, ...patch } : old);
     const save = (settingsSaves.get(profile) ?? Promise.resolve()).catch(() => {}).then(async () => {
@@ -84,7 +82,7 @@ export function useSaveSettings() {
       settingsSaves.delete(profile);
       if (currentProfileId() === profile) void client.invalidateQueries({ queryKey: keys.settings });
     }).catch(() => {});
-    return save;
+    return Promise.all([save, deviceSave]).then(() => {});
   };
 }
 

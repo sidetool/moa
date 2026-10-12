@@ -6,7 +6,6 @@
   if (reveal && password) reveal.addEventListener('click', function () {
     var visible = password.type === 'password';
     password.type = visible ? 'text' : 'password';
-    reveal.textContent = visible ? '숨김' : '보기';
     reveal.setAttribute('aria-label', visible ? '비밀번호 숨기기' : '비밀번호 보기');
     reveal.setAttribute('aria-pressed', String(visible));
   });

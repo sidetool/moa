@@ -1,4 +1,5 @@
 import { mergePlaybackMarkers } from '../player/skip-markers';
+import { SeekPreview } from '../player/SeekPreview';
 import { SubtitleStyleControls } from '../components/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitle-files';
 import { PluginScripts, PluginTools } from '../components/WebsitePlugins';
@@ -9,7 +10,7 @@ import { preparePlayback, retirePlayback } from '../player/session-lifecycle';
 import { subtitlesOffForTitle, rememberSubtitlesOff, subtitleOffsetForEpisode, rememberSubtitleOffset, subtitlePreference, rememberSubtitle, loadSubtitlePreference, restoreSubtitle } from "../player/subtitle-preference";
 import { enterFullscreen } from "../lib/playback-fullscreen";
 import { documentPipSupported, useDocumentPip } from "../player/document-pip";
-import { devicePrefs, setDevicePref } from "../lib/device-prefs";
+import { useDevicePrefs, setDevicePref } from "../lib/device-prefs";
 import { isRemoteMode, type RemotePlayerEvent } from "../lib/remote";
 import { PlaybackSources } from '../components/PlaybackSources';
 import {
@@ -170,7 +171,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [nextDismissed, setNextDismissed] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ key: number; side: "left" | "right" | "center"; label: string } | null>(null);
-  const [prefs] = useState(devicePrefs);
+  const prefs = useDevicePrefs();
   const step = prefs.seekStep;
   const [boost, setBoost] = useState(false);
   const [ended, setEnded] = useState(false);
@@ -311,7 +312,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   useEffect(() => {
     if (!session || !settings) return;
     const controller = new AbortController(), choice = subtitleChoice.current;
-    void loadSubtitlePreference(episodeId, controller.signal).then(async remembered => {
+    void loadSubtitlePreference(episodeId, controller.signal, settings.defaultSubtitleLang !== 'off').then(async remembered => {
       if (controller.signal.aborted || subtitleChoice.current !== choice) return;
       rememberSubtitlesOff(session.mediaId, remembered === null);
       if (remembered !== undefined) {
@@ -982,9 +983,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const suppressGestureClick = useRef(false);
   const boosting = useRef(false);
   const pinch = useRef<{ start: number; done: boolean } | null>(null);
-  const [fill, setFill] = useState(prefs.videoFill);
+  const fill = prefs.videoFill;
   const changeFill = (value: boolean) => {
-    setFill(value);
     setDevicePref("videoFill", value);
     setFlash({ key: Date.now(), side: "center", label: value ? "화면 채우기" : "원본 비율" });
   };
@@ -1176,7 +1176,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         if (lastSurfacePointer.current === "mouse" && !native.sourceCapabilities?.firesTouchEvents) void toggleFullscreen();
       }} />
 
-      {(waiting || !session) && !error && <div className="player-loading"><Spinner size={52} /></div>}
+      {(waiting || !session) && !error && <div className={cx("player-loading", session && !ended && !panel && chrome && "has-center-control")} role="status" aria-label="영상 불러오는 중"><Spinner size={52} /></div>}
       {flash && <div key={flash.key} className={cx("player-flash", `flash-${flash.side}`)} aria-hidden="true"><div>{flash.side === "left" ? <Rewind size={26} fill="currentColor" /> : flash.side === "right" ? <FastForward size={26} fill="currentColor" /> : null}<span>{flash.label}</span></div></div>}
       {boost && <div className="player-boost"><FastForward size={18} />2배속</div>}
 
@@ -1188,9 +1188,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         </div>
       </header>
 
-      {!playing && session && !waiting && !error && !ended && (
-        <button className="player-bigplay" aria-label="재생" onClick={togglePlay}><Play size={44} fill="currentColor" /></button>
-      )}
+      <button className={cx("player-bigplay", !playing && session && !waiting && !error && !ended && "is-visible")} aria-label="재생" aria-hidden={!!(playing || !session || waiting || error || ended)} tabIndex={playing || !session || waiting || error || ended ? -1 : 0} onClick={togglePlay}><Play size={44} fill="currentColor" /></button>
 
       {session && !error && !ended && !panel && (
         <div className="player-center" aria-hidden={!chrome}
@@ -1220,15 +1218,6 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
           onChoose={() => { autopilot.hide(); setPanelState("subs"); setSubsView("translate"); }} />
       )}
       {translatingHere && !panel && <div className="translate-gap" role="status"><Spinner size={14} /><span>이 구간은 번역 중이에요</span></div>}
-
-      {notice && (
-        <div className="player-chip player-notice" role="status">
-          <Captions size={18} /><span>{typeof notice === "string" ? notice : notice.text}</span>
-          {typeof notice === "string"
-            ? <button onClick={() => { setNotice(null); setPanel("subs"); }}>변경</button>
-            : <button onClick={() => { setNotice(null); notice.action.run(); }}>{notice.action.label}</button>}
-        </div>
-      )}
 
       {inIntro && !showNext && showSkip && (
         <Button className="player-skip" variant="secondary" data-remote-initial icon={<SkipForward size={18} />} onClick={() => seekTo(intro!.introEnd!)}>오프닝 건너뛰기</Button>
@@ -1295,7 +1284,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             {skipRanges.map(range => <i key={range.kind} className={`seek-marker seek-${range.kind}`} title={`${range.label} ${clock(range.start)}–${clock(range.end)}`} style={{ left: `${range.start / total * 100}%`, width: `${(range.end - range.start) / total * 100}%` }} />)}
           </div>
           <i className="seek-thumb" style={{ left: `${total ? (shown / total) * 100 : 0}%` }} />
-          {hover !== null && <span className="seek-tip" style={{ left: `${hover * 100}%` }}>{skipRanges.find(range => hover * total >= range.start && hover * total < range.end)?.label} {clock(hover * total)}</span>}
+          {hover !== null && total > 0 && <span className="seek-tip" style={{ left: `clamp(84px, ${hover * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={session.sessionId} session={session} seconds={hover * total} />}<span>{skipRanges.find(range => hover * total >= range.start && hover * total < range.end)?.label} {clock(hover * total)}</span></span>}
         </div>}
 
         <div className="player-controls" data-remote-group>
@@ -1331,6 +1320,12 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             {!pipWindow && <button className="icon-btn icon-btn-l" aria-label="전체 화면 (F)" title="전체 화면 (F)" onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize size={26} /> : <Maximize size={26} />}</button>}
           </div>
         </div>
+        {notice && <div className="player-notice" role="status">
+          <Captions size={16} /><span>{typeof notice === "string" ? notice : notice.text}</span>
+          {typeof notice === "string"
+            ? <button onClick={() => { setNotice(null); setPanel("subs"); }}>변경</button>
+            : <button onClick={() => { setNotice(null); notice.action.run(); }}>{notice.action.label}</button>}
+        </div>}
       </footer>
 
       {panel && session && (

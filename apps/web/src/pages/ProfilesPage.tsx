@@ -6,7 +6,7 @@ import type { Profile } from "@moa/shared";
 import { keys, useProfiles } from "../api/queries";
 import { Avatar, Logo } from "../components/AppShell";
 import { AVATAR_GROUPS, AvatarArt, avatarSpec, randomAvatar } from "../components/avatars";
-import { Button, Skeleton } from "../components/ui";
+import { Button, PasswordInput, Skeleton } from "../components/ui";
 import { api, ApiError, currentProfileId, setCurrentProfileId } from "../lib/api";
 import { cx } from "../lib/format";
 
@@ -71,8 +71,8 @@ function ProfileEditor({ profile, onDone, onCancel, onDelete }: { profile?: Prof
       </label>
       {pinEnabled && <div className="profile-pin-fields">
         {profile?.hasPin && <small>PIN을 바꾸려면 새 번호를 입력해 주세요.</small>}
-        <label><span>{profile?.hasPin ? "새 PIN" : "PIN"}</span><input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4,8}" maxLength={8} required={!profile?.hasPin} value={pin} placeholder="4~8자리 숫자" onChange={event => setPin(event.target.value)} /></label>
-        <label><span>PIN 확인</span><input type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4,8}" maxLength={8} required={!!pin || !profile?.hasPin} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>
+        <label><span>{profile?.hasPin ? "새 PIN" : "PIN"}</span><PasswordInput revealLabel="PIN" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4,8}" maxLength={8} required={!profile?.hasPin} value={pin} placeholder="4~8자리 숫자" onChange={event => setPin(event.target.value)} /></label>
+        <label><span>PIN 확인</span><PasswordInput revealLabel="PIN 확인" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{4,8}" maxLength={8} required={!!pin || !profile?.hasPin} value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>
       </div>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="profile-create-actions">
@@ -158,7 +158,7 @@ export function ProfilesPage() {
     <h1>{unlocking.name} PIN 입력</h1>
     <p className="profiles-sub">{managing ? "프로필을 편집하려면 PIN을 입력해 주세요." : "프로필을 사용하려면 PIN을 입력해 주세요."}</p>
     <form className="profile-editor" onSubmit={unlock}>
-      <input autoFocus type="password" inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4,8}" minLength={4} maxLength={8} required aria-label="PIN" placeholder="4~8자리 숫자" value={pin} onChange={event => setPin(event.target.value)} />
+      <PasswordInput revealLabel="PIN" autoFocus inputMode="numeric" autoComplete="current-password" pattern="[0-9]{4,8}" minLength={4} maxLength={8} required aria-label="PIN" placeholder="4~8자리 숫자" value={pin} onChange={event => setPin(event.target.value)} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="profile-create-actions"><Button type="button" variant="ghost" disabled={busy} onClick={() => { setUnlocking(null); setPin(""); setError(""); }}>취소</Button><Button type="submit" variant="primary" disabled={busy || !/^[0-9]{4,8}$/.test(pin)}>확인</Button></div>
     </form>

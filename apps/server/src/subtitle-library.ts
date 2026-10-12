@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { SavedSubtitle, SubtitlePreference, SubtitleTrack } from '@moa/shared';
+import type { SavedSubtitle, SubtitleMemory, SubtitlePreference, SubtitleSelection, SubtitleTrack } from '@moa/shared';
 import type { Store } from './db.js';
 import type { Catalog } from './catalog.js';
 import type { Translations } from './translation/service.js';
@@ -21,7 +21,16 @@ export class SubtitleLibrary {
       CREATE TABLE IF NOT EXISTS subtitle_preferences(
       profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
       episode_id TEXT NOT NULL REFERENCES episodes(id) ON DELETE CASCADE,
-      choice TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(profile_id,episode_id));`);
+      choice TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(profile_id,episode_id));
+      CREATE INDEX IF NOT EXISTS subtitle_preferences_updated ON subtitle_preferences(updated_at);`);
+    this.memory();
+  }
+
+  memory(retentionDays?: number, clear = false): SubtitleMemory {
+    if (retentionDays !== undefined) this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('subtitle-memory-days',?)", String(retentionDays));
+    const days = Number(this.db.get("SELECT value FROM admin_settings WHERE key='subtitle-memory-days'")?.value ?? 90);
+    this.db.run('DELETE FROM subtitle_preferences WHERE updated_at<?', clear ? Number.MAX_SAFE_INTEGER : Date.now() - days * 86_400_000);
+    return { retentionDays: days, count: this.db.get('SELECT count(*) AS count FROM subtitle_preferences')!.count };
   }
 
   private episode(episodeId: string, profileId: string) {
@@ -49,7 +58,8 @@ export class SubtitleLibrary {
     return { episodeIds, mediaIds };
   }
 
-  preference(episodeId: string, profileId: string): { choice?: SubtitlePreference | null } {
+  preference(episodeId: string, profileId: string): SubtitleSelection {
+    this.memory();
     const { episodeIds, mediaIds } = this.related(episodeId, profileId);
     const row = this.db.get(`SELECT choice FROM subtitle_preferences WHERE profile_id=? AND episode_id IN (${episodeIds.map(() => '?').join(',')})
       ORDER BY updated_at DESC LIMIT 1`, profileId, ...episodeIds);
@@ -59,10 +69,24 @@ export class SubtitleLibrary {
     }
     const title = this.db.get(`SELECT p.choice FROM subtitle_preferences p JOIN episodes e ON e.id=p.episode_id
       WHERE p.profile_id=? AND e.media_id IN (${mediaIds.map(() => '?').join(',')}) ORDER BY p.updated_at DESC LIMIT 1`, profileId, ...mediaIds);
-    return title?.choice === 'null' ? { choice: null } : {};
+    if (title?.choice === 'null') return { choice: null };
+    const available = new Set(this.tracks(episodeId, profileId).map(track => track.id));
+    const votes = new Map<string, { choice: SubtitlePreference; count: number }>(), profiles = new Set<string>();
+    for (const row of this.db.all(`SELECT profile_id,choice FROM subtitle_preferences WHERE episode_id IN (${episodeIds.map(() => '?').join(',')}) ORDER BY updated_at DESC`, ...episodeIds)) {
+      if (profiles.has(row.profile_id)) continue;
+      profiles.add(row.profile_id);
+      const choice = JSON.parse(row.choice) as SubtitlePreference | null;
+      if (!choice || !episodeIds.includes(choice.episodeId) || ['upload', 'translation', 'online'].includes(choice.source ?? '') && !available.has(choice.id)) continue;
+      const key = JSON.stringify([choice.source, ['upload', 'translation', 'online'].includes(choice.source ?? '') ? choice.id : [choice.label, choice.lang], choice.format]);
+      const vote = votes.get(key);
+      if (vote) vote.count++; else votes.set(key, { choice, count: 1 });
+    }
+    const recommendation = [...votes.values()].sort((a, b) => b.count - a.count)[0]?.choice;
+    return recommendation ? { recommendation: { ...recommendation, episodeId: ['upload', 'translation', 'online'].includes(recommendation.source ?? '') ? recommendation.episodeId : episodeId } } : {};
   }
 
   remember(episodeId: string, profileId: string, choice: SubtitlePreference | null, migrate = false) {
+    this.memory();
     // Import an older browser's choice only while the server has no selection.
     // This synchronous check also protects choices made on another device.
     if (migrate) {

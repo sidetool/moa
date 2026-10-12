@@ -18,9 +18,7 @@
   <main>
     <a class="brand" href="/" aria-label="MOA 홈"><span>MOA</span></a>
     <section class="panel" aria-labelledby="title">
-      <p class="eyebrow">초대받으셨군요</p>
       <h1 id="title">MOA 계정 만들기</h1>
-      <p class="description">내 계정에서 프로필을 만들고 이어보기와 내 목록을 따로 관리할 수 있어요.</p>
       <p class="error" role="alert">{{ERROR}}</p>
       <form method="post" action="/__moa/join" class="join">
         <input type="hidden" name="csrf" value="{{CSRF}}">
@@ -37,7 +35,7 @@
           <label for="password">비밀번호</label>
           <div class="password-field">
             <input id="password" name="password" type="password" required minlength="8" maxlength="1024" autocomplete="new-password" aria-describedby="password-hint">
-            <button class="reveal" type="button" aria-label="비밀번호 보기" aria-pressed="false">보기</button>
+            <button class="reveal" type="button" aria-label="비밀번호 보기" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m3 3 18 18"/></svg></button>
           </div>
           <small id="password-hint">8자 이상</small>
         </div>

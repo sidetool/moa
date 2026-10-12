@@ -34,7 +34,12 @@ export function migrateAccounts(db, credentials, now) {
     db.exec(`CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       expires INTEGER NOT NULL, refreshed INTEGER NOT NULL, remember INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);`);
+      CREATE INDEX IF NOT EXISTS sessions_account ON sessions(account_id);
+      CREATE TABLE IF NOT EXISTS session_devices (
+        id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE REFERENCES sessions(token_hash) ON DELETE CASCADE,
+        name TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, device_id TEXT);`);
+    const device = db.prepare('INSERT INTO session_devices(id,token_hash,name,created_at,last_seen) VALUES(?,?,?,?,?)');
+    for (const session of db.prepare('SELECT s.token_hash,s.refreshed FROM sessions s LEFT JOIN session_devices d ON d.token_hash=s.token_hash WHERE d.id IS NULL').all()) device.run(randomUUID(), session.token_hash, '브라우저', session.refreshed, session.refreshed);
   });
 }
 export function accountsService(db, origin, now) {
@@ -94,6 +99,19 @@ export function accountsService(db, origin, now) {
   }
   async function api(method, path, actor, body, requestOrigin = origin) {
     if (method === 'GET' && path === 'me') return accountView(actor);
+    if (path === 'sessions' && method === 'GET') return db.prepare(`SELECT d.*,s.expires FROM session_devices d JOIN sessions s ON s.token_hash=d.token_hash
+      WHERE s.account_id=? AND s.expires>? ORDER BY d.last_seen DESC,d.id`).all(actor.id, now()).map(row => ({
+      id: row.id, name: row.name, current: row.token_hash === actor.token_hash, createdAt: row.created_at, lastSeen: row.last_seen, expiresAt: row.expires, deviceId: row.device_id,
+    }));
+    if (path === 'sessions' && method === 'DELETE') {
+      db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash<>?').run(actor.id, actor.token_hash);
+      return null;
+    }
+    const device = /^sessions\/([a-f0-9-]{36})$/.exec(path);
+    if (device && method === 'DELETE') {
+      if (!db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash=(SELECT token_hash FROM session_devices WHERE id=?)').run(actor.id, device[1]).changes) fail(404, 'session-not-found');
+      return null;
+    }
     if (method === 'POST' && path === 'password') {
       if (!await verify(actor, body.current)) fail(400, 'incorrect-password');
       await changePassword(actor, body.next); return null;

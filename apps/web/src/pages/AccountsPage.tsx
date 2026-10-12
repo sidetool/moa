@@ -1,10 +1,11 @@
+import { LoginDevices } from '../components/LoginDevices';
 import { Check, ChevronRight, Copy, KeyRound, Link2, Plus, Share2, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ACCOUNT_PERMISSIONS, type AccountSummary, type AccountPermission, type Invite } from "@moa/shared";
 import { useMe } from "../api/queries";
-import { Button, ConfirmDialog, EmptyState, IconButton, Skeleton } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, PasswordInput, Select, Skeleton } from "../components/ui";
 import { ApiError, api, authApi } from "../lib/api";
 import { cx } from "../lib/format";
 
@@ -163,9 +164,7 @@ function AccountRow({ account, me }: { account: AccountSummary; me: string }) {
         <CopyButton text={temp} label="복사" />
       </div> : <>
         <Button disabled={patch.isPending} onClick={() => { patch.reset(); setConfirmRole(true); }}>{account.role === "admin" ? "관리자 해제" : "관리자로 지정"}</Button>
-        {account.role === "member" && <div className="choice-row" role="group" aria-label={`${account.username} 권한`}>
-          {ACCOUNT_PERMISSIONS.map(permission => <label key={permission} className="chip"><input type="checkbox" checked={account.permissions.includes(permission)} disabled={patch.isPending} onChange={event => patch.mutate({ permissions: event.target.checked ? [...account.permissions, permission] : account.permissions.filter(value => value !== permission) })} />{PERMISSION_LABELS[permission]}</label>)}
-        </div>}
+        {account.role === "member" && <Select multiple className="account-permissions" aria-label={`${account.username} 권한`} value={account.permissions} disabled={patch.isPending} options={ACCOUNT_PERMISSIONS.map(value => ({ value, label: PERMISSION_LABELS[value] }))} onChange={permissions => patch.mutate({ permissions })} />}
         {!self && <Button disabled={patch.isPending} onClick={() => patch.mutate({ disabled: !account.disabled })}>{account.disabled ? "다시 사용" : "사용 중지"}</Button>}
         {!self && <Button icon={<KeyRound size={16} />} disabled={reset.isPending} onClick={() => reset.mutate()}>비밀번호 초기화</Button>}
         {!self && (confirm
@@ -198,7 +197,7 @@ export function AccountsPage() {
     <section className="settings-group">
       <div className="settings-group-head"><h2>초대</h2></div>
       <div className="invite-hero">
-        <div><b>함께 볼 사람을 초대하세요</b><small>초대받은 사람은 자기 계정과 프로필을 따로 가져요. 소스·라이브러리 관리는 관리자만 할 수 있어요.</small></div>
+        <div><b>초대 링크</b></div>
         <Button variant="primary" icon={<Plus size={18} />} onClick={() => setCreating(true)}>초대 만들기</Button>
       </div>
       {invites.isPending ? <Skeleton className="settings-sk" /> : active.length > 0 && <ul className="settings-card invite-list">{active.map(i => <InviteRow key={i.id} invite={i} />)}</ul>}
@@ -230,9 +229,9 @@ function PasswordSheet({ onClose }: { onClose: () => void }) {
     <form className="sheet invite-sheet" role="dialog" aria-modal="true" aria-label="비밀번호 변경" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); if (valid) change.mutate(); }}>
       <header className="sheet-head"><h2>비밀번호 변경</h2><IconButton label="닫기" onClick={onClose}><X size={20} /></IconButton></header>
       <div className="invite-body">
-        <label className="field"><span>지금 비밀번호</span><input type="password" autoComplete="current-password" autoFocus value={current} onChange={e => setCurrent(e.target.value)} /></label>
-        <label className="field"><span>새 비밀번호</span><input type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} /><small>8자 이상</small></label>
-        <label className="field"><span>새 비밀번호 확인</span><input type="password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />{mismatch && <small className="field-error">새 비밀번호와 달라요.</small>}</label>
+        <label className="field"><span>지금 비밀번호</span><PasswordInput autoComplete="current-password" autoFocus value={current} onChange={e => setCurrent(e.target.value)} /></label>
+        <label className="field"><span>새 비밀번호</span><PasswordInput autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} /><small>8자 이상</small></label>
+        <label className="field"><span>새 비밀번호 확인</span><PasswordInput autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} />{mismatch && <small className="field-error">새 비밀번호와 달라요.</small>}</label>
         <p className="settings-hint">바꾸면 모든 기기에서 로그아웃돼요. 새 비밀번호로 다시 로그인하세요.</p>
         {error && <p className="settings-error" role="alert">{error}</p>}
       </div>
@@ -251,7 +250,7 @@ export function AccountSection() {
   const [password, setPassword] = useState(false);
   if (!me.data) return null;
   const admin = me.data.role === "admin";
-  return <section className="settings-group">
+  return <><section className="settings-group">
     <h2>계정</h2>
     <div className="settings-card">
       <div className="setting"><span className="setting-icon">{admin ? <ShieldCheck size={20} /> : <UserRound size={20} />}</span><div><b>{me.data.username}</b><small>{admin ? "관리자" : "일반 계정"} · 프로필 최대 5개</small></div>
@@ -260,5 +259,5 @@ export function AccountSection() {
       {admin && <Link to="/accounts" className="setting setting-link"><span className="setting-icon"><Users size={20} /></span><div><b>계정과 초대</b><small>초대 코드 만들기, 계정 관리</small></div><ChevronRight size={18} /></Link>}
     </div>
     {password && <PasswordSheet onClose={() => setPassword(false)} />}
-  </section>;
+  </section><LoginDevices /></>;
 }

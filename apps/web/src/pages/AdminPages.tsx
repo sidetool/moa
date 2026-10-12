@@ -1,9 +1,10 @@
 import { SubtitleStyleControls } from '../components/SubtitleStyleControls';
+import { SubtitleMemorySettings } from '../components/SubtitleMemorySettings';
 import { WebsitePlugins } from '../components/WebsitePlugins';
 import { SubtitleLibrarySettings } from '../components/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
 import { NavigationSettings } from "../components/NavigationSettings";
-import { devicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
+import { useDevicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
 import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
@@ -169,8 +170,8 @@ function TranslationModeRow({ mode, available, korean, onChange }: { mode: Trans
 
 export function SettingsPage() {
   const [remote, setRemote] = useState(remotePreference);
-  const [device, setDevice] = useState(devicePrefs);
-  const setPref = <K extends keyof DevicePrefs>(key: K, value: DevicePrefs[K]) => { setDevicePref(key, value); setDevice(old => ({ ...old, [key]: value })); };
+  const device = useDevicePrefs();
+  const setPref = setDevicePref;
   const settings = useSettings();
   const client = useQueryClient();
   const admin = useMe().data?.role === "admin";
@@ -180,7 +181,7 @@ export function SettingsPage() {
   // Grouped by where a choice applies: the profile, this device only, or the whole server.
   const categories: Array<{ value: string; label: string; group: string; icon: React.ReactNode; scope: string }> = [
     { value: "playback", label: "재생", group: "프로필", icon: <Play size={18} />, scope: "‘이 기기에서만’ 항목은 이 브라우저에만, 나머지는 이 프로필의 모든 기기에 적용돼요." },
-    { value: "subtitles", label: "자막", group: "프로필", icon: <Subtitles size={18} />, scope: "이 프로필의 모든 기기에 적용돼요. 싱크는 영상과 기기마다 따로 저장돼요." },
+    { value: "subtitles", label: "자막", group: "프로필", icon: <Subtitles size={18} />, scope: "선택한 자막은 모든 기기에서 이어져요. 자막 모양은 이 기기와 프로필에, 싱크는 영상과 기기마다 따로 저장돼요." },
     { value: "tabs", label: "홈 화면", group: "프로필", icon: <LayoutGrid size={18} />, scope: "이 프로필의 모든 기기에 적용돼요." },
     ...(hasLoginGate ? [{ value: "account", label: "내 계정", group: "프로필", icon: <UserRound size={18} />, scope: "로그인한 계정에 적용돼요." }] : []),
     { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "리모컨·키보드·터치로 다루는 방식이에요. 이 브라우저에만 저장돼요." },
@@ -266,13 +267,14 @@ export function SettingsPage() {
         </div>
       </section>}
       {category === "subtitles" && <section className="settings-group">
-        <h2>자막 모양</h2>
+        <h2>자막 모양 · 이 기기</h2>
         <div className="settings-card"><SubtitleStyleControls settings={s} save={patch => void save(patch)} /></div>
         <p className="settings-hint">싱크는 재생 화면의 자막 설정에서 조절해요.</p>
       </section>}
       {admin && category === "subtitles" && <section className="settings-group"><h2>보관함 · 관리자</h2><div className="settings-card">
         {link("/subtitles", <FolderOpen size={20} />, "저장한 자막", "AI 번역·온라인·직접 가져온 자막 파일을 모든 프로필에서 관리")}
       </div></section>}
+      {admin && category === "subtitles" && <SubtitleMemorySettings />}
       {category === "experimental" && <ShortsSettings settings={s} kids={kids} save={patch => void save(patch)} />}
       {category === "experimental" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
         {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}

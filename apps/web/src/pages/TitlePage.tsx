@@ -17,7 +17,7 @@ import { Button, ButtonLink, EmptyState, ProgressBar, Skeleton } from "../compon
 import { ApiError } from "../lib/api";
 import { foreignCode, foreignLang, langLabel, seasonInfo, type SeasonInfo } from "../lib/card-meta";
 import { useFranchise, type FranchiseSeason } from "../lib/franchise";
-import { devicePrefs } from "../lib/device-prefs";
+import { useDevicePrefs } from "../lib/device-prefs";
 import { SeasonPicker, type SeasonChoice } from "../components/SeasonPicker";
 import { TYPE_LABEL, cx, fileSize, humanDuration, episodeTitle } from "../lib/format";
 
@@ -75,7 +75,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   const [highlight, setHighlight] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const section = useRef<HTMLElement>(null);
-  const franchise = useFranchise(media.id, devicePrefs().seasonSwitcher);
+  const franchise = useFranchise(media.id, useDevicePrefs().seasonSwitcher);
 
   // Switching seasons opens another title; land on its episode list, not the top of the page.
   useEffect(() => { if (switched?.episodes) section.current?.scrollIntoView({ block: "start" }); }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps

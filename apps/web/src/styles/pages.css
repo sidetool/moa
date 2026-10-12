@@ -128,8 +128,9 @@
 .profiles .btn-ghost.profiles-manage { border: 1px solid var(--hairline-strong); color: var(--text-3); }
 .profiles .btn-ghost.profiles-manage:hover { color: #fff; border-color: #fff; }
 .profile-editor { display: grid; justify-items: center; gap: 16px; width: min(560px, 100%); margin-top: 10px; }
-.profile-editor > input { width: min(340px, 100%); height: 48px; padding: 0 14px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-1); font-size: 1.05rem; text-align: center; }
-.profile-editor > input:focus { outline: none; border-color: #fff; }
+.profile-editor > .password-field { width: min(340px, 100%); }
+.profile-editor > input, .profile-editor > .password-field input { width: min(340px, 100%); height: 48px; padding: 0 14px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-1); font-size: 1.05rem; text-align: center; }
+.profile-editor > input:focus, .profile-editor > .password-field input:focus { outline: none; border-color: #fff; }
 .profile-editor-avatar { position: relative; border-radius: 22%; }
 .profile-editor-avatar:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .profile-editor-pencil { position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #fff; color: #111; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
@@ -454,7 +455,7 @@
 /* Source-owned filters and non-destructive title groups. */
 .browse-filters, .tab-source-filters { margin: 20px 0; padding: 16px; border: 1px solid #303036; border-radius: 12px; }
 .browse-filters summary, .tab-source-filters summary { cursor: pointer; font-weight: 600; }
-.source-filter-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 16px; padding: 20px 0; }
+.source-filter-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%, 210px),1fr)); align-items: end; gap: 12px 16px; padding: 16px 0; }
 .source-filter-fields .filter-heading, .source-filter-fields hr, .source-filter-fields [role=alert] { grid-column: 1 / -1; }
 .source-filter-fields hr { width: 100%; border: 0; border-top: 1px solid #303036; }
 .filter-heading { color: #a8a8b3; font-size: 13px; margin: 0; }
@@ -468,8 +469,15 @@
 .group-editor small { display: block; color: #a8a8b3; margin-top: 6px; }
 .group-confirm { padding: 16px; border: 1px solid #7b61ff; border-radius: 10px; }
 @media(max-width:600px) { .source-filter-fields { grid-template-columns: minmax(0,1fr); } .group-editor { padding: 12px; } .group-editor li { align-items: flex-start; } }
-.source-filter-fields .dropdown-trigger { min-height: 44px; background: var(--surface-1); font-size: 14px; }
-.source-filter-fields input[type=checkbox] { width:22px; height:22px; accent-color:var(--accent); }
+.source-filter-fields .dropdown-trigger, .source-filter-fields input:not([type=checkbox]) { height: 40px; min-height: 40px; background: var(--surface-1); font-size: 14px; }
+.filter-field { min-width: 0; gap: 6px; }
+.filter-field > span { font-size: .82rem; color: var(--text-2); }
+.filter-selects { display: flex; gap: 6px; min-width: 0; }
+.filter-selects > .dropdown { flex: 1; }
+.filter-selects > .dropdown + .dropdown { flex: 0 0 108px; }
+.filter-checkbox { display: flex; align-items: center; gap: 9px; min-height: 40px; font-size: .9rem; cursor: pointer; }
+.filter-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.account-permissions { width: min(260px, 100%); }
 .source-maintenance { padding: 12px 0; font-size: 13px; }
 .source-maintenance .source-actions { flex-wrap: wrap; }
 .repository-list { display:grid; gap:12px; margin:20px 0; }

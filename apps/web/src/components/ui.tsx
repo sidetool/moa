@@ -1,5 +1,5 @@
-import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import { Check, ChevronDown, Eye, EyeOff } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cx } from "../lib/format";
 import { remoteKey } from "../lib/remote";
@@ -29,7 +29,15 @@ export function IconButton({ label, children, className, ...rest }: ButtonHTMLAt
   return <button aria-label={label} title={label} className={cx("icon-btn", className)} {...rest}>{children}</button>;
 }
 
-export function ConfirmDialog({ title, children, confirmLabel = "확인", busy = false, confirmDisabled = false, className, onConfirm, onClose }: { title: string; children: ReactNode; confirmLabel?: string; busy?: boolean; confirmDisabled?: boolean; className?: string; onConfirm: () => void; onClose: () => void }) {
+export function PasswordInput({ className, revealLabel = "비밀번호", ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { revealLabel?: string }) {
+  const [visible, setVisible] = useState(false);
+  return <span className="password-field">
+    <input {...props} className={className} type={visible ? "text" : "password"} />
+    <button type="button" className="password-toggle" aria-label={`${revealLabel} ${visible ? "숨기기" : "보기"}`} aria-pressed={visible} disabled={props.disabled} onClick={() => setVisible(value => !value)}>{visible ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+  </span>;
+}
+
+export function ConfirmDialog({ title, children, confirmLabel = "확인", busy = false, confirmDisabled = false, className, onConfirm, onClose }: { title: string; children: ReactNode; confirmLabel?: string; busy?: boolean; confirmDisabled?: boolean; className?: string; onConfirm?: () => void; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -42,24 +50,20 @@ export function ConfirmDialog({ title, children, confirmLabel = "확인", busy =
     onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
     onKeyDown={event => {
       if (remoteKey(event.nativeEvent) === "Back") { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); }
-      if (event.key === "Tab") {
-        const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
-        const first = buttons[0], last = buttons[buttons.length - 1];
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-      }
     }}
     onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); if (!busy && event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) onClose(); }}>
     <header className="sheet-head"><h2 id={`${id}-title`}>{title}</h2></header>
     <div className="confirm-dialog-body" id={`${id}-body`}>{children}</div>
-    <footer className="sheet-foot"><Button type="button" autoFocus disabled={busy} onClick={onClose}>취소</Button><Button type="button" variant="primary" disabled={busy || confirmDisabled} onClick={onConfirm}>{busy ? "처리 중…" : confirmLabel}</Button></footer>
+    <footer className="sheet-foot"><Button type="button" autoFocus disabled={busy} onClick={onClose}>{onConfirm ? "취소" : "닫기"}</Button>{onConfirm && <Button type="button" variant="primary" disabled={busy || confirmDisabled} onClick={onConfirm}>{busy ? "처리 중…" : confirmLabel}</Button>}</footer>
   </dialog>;
 }
 
 // Older TV browsers lack the Popover API; Select falls back to a native <select> there.
 const popoverSupported = typeof HTMLElement !== "undefined" && typeof HTMLElement.prototype.showPopover === "function" && typeof HTMLElement.prototype.hidePopover === "function";
 
-export function Select({ value, options, onChange, className, disabled, ...rest }: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value" | "onChange" | "children"> & { value: string; options: { value: string; label: string }[]; onChange: (value: string) => void }) {
+type SelectProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value" | "onChange" | "children"> & { options: { value: string; label: string }[] } & ({ multiple: true; value: string[]; onChange: (value: string[]) => void } | { multiple?: false; value: string; onChange: (value: string) => void });
+
+export function Select({ value, options, onChange, multiple, className, disabled, ...rest }: SelectProps) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -67,7 +71,8 @@ export function Select({ value, options, onChange, className, disabled, ...rest 
   const search = useRef({ text: "", time: 0 });
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const selected = options.findIndex(option => option.value === value);
+  const chosen = (option: string) => multiple ? value.includes(option) : option === value;
+  const selected = options.findIndex(option => chosen(option.value));
   const close = () => { if (popoverSupported) menu.current?.hidePopover(); setOpen(false); };
   const show = () => {
     const button = trigger.current, list = menu.current;
@@ -84,7 +89,13 @@ export function Select({ value, options, onChange, className, disabled, ...rest 
     setActive(Math.max(0, selected));
     setOpen(true);
   };
-  const choose = (index: number) => { if (options[index]) onChange(options[index].value); close(); trigger.current?.focus(); };
+  const choose = (index: number) => {
+    const option = options[index];
+    if (!option || disabled) return;
+    if (multiple) onChange(chosen(option.value) ? value.filter(item => item !== option.value) : [...value, option.value]);
+    else { onChange(option.value); close(); }
+    trigger.current?.focus();
+  };
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: Event) => {
@@ -96,18 +107,18 @@ export function Select({ value, options, onChange, className, disabled, ...rest 
     return () => { window.removeEventListener("resize", dismiss); window.removeEventListener("scroll", dismiss, true); };
   }, [open]);
   useEffect(() => { if (open) menu.current?.children[active]?.scrollIntoView({ block: "nearest" }); }, [open, active]);
-  useEffect(() => { if (disabled) close(); }, [disabled]);
+  useEffect(() => { if (disabled && !multiple) close(); }, [disabled, multiple]);
   if (!popoverSupported) {
     return <span className={cx("dropdown", className)}>
       <select id={rest.id} name={rest.name} title={rest.title} autoFocus={rest.autoFocus} tabIndex={rest.tabIndex} aria-label={rest["aria-label"]} aria-labelledby={rest["aria-labelledby"]} aria-describedby={rest["aria-describedby"]}
-        className="dropdown-trigger" disabled={disabled || !options.length} value={value} onChange={event => onChange(event.target.value)}>
-        {selected < 0 && <option value={value} hidden>{value}</option>}
+        className="dropdown-trigger" multiple={multiple} disabled={disabled || !options.length} value={value} onChange={event => multiple ? onChange([...event.target.selectedOptions].map(option => option.value)) : onChange(event.target.value)}>
+        {!multiple && selected < 0 && <option value={value} hidden>{value}</option>}
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </span>;
   }
   return <span className={cx("dropdown", className)}>
-    <button {...rest} ref={trigger} type="button" className="dropdown-trigger" disabled={disabled || !options.length} popoverTarget={id} role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={id} aria-activedescendant={open ? `${id}-${active}` : undefined}
+    <button {...rest} ref={trigger} type="button" className="dropdown-trigger" disabled={(!multiple && disabled) || !options.length} aria-disabled={disabled || undefined} popoverTarget={id} role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={id} aria-activedescendant={open ? `${id}-${active}` : undefined}
       onClick={event => { event.preventDefault(); if (open) close(); else show(); }} onKeyDown={event => {
         const key = remoteKey(event.nativeEvent);
         if (key === "Tab") { close(); return; }
@@ -122,16 +133,16 @@ export function Select({ value, options, onChange, className, disabled, ...rest 
           const now = Date.now();
           search.current = { text: now - search.current.time < 700 ? search.current.text + event.key : event.key, time: now };
           const index = options.findIndex(option => option.label.toLocaleLowerCase().startsWith(search.current.text.toLocaleLowerCase()));
-          if (index >= 0) { if (open) setActive(index); else onChange(options[index].value); }
+          if (index >= 0) { if (open) setActive(index); else if (multiple) { show(); setActive(index); } else onChange(options[index].value); }
         }
       }}>
-      <span>{options[selected]?.label ?? value}</span><ChevronDown size={16} aria-hidden="true" />
+      <span>{multiple ? value.length ? options.filter(option => chosen(option.value)).map(option => option.label).join(", ") : "선택 없음" : options[selected]?.label ?? value}</span><ChevronDown size={16} aria-hidden="true" />
     </button>
-    <div ref={menu} id={id} popover="auto" className="dropdown-menu" role="listbox" aria-label={rest["aria-label"]} aria-labelledby={rest["aria-labelledby"]}
+    <div ref={menu} id={id} popover="auto" className="dropdown-menu" role="listbox" aria-multiselectable={multiple || undefined} aria-label={rest["aria-label"]} aria-labelledby={rest["aria-labelledby"]}
       onToggle={event => setOpen(event.newState === "open")} onClick={event => { event.preventDefault(); event.stopPropagation(); }}>
-      {options.map((option, index) => <button key={option.value} id={`${id}-${index}`} type="button" role="option" tabIndex={-1} aria-selected={option.value === value} className={cx("dropdown-option", index === active && "is-active")}
+      {options.map((option, index) => <button key={option.value} id={`${id}-${index}`} type="button" role="option" tabIndex={-1} disabled={disabled} aria-selected={chosen(option.value)} className={cx("dropdown-option", index === active && "is-active")}
         onPointerDown={event => event.preventDefault()} onPointerMove={() => setActive(index)} onClick={() => choose(index)}>
-        <span>{option.label}</span>{option.value === value && <Check size={16} aria-hidden="true" />}
+        {multiple && <span className={cx("option-check", chosen(option.value) && "is-checked")} aria-hidden="true">{chosen(option.value) && <Check size={13} />}</span>}<span>{option.label}</span>{!multiple && chosen(option.value) && <Check size={16} aria-hidden="true" />}
       </button>)}
     </div>
   </span>;

@@ -15,7 +15,7 @@ test('fresh release installation pins components, fetches the gateway, preserves
   const commands = [];
   const manifest = { version: 'v1.0.0', schemaEpoch: 1, minimumUpdaterVersion: '1.0.0', minimumComposeVersion: '2.24.0', services: Object.fromEntries(SERVICES.map(n => [n,{image:`ghcr.io/sidetool/${n}`,digest:`sha256:${'a'.repeat(64)}`,platforms:['linux/amd64','linux/arm64']}])) };
   const files = Object.fromEntries(BUNDLE_FILES.map(n => [n, n === '.env.example' ? 'PUBLIC_HOST=default\n' : 'synthetic public fixture\n']));
-  const config = { name: 'moa-fixture', services: { moa: { image:'old',environment:{LITERAL:'cost$$5'},volumes:[{type:'volume',source:'synthetic-data',target:'/data'}] }, 'moa-auth':{ image:'old',volumes:[{type:'volume',source:'synthetic-auth',target:'/data'}]}, 'moa-gateway':{image:'nginx:fixture',volumes:[{type:'bind',source:'/incorrect/base/path',target:'/etc/nginx/templates/default.conf.template'}]} } };
+  const config = { name: 'moa-fixture', services: { moa: { image:'old',environment:{LITERAL:'cost$$5'},volumes:[{type:'volume',source:'synthetic-data',target:'/data'}] }, 'moa-auth':{ image:'old',volumes:[{type:'volume',source:'synthetic-auth',target:'/data'}]}, 'moa-gateway':{image:'nginx:fixture',volumes:[{type:'bind',source:'/incorrect/base/path',target:'/etc/nginx/templates/default.conf.template'}]}, 'moa-updater':{image:'updater:container'} } };
   const run = async (command,args) => {
     commands.push([command,...args]);
     if(args[0]==='ps')return '';
@@ -28,6 +28,7 @@ test('fresh release installation pins components, fetches the gateway, preserves
   const current=JSON.parse(await readFile(path.join(cwd,'.moa-release/current.json'),'utf8'));
   const resolved=JSON.parse(await readFile(current.compose,'utf8'));
   assert.deepEqual(current.services,['moa','moa-auth']);
+  assert.equal(resolved.services['moa-updater'], undefined);
   assert.equal(resolved.services.moa.environment.LITERAL,'cost$$5');
   assert.equal(resolved.services.moa.environment.MOA_DEPLOYMENT,'release');
   assert.match(resolved.services.moa.image,/@sha256:/);
