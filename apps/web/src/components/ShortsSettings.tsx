@@ -42,7 +42,7 @@ export function ShortsSettings({ settings, kids, save }: { settings: Settings; k
       {row("직접 재생", nativeReady || nativeOn ? <>실험 · YouTube 대신 MOA 플레이어로 화면 가득 재생해요.{!nativeReady && " 지금은 이 서버에서 쓸 수 없어요."}</> : "실험 · 이 서버에서는 쓸 수 없어요.",
         <Toggle label="직접 재생" checked={nativeOn} disabled={!nativeOn && !nativeReady} onChange={value => save({ shortsPlayback: value ? "native" : "embed" })} />)}
       {nativeOn && row("화질", "", <Select className="setting-select" aria-label="화질" value={settings.shortsQuality ?? "auto"} onChange={value => save({ shortsQuality: value as Settings["shortsQuality"] })} options={QUALITY.map(([value, label]) => ({ value, label }))} />)}
-      {row("화면 맞춤", nativeOn ? "화면을 꽉 채워요. 끄면 영상 전체가 보여요." : "휴대폰에서 예고편을 화면 폭에 맞춰 최대한 크게 보여줘요. 끄면 여백을 두고 작게 보여요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
+      {row("화면 맞춤", "화면을 꽉 채워요. 이 기기에만 적용돼요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
       {row("본 작품 숨기기", "5초 넘게 봤거나 직접 넘긴 작품을 이 기간 동안 빼요.", <Select className="setting-select" aria-label="본 작품 숨기기" value={String(settings.shortsRepeatDays ?? 7)} onChange={value => save({ shortsRepeatDays: Number(value) as Settings["shortsRepeatDays"] })} options={REPEAT.map(([value, label]) => ({ value: String(value), label }))} />)}
     </div>}
   </div></section>;

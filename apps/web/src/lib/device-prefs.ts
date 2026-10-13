@@ -18,6 +18,7 @@ const record = (key: string) => {
       if (!Object.hasOwn(DEFAULT_DEVICE_SETTINGS, key)) return false;
       if (key in limits) return value === null && ['subtitleScale', 'subtitleShadow', 'subtitleOutline'].includes(key)
         || typeof value === 'number' && Number.isFinite(value) && value >= limits[key][0] && value <= limits[key][1];
+      if (key === 'shortsScreenFit') return value === null || typeof value === 'boolean';
       if (key === 'subtitleSize') return typeof value === 'string' && ['small', 'medium', 'large', 'xlarge'].includes(value);
       if (key === 'subtitleBackground') return typeof value === 'string' && ['original', 'none', 'soft', 'solid'].includes(value);
       return key === 'seekStep' ? [5, 10, 15, 30].includes(value as number) : typeof value === 'boolean';
@@ -64,7 +65,7 @@ export async function loadDevicePrefs(settings: Settings, signal: AbortSignal) {
           if (settings.subtitleHeight === undefined && height !== null && Number.isFinite(Number(height))) legacy.subtitleHeight = Math.max(0, Math.min(40, Number(height)));
         } catch {}
       }
-      result = await api<{ settings: DeviceSettings }>('/settings/device', { method: 'PATCH', body: { settings: { ...DEFAULT_DEVICE_SETTINGS, ...deviceSettingsPatch(settings), ...legacy, ...local?.value }, migrate: true }, signal });
+      result = await api<{ settings: DeviceSettings }>('/settings/device', { method: 'PATCH', body: { settings: { ...DEFAULT_DEVICE_SETTINGS, ...deviceSettingsPatch(settings), shortsScreenFit: null, ...legacy, ...local?.value }, migrate: true }, signal });
     }
     if (signal.aborted || profile !== currentProfileId() || revisions.get(key) !== revision || !result?.settings) return;
     write(key, result.settings, null);
