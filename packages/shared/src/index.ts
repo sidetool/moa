@@ -478,9 +478,11 @@ export interface TitleGroup { id: string; manual: boolean; members: MediaCard[] 
 
 /* ---------- Accounts (auth service: /__moa/api) ---------- */
 export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | 'subtitleBackground' | 'subtitleShadow' | 'subtitleOutline' | 'subtitleHeight' | 'subtitlePadding'> & {
+  /** null follows the device's mobile/desktop default. */
+  shortsScreenFit: boolean | null;
   fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { fullscreenOnPlay: true, autoSkip: false, seekStep: 10, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];

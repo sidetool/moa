@@ -383,7 +383,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     return { navigation };
   });
   app.get('/api/settings', async req => db.settings(profile(req)));
-  const deviceFields = { ...Object.fromEntries(Object.keys(DEFAULT_DEVICE_SETTINGS).filter(key => key in settingsFields).map(key => [key, settingsFields[key as keyof typeof settingsFields]])), fullscreenOnPlay: { type: 'boolean' }, autoSkip: { type: 'boolean' }, seekStep: { type: 'integer', enum: [5, 10, 15, 30] }, videoFill: { type: 'boolean' }, seasonSwitcher: { type: 'boolean' }, titleGrouping: { type: 'boolean' } };
+  const deviceFields = { ...Object.fromEntries(Object.keys(DEFAULT_DEVICE_SETTINGS).filter(key => key in settingsFields).map(key => [key, settingsFields[key as keyof typeof settingsFields]])), shortsScreenFit: { type: ['boolean', 'null'] }, fullscreenOnPlay: { type: 'boolean' }, autoSkip: { type: 'boolean' }, seekStep: { type: 'integer', enum: [5, 10, 15, 30] }, videoFill: { type: 'boolean' }, seasonSwitcher: { type: 'boolean' }, titleGrouping: { type: 'boolean' } };
   const deviceScope = (req: FastifyRequest) => {
     const id = req.headers['x-moa-device'];
     if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new ApiFailure(400, 'invalid-device');

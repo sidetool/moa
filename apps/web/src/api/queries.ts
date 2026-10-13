@@ -58,7 +58,10 @@ export const useSettings = () => {
     if (settings && currentProfileId() === profile) await loadDevicePrefs(settings, signal);
     return settings;
   } });
-  return { ...result, data: result.data ? { ...result.data, ...deviceSettingsPatch(device) } as Settings : result.data };
+  return { ...result, data: result.data ? { ...result.data, ...deviceSettingsPatch(device),
+    // Legacy explicit "off" survives; the old shared default "on" must not crop every desktop.
+    shortsScreenFit: device.shortsScreenFit ?? (result.data.shortsScreenFit !== false && typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches)
+  } as Settings : result.data };
 };
 
 const settingsSaves = new Map<string | null, Promise<void>>();

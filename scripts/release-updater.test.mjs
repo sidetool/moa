@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Updater } from './update.mjs';
 import { DEFAULT_POLICY, SERVICES, compare, sha256 } from './release.mjs';
+import { prepareDownloadStorage } from './release-updater.mjs';
 import { BUNDLE_FILES } from './release-bundle.mjs';
 import { atomic, readJson, optionalJson } from './update-files.mjs';
 
@@ -314,4 +315,81 @@ test('a release upgrade retains enabled runtimes and disabled runtime connection
   assert.equal(deployed.services['moa-apk'].image,`ghcr.io/fixture-owner/moa-apk@sha256:${'b'.repeat(64)}`);
   assert.deepEqual(deployed.services['moa-source-browser'],f.compose.services['moa-source-browser']);
   assert.equal(deployed.services.moa.environment.MOA_SOURCE_BROWSER_URL,'');
+});
+
+async function legacyUpgrade(t) {
+  const f = await fixture(t, 'v0.1.2');
+  await atomic(path.join(f.root, 'journal.json'), { phase: 'complete',
+    previous: { ...f.previous, version: 'v0.1.1' }, target: f.previous });
+  f.manager.activity = async () => ({ heartbeat: Date.now(), busy: false,
+    leaseId: (await optionalJson(path.join(f.dir, 'maintenance.json'), {})).id });
+  return f;
+}
+test('old updater handoff finishes storage only once without changing data, options or images', async t => {
+  const f = await legacyUpgrade(t);
+  await f.manager.finishStorageUpgrade();
+  const current = await readJson(path.join(f.root, 'current.json'));
+  const config = await readJson(current.compose);
+  assert.equal(config.services.moa.environment.MOA_DOWNLOAD_ROOT, '/downloads');
+  assert.equal(config.services.moa.environment.MOA_DOWNLOADS_ENABLED, undefined);
+  assert.equal(config.services.moa.environment.FIXTURE_LITERAL, 'cost$$5');
+  assert.deepEqual(config.services.moa.volumes[0], 'fixture-data:/data');
+  assert.equal(config.services.moa.image, f.compose.services.moa.image);
+  assert.deepEqual(await readJson(f.previous.compose), f.compose);
+  assert.deepEqual(current.services, f.previous.services);
+  assert.equal(f.commands.filter(c => c.includes('up')).length, 1);
+  assert.equal(f.commands.find(c => c.includes('up')).at(-1), 'moa');
+  assert.ok(f.commands.every(c => !c.includes('pull') && !c.includes('cp') && !c.includes('down')));
+  const count = f.commands.length;
+  f.manager.storageChecked = false;
+  await f.manager.finishStorageUpgrade();
+  assert.equal(f.commands.length, count);
+});
+test('storage handoff waits for activity and never changes a fresh installation or explicit root', async t => {
+  const f = await legacyUpgrade(t), idle = f.manager.activity;
+  f.manager.activity = async () => null;
+  await f.manager.finishStorageUpgrade(); assert.equal(f.commands.length, 0);
+  f.manager.storageRetryAt = 0; f.manager.activity = async () => ({ busy: true });
+  await f.manager.finishStorageUpgrade(); assert.equal(f.commands.length, 0);
+  f.manager.storageRetryAt = 0; f.manager.activity = idle;
+  const config = structuredClone(f.compose);
+  config.services.moa.environment.MOA_DOWNLOAD_ROOT = '/custom';
+  await atomic(f.previous.compose, config);
+  await f.manager.finishStorageUpgrade(); assert.equal(f.commands.length, 0);
+  f.manager.storageChecked = false;
+  await rm(path.join(f.root, 'journal.json'));
+  await atomic(f.previous.compose, f.compose);
+  await f.manager.finishStorageUpgrade(); assert.equal(f.commands.length, 0);
+});
+test('storage preparation preserves mounted paths and does not reuse an unrelated named volume', () => {
+  const mounted = { services: { moa: { volumes: ['/custom:/downloads'] } } };
+  assert.equal(prepareDownloadStorage(mounted), true);
+  assert.deepEqual(mounted.services.moa.volumes, ['/custom:/downloads']);
+  assert.equal(prepareDownloadStorage(mounted), false);
+  const collision = { services: { moa: {} }, volumes: { 'moa-downloads': { external: true } } };
+  prepareDownloadStorage(collision);
+  assert.equal(collision.services.moa.volumes[0].source, 'moa-downloads-1');
+  assert.equal(collision.volumes['moa-downloads'].external, true);
+});
+test('failed storage startup restores previous config without retry loops or a fake release history', async t => {
+  const f = await legacyUpgrade(t); f.faults.targetHealth = true;
+  await f.manager.finishStorageUpgrade();
+  assert.equal(f.host.state.state, 'rolled-back');
+  assert.deepEqual(await readJson(path.join(f.root, 'current.json')), f.previous);
+  assert.equal(f.manager.history.length, 0);
+  assert.equal((await readJson(path.join(f.root, 'journal.json'))).kind, 'storage');
+  const count = f.commands.length;
+  f.manager.storageChecked = false;
+  await f.manager.finishStorageUpgrade(); assert.equal(f.commands.length, count);
+});
+test('crashed storage completion is recovered with the original configuration', async t => {
+  const f = await legacyUpgrade(t);
+  await f.manager.finishStorageUpgrade();
+  const journal = await readJson(path.join(f.root, 'journal.json'));
+  await atomic(path.join(f.root, 'journal.json'), { ...journal, phase: 'verifying' });
+  f.manager.ready = false; await f.manager.init();
+  assert.deepEqual(await readJson(path.join(f.root, 'current.json')), f.previous);
+  assert.equal(f.host.state.state, 'rolled-back');
+  assert.equal(f.manager.failedVersion, null);
+  assert.equal(f.manager.history.length, 0);
 });

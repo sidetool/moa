@@ -125,7 +125,8 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .player-bigplay.is-feedback { pointer-events: none; }
 .player-bigplay .lucide-play, .center-play .lucide-play { transform: translateX(3px); }
 .controls-left .lucide-play { transform: translateX(2px); }
-.center-play > svg, .center-play > .spinner { animation: fade .16s var(--ease); }
+.center-play > svg { animation: fade .16s var(--ease); }
+.center-play > .spinner { animation: fade .16s var(--ease), spin .8s linear infinite; }
 .player-bigplay:hover { background: rgba(0, 0, 0, .7); }
 /* Seek feedback: a soft arc on the tapped side, like the big streaming apps. */
 .player-flash { position: absolute; top: 0; bottom: 0; z-index: 4; width: 38%; display: grid; place-items: center; pointer-events: none; animation: flash .75s var(--ease) forwards; }

@@ -13,6 +13,7 @@ const READY_TIMEOUT = 20_000; // prepared media that never starts is treated as 
 const HLS = "application/vnd.apple.mpegurl";
 
 const HOLD_MS = 450;
+const PINCH = 0.15; // two fingers closing or opening by this share switch between whole video and fill
 /** Index for a fixed quality: the tallest variant at or under `target`, else the shortest; first wins ties. */
 export function levelFor(levels: Array<{ height?: number }>, target: number) {
   let fit = -1, low = -1;
@@ -29,10 +30,12 @@ type Phase = "prepare" | "loading" | "ready" | "blocked" | "unavailable" | "erro
 /** Experimental: the server prepares the trailer and MOA plays it in its own <video>. Mounted only for the
  *  settled, visible work; unmounting cancels preparation, stops the media and releases the lease. Failures
  *  wait for the person (retry or the YouTube player) and never advance by themselves. */
-export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quality, control, muted, onMuted, onBlocked, onPlaying, onStarted, onEnded, onEmbed }: {
+export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quality, control, muted, fit, onFit, onMuted, onBlocked, onPlaying, onStarted, onEnded, onEmbed }: {
   itemKey: string; title: string; session: ShortsSession; pool: NativePool; ahead: string[]; control: React.RefObject<ShortsControl | null>;
   /** Profile setting; applies to HLS only (a single MP4 has one quality). */
   quality: "auto" | "360p" | "480p" | "720p";
+  /** Fill (crop) or whole video; a pinch asks for the other. */
+  fit: boolean; onFit: (fit: boolean) => void;
   muted: boolean; onMuted: (muted: boolean) => void; onBlocked: (blocked: boolean) => void;
   /** `onPlaying` follows every resume; `onStarted` fires once per attempt (prefetch hangs off it). */
   onPlaying: () => void; onStarted: () => void; onEnded: () => void; onEmbed: () => void;
@@ -55,8 +58,10 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
   const [phase, setPhase] = useState<Phase>("prepare");
   const [paused, setPaused] = useState(false);
   const { since, flush } = useWatchTime(itemKey, session);
-  const callbacks = useRef({ onMuted, onBlocked, onPlaying, onStarted, onEnded });
-  callbacks.current = { onMuted, onBlocked, onPlaying, onStarted, onEnded };
+  const callbacks = useRef({ onMuted, onBlocked, onPlaying, onStarted, onEnded, onFit });
+  callbacks.current = { onMuted, onBlocked, onPlaying, onStarted, onEnded, onFit };
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
 
@@ -191,6 +196,35 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
     onPointerUp: endHold, onPointerCancel: endHold, onPointerLeave: endHold, onLostPointerCapture: endHold,
     onContextMenu: (event: React.MouseEvent) => event.preventDefault()
   };
+  // Two fingers: closing shows the whole video, opening fills again. The pinch never scrolls, seeks or pauses.
+  useEffect(() => {
+    const el = video.current;
+    if (!el) return;
+    let from = 0, done = false, multi = false; // `multi` lasts until every finger is up
+    const gap = (touches: TouchList) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    const onStart = (event: TouchEvent) => {
+      if (event.touches.length < 2) return;
+      endHold(); suppressClick.current = true;
+      if (!multi) done = false;
+      multi = true; from = gap(event.touches);
+    };
+    const onMove = (event: TouchEvent) => {
+      if (!multi) return;
+      if (event.cancelable) event.preventDefault(); // the one-finger tail of a pinch doesn't scroll either
+      if (event.touches.length < 2 || !from || done) return;
+      const ratio = gap(event.touches) / from;
+      if (Math.abs(ratio - 1) < PINCH) return;
+      done = true;
+      const next = ratio > 1;
+      if (next !== fitRef.current) callbacks.current.onFit(next);
+    };
+    const onEnd = (event: TouchEvent) => { if (event.touches.length < 2) from = 0; if (!event.touches.length) multi = false; };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
+    return () => { el.removeEventListener("touchstart", onStart); el.removeEventListener("touchmove", onMove); el.removeEventListener("touchend", onEnd); el.removeEventListener("touchcancel", onEnd); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // The caption menu lives in this slide's action rail; captions keep clear of its title block.
   useEffect(() => {
     const slide = video.current?.closest(".shorts-slide");

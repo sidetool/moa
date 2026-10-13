@@ -50,10 +50,10 @@ export function ShortsPage() {
   if (!items.length && !feed.hasNextPage) return <Centered><EmptyState icon={<Clapperboard size={32} />} title="새로 볼 예고편이 없어요"
     body={replay ? undefined : "본 작품은 설정한 기간 동안 빼고 보여줘요."}
     action={<span className="shorts-state-actions">{!replay && <Button onClick={() => setReplay(true)}>본 것도 보기</Button>}<ButtonLink to="/settings#experimental" variant="ghost">설정</ButtonLink></span>} /></Centered>;
-  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} native={native} quality={settings.data?.shortsQuality ?? "auto"} onReplay={() => setReplay(true)} />;
+  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} onFit={value => void save({ shortsScreenFit: value }).catch(() => {})} native={native} quality={settings.data?.shortsQuality ?? "auto"} onReplay={() => setReplay(true)} />;
 }
 
-function ShortsReel({ items, feed, replay, fit, native, quality, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; native: boolean; quality: NonNullable<Settings["shortsQuality"]>; onReplay: () => void }) {
+function ShortsReel({ items, feed, replay, fit, onFit, native, quality, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; onFit: (fit: boolean) => void; native: boolean; quality: NonNullable<Settings["shortsQuality"]>; onReplay: () => void }) {
   const [embedded, setEmbedded] = useState<ReadonlySet<string>>(() => new Set()); // works switched to the YouTube player by hand
   const pool = useRef<NativePool | null>(null);
   pool.current ??= new NativePool();
@@ -76,7 +76,9 @@ function ShortsReel({ items, feed, replay, fit, native, quality, onReplay }: { i
   itemsRef.current = items;
   const exposed = useRef<string | null>(null);
   exposed.current = visible ? shownKey : null;
+  const multiTouch = useRef(false); // a pinch is not a swipe: no intent until every finger is up
   const markIntent = useCallback(() => {
+    if (multiTouch.current) return;
     const key = itemsRef.current[activeRef.current]?.key;
     if (key && exposed.current === key) intent.current = { key, at: performance.now() };
     else if (intent.current?.key !== key) intent.current = null; // a gesture already under way keeps its start
@@ -116,7 +118,13 @@ function ShortsReel({ items, feed, replay, fit, native, quality, onReplay }: { i
       window.clearTimeout(timer);
       timer = window.setTimeout(settleAt, SETTLE_MS);
     };
-    const onInput = () => markIntent();
+    const onInput = (event: Event) => {
+      const touches = (event as TouchEvent).touches?.length ?? 0;
+      if (touches > 1) { multiTouch.current = true; intent.current = null; return; }
+      if (touches === 1) multiTouch.current = false; // a fresh gesture, even if the last end never arrived
+      markIntent();
+    };
+    const onTouchEnd = (event: TouchEvent) => { if (!event.touches.length) multiTouch.current = false; };
     // Hidden: drop intent and the pending settle; on return settle again without intent.
     const onHide = () => { intent.current = null; window.clearTimeout(timer); setVisible(false); };
     const onVisibility = () => {
@@ -128,11 +136,12 @@ function ShortsReel({ items, feed, replay, fit, native, quality, onReplay }: { i
     const onResize = () => { intent.current = null; el.scrollTo({ top: activeRef.current * el.clientHeight }); };
     el.addEventListener("scroll", onScroll, { passive: true });
     for (const name of ["touchstart", "wheel"] as const) el.addEventListener(name, onInput, { passive: true });
+    for (const name of ["touchend", "touchcancel"] as const) el.addEventListener(name, onTouchEnd, { passive: true });
     window.addEventListener("resize", onResize);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", onHide);
     window.addEventListener("pageshow", onVisibility);
-    return () => { window.clearTimeout(timer); el.removeEventListener("scroll", onScroll); el.removeEventListener("touchstart", onInput); el.removeEventListener("wheel", onInput); window.removeEventListener("resize", onResize); document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("pagehide", onHide); window.removeEventListener("pageshow", onVisibility); };
+    return () => { window.clearTimeout(timer); el.removeEventListener("scroll", onScroll); el.removeEventListener("touchstart", onInput); el.removeEventListener("wheel", onInput); el.removeEventListener("touchend", onTouchEnd); el.removeEventListener("touchcancel", onTouchEnd); window.removeEventListener("resize", onResize); document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("pagehide", onHide); window.removeEventListener("pageshow", onVisibility); };
   }, [markIntent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The prepared next work belongs to this feed while it is visible and in direct mode only.
@@ -182,7 +191,7 @@ function ShortsReel({ items, feed, replay, fit, native, quality, onReplay }: { i
       blocked={index === active && blocked} onPlay={() => control.current?.play()} native={native && !embedded.has(item.key)}
       onStep={step} onSound={() => setMuted(old => !old)}>
       {index === active && shownKey === item.key && visible && (native && !embedded.has(item.key)
-        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} ahead={aheadOf(index)} quality={quality} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
+        ? <ShortsNativePlayer itemKey={item.key} title={item.title} session={session} pool={pool.current!} ahead={aheadOf(index)} quality={quality} control={control} muted={muted} fit={fit} onFit={onFit} onMuted={setMuted} onBlocked={setBlocked}
             onPlaying={() => setAutoSkips(0)} onStarted={() => pool.current?.prefetch(aheadOf(index))} onEnded={() => goTo(index + 1, true)} onEmbed={() => setEmbedded(old => new Set(old).add(item.key))} />
         : <ShortsPlayer itemKey={item.key} title={item.title} session={session} control={control} muted={muted} onMuted={setMuted} onBlocked={setBlocked}
         onPlaying={() => setAutoSkips(0)} onEnded={() => goTo(index + 1, true)}
