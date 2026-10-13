@@ -662,10 +662,21 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   };
 
   useEffect(() => {
-    if (!resumeChip || waiting || !playing) return;
-    const timer = setTimeout(() => setResumeChip(false), 7000);
-    return () => clearTimeout(timer);
-  }, [resumeChip, waiting, playing]);
+    const v = video.current;
+    if (!resumeChip || !session || !v) return;
+    // Start once when playback actually begins. Buffering, pausing and seeking
+    // must not cancel or extend a prompt that is already counting down.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const dismissAfterPlaybackStarts = () => {
+      timer ??= setTimeout(() => setResumeChip(false), 7000);
+    };
+    v.addEventListener("playing", dismissAfterPlaybackStarts);
+    if (!v.paused && v.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) dismissAfterPlaybackStarts();
+    return () => {
+      v.removeEventListener("playing", dismissAfterPlaybackStarts);
+      clearTimeout(timer);
+    };
+  }, [resumeChip, session?.sessionId]);
 
   useEffect(() => {
     const onHide = () => saveProgress(true);

@@ -1,4 +1,4 @@
-// Synthetic local video only. Verifies restarting both before and after media is ready.
+// Synthetic local video only. Covers restart, initial loading, and the prompt dismissal lifecycle.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
@@ -10,7 +10,11 @@ assert.ok(bytes.length > 0, 'provide a nonempty synthetic MP4 longer than 45 sec
 const modes = process.env.MOA_TEST_HLS ? ['direct', 'hls'] : ['direct'];
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
 try {
-  for (const mode of modes) for (const early of [true, false]) for (const query of ['', '?t=40', '?t=0']) {
+  const cases = modes.flatMap(mode => [
+    ...[true, false].flatMap(early => ['', '?t=40', '?t=0'].map(query => ({ mode, early, query }))),
+    ...['steady', 'pause', 'buffer'].map(lifecycle => ({ mode, early: true, query: '?t=40', lifecycle }))
+  ]).filter(c => !process.env.MOA_TEST_DISMISS_ONLY || c.lifecycle === process.env.MOA_TEST_DISMISS_ONLY);
+  for (const { mode, early, query, lifecycle } of cases) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
     await context.addInitScript(() => localStorage.setItem('moa.profile', 'test'));
     const calls = [], errors = [];
@@ -41,6 +45,7 @@ try {
       if (url.pathname === '/api/settings') return json({ autoFetchSubtitles: false, autoplayNext: false, defaultSubtitleLang: 'ko', subtitleSize: 'medium', generalSkipEnabled: false });
       if (url.pathname === '/api/me') return json({ role: 'admin' });
       if (url.pathname === '/api/plugin-runtime') return json([]);
+      if (url.pathname === '/api/translation/config') return json({ configured: false });
       if (url.pathname === '/api/media/m') return json({ id: 'm', title: 'Restart fixture', type: 'movie', seasons: [] });
       if (url.pathname.endsWith('/markers')) return json({ status: 'unavailable' });
       return route.fulfill({ status: 204 });
@@ -58,6 +63,29 @@ try {
         continue;
       }
       await page.getByRole('button', { name: '처음부터', exact: true }).waitFor();
+      if (lifecycle) {
+        release();
+        await page.waitForFunction(() => { const v = document.querySelector('video'); return v && !v.paused && v.readyState >= 3 && v.currentTime >= 40; });
+        await page.waitForTimeout(1000);
+        if (lifecycle === 'pause') await page.locator('video').evaluate(v => v.pause());
+        if (lifecycle === 'buffer') {
+          // Exercise the media event sequence that used to cancel/restart the dismissal timer.
+          for (let i = 0; i < 7; i++) {
+            await page.locator('video').evaluate(v => v.dispatchEvent(new Event('waiting')));
+            await page.waitForTimeout(450);
+            await page.locator('video').evaluate(v => v.dispatchEvent(new Event('playing')));
+            await page.waitForTimeout(450);
+          }
+        } else await page.waitForTimeout(6300);
+        assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, `${mode}: ${lifecycle} must not keep resetting the seven-second deadline`);
+        await page.locator('video').evaluate(async v => { await v.play(); v.dispatchEvent(new Event('playing')); });
+        await page.waitForTimeout(300);
+        assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, 'a later playing event must not reopen the prompt');
+        assert.equal(calls.length, 1, 'dismissal must not start another playback session');
+        assert.deepEqual(errors, []);
+        console.log(`PASS: ${mode} prompt hides after initial playback despite ${lifecycle}`);
+        continue;
+      }
       if (early) {
         assert.equal(await page.locator('video').evaluate(v => v.readyState), 0);
         if (query) {
