@@ -88,11 +88,35 @@ try {
   assert.equal((await state(page)).fit, 'cover', 'desktop choice survives reload');
   await context.close();
 
+  // An explicitly disabled legacy preference must not become mobile fill during migration.
+  settings.shortsScreenFit = false;
+  ({ context, page } = await open(true));
+  await playing(page);
+  assert.equal((await state(page)).fit, 'contain', 'legacy off stays off on mobile');
+  await context.close();
+  settings.shortsScreenFit = true;
+
   // Phone, first visit: fill, unaffected by the desktop choice.
   ({ context, page } = await open(true));
   await playing(page);
+  assert.equal((await state(page)).fit, 'cover', 'phone default fills');
+  await page.goto(`${base}settings#experimental`);
+  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.getByRole('switch', { name: '화면 맞춤' }).click();
+  await until(async () => (await devicePatchesOf(page)).at(-1)?.settings.shortsScreenFit === false, 'mobile off saved');
+  await playing(page);
+  assert.equal((await state(page)).fit, 'contain', 'mobile setting off shows whole video');
+  await page.evaluate(() => localStorage.removeItem('moa.deviceSettings:test'));
+  await playing(page);
+  assert.equal((await state(page)).fit, 'contain', 'mobile off survives reload from server');
+  await page.goto(`${base}settings#experimental`);
+  await page.getByRole('button', { name: '세부 설정' }).click();
+  assert.equal(await page.getByRole('switch', { name: '화면 맞춤' }).getAttribute('aria-checked'), 'false');
+  await page.getByRole('switch', { name: '화면 맞춤' }).click();
+  await until(async () => (await devicePatchesOf(page)).at(-1)?.settings.shortsScreenFit === true, 'mobile on saved');
+  await playing(page);
   const before = await state(page);
-  assert.equal(before.fit, 'cover', 'phone default fills');
+  assert.equal(before.fit, 'cover', 'mobile fills only after turning setting on');
   const cdp = await context.newCDPSession(page);
   const touch = (type, touchPoints) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
   const box = await page.locator('.shorts-slide.is-active video').boundingBox(), cx = box.x + box.width / 2, cy = box.y + box.height * .4;
