@@ -1243,7 +1243,11 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       {resumeChip && session && (
         <div className="player-chip" role="status">
           <span>{clock(session.startPosition)}부터 이어서 재생</span>
-          <button onClick={() => { seekTo(0); setResumeChip(false); }}>처음부터</button>
+          <button onClick={() => {
+            // A loading media fragment/HLS engine can reapply its original resume offset after a seek.
+            // Recreate the session with an explicit zero, including the server's playlist start hint.
+            setResumeChip(false); runtimeRecoveries.current = 0; resumePlaying.current = null; retry(0);
+          }}>처음부터</button>
         </div>
       )}
 
