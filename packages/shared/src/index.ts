@@ -226,7 +226,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read' | 'schedule.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -630,3 +630,7 @@ export interface ShortsFeed {
   status: 'ready' | 'disabled' | 'restricted' | 'unconfigured' | 'unavailable';
   items: ShortsItem[]; nextCursor: string | null;
 }
+
+export interface ScheduleQuery {kind:'movie'|'tv';date:string}
+export interface ScheduleItem {id:string;title:string;date:string;time:string|null;detail:string}
+export interface ScheduleResponse {provider:'tmdb'|'tvmaze';date:string;status:'ready'|'restricted'|'unconfigured'|'unavailable';items:ScheduleItem[];truncated:boolean}

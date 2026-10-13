@@ -229,6 +229,25 @@ export class Tmdb {
     return {trailers:trailerCandidates(data?.videos?.results),adult:data?.adult!==false};
   }
 
+  async movieSchedule(date:string):Promise<{items:import('@moa/shared').ScheduleItem[];truncated:boolean}>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!this.enabled)throw new Error('invalid-schedule');
+    const data=await this.get('/discover/movie',{language:'ko-KR',region:'KR','release_date.gte':date,'release_date.lte':date,with_release_type:'2|3',include_adult:'false',sort_by:'popularity.desc',page:'1'});
+    if(!Array.isArray(data?.results))throw new Error('invalid-schedule');
+    const seen=new Set<number>();
+    const candidates=data.results.filter((x:any)=>x&&Number.isSafeInteger(x.id)&&x.id>0&&x.adult===false&&typeof x.title==='string'&&!seen.has(x.id)&&seen.add(x.id)).slice(0,12);
+    const rows=await Promise.allSettled(candidates.map(async(x:any)=>{
+      const releases=await this.get(`/movie/${x.id}/release_dates`);
+      if(!Array.isArray(releases?.results))throw new Error('invalid-release-dates');
+      const kr=releases.results.find((r:any)=>r.iso_3166_1==='KR');
+      const dates=Array.isArray(kr?.release_dates)?kr.release_dates:[];
+      if(!dates.some((r:any)=>[2,3].includes(r.type)&&typeof r.release_date==='string'&&r.release_date.slice(0,10)===date))return null;
+      return {id:String(x.id),title:x.title.slice(0,200),date,time:null,detail:'한국 극장 개봉 · 재개봉 포함'};
+    }));
+    const items:import('@moa/shared').ScheduleItem[]=rows.flatMap(r=>r.status==='fulfilled'&&r.value?[r.value]:[]);
+    if(candidates.length&&rows.every(r=>r.status==='rejected'))throw new Error('release-dates-unavailable');
+    return {items,truncated:data.total_pages>1||data.results.length>12||rows.some(r=>r.status==='rejected')};
+  }
+
   /** Link titles in the background; resolves when done or after the budget, whichever is first. */
   ensure(ids: string[], budgetMs: number): Promise<void> {
     if (!this.enabled || !ids.length) return Promise.resolve();

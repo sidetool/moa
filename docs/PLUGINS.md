@@ -419,3 +419,20 @@ ID, 현재 작품, 지원 공급자, 목록 수와 이미지 URL을 검증해 �
 등록 해제·프로필 변경·취소·20초 제한에 걸린 응답은 버린다. 결과는 최대
 262,144자이며, 캐시나 영구 저장을 하지 않는다. 요청 전후에 활성화·revision·
 권한을 확인하고 현재 상세 작품과 다른 응답을 거부한다.
+
+### 개봉·방영 일정 (개발 중)
+
+새 명시적 권한 `schedule.read`를 승인하면
+`moa.discovery.schedule({kind:'movie'|'tv',date:'YYYY-MM-DD'})`를 사용할 수 있습니다.
+공급자에 종속되지 않는 계약이며 현재 구현은 영화 TMDB, 드라마 TVmaze입니다.
+날짜는 한국 시간의 오늘부터 6일 후까지만 허용합니다.
+응답은 `{provider,date,status,items,truncated}`이며 `status`는
+`ready | restricted | unconfigured | unavailable`입니다. 항목은
+`{id,title,date,time,detail}`이며 `time`은 한국 시간 HH:mm 또는 null입니다.
+`id`는 공급자 범위의 일정 식별자로, MOA 작품 ID나 재생 가능한 영상 ID가 아닙니다.
+
+읽기 전용이며 현재 프로필의 키즈 제한, 플러그인 활성화·권한·revision을
+요청 전후 검사합니다. POST 경로는
+`/api/plugin-runtime/:id/discovery/schedule`, 본문은 `{revision,query}`입니다.
+외부 인증 정보는 전달하지 않습니다. 상세 수록 범위와 라이선스는
+[일정 플러그인 안내](../plugins/release-calendar/README.md)를 참조하세요.

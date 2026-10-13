@@ -16,7 +16,7 @@ const usePlugins = () => {
 const catalogQueries = ['home', 'media', 'media-list', 'search', 'watchlist', 'source-page', 'source-browse', 'tab-source', 'tab-source-latest', 'grouped-cards'];
 const path = (id: string) => `/plugins/${encodeURIComponent(id)}`;
 const runtimePath = (id: string) => `/plugin-runtime/${encodeURIComponent(id)}`;
-const permissionLabels = { 'watchlist.read': '현재 프로필의 내 목록 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
+const permissionLabels = { 'schedule.read':'한국 개봉·방영 일정 읽기', 'watchlist.read': '현재 프로필의 내 목록 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
 type Player = { episodeId: string; title: string; getTime: () => number; onImport: (files: File[]) => Promise<boolean>; control: (action: string, seconds?: number) => Promise<void> };
 const act = (pluginId: string, actionId?: string) => window.dispatchEvent(new CustomEvent('moa:plugin-action', { detail: { pluginId, actionId } }));
 const sdk = `
@@ -71,7 +71,7 @@ const sdk = `
     watchlist: Object.freeze({ list: query => call('watchlist.read', query || {}) }),
     history: Object.freeze({ list: query => call('history.read', query || {}) }),
     metadata: Object.freeze({ credits: () => call('metadata.credits'), person: identity => call('metadata.person', identity) }),
-    discovery: Object.freeze({ trending: query => call('discovery.trending', query) }),
+    discovery: Object.freeze({ trending: query => call('discovery.trending', query), schedule: query => call('discovery.schedule',query) }),
     storage: Object.freeze({ get: () => call('storage'), set: value => call('storage', value) }),
     notify: text => call('notifications', text),
     fetch: async url => {
@@ -196,6 +196,8 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
           if (page.current.pathname !== pathname) throw new Error('작품이 변경되었어요. 다시 열어 주세요.');
         } else if (data.method === 'discovery.trending' && installed.permissions.includes('discovery.read')) {
           result = await api(`${runtimePath(plugin.id)}/discovery/trending`, { method: 'POST', body: { revision: plugin.revision, query: data.value } });
+        } else if (data.method === 'discovery.schedule' && installed.permissions.includes('schedule.read')) {
+          result = await api(`${runtimePath(plugin.id)}/discovery/schedule`, { method: 'POST', body: { revision: plugin.revision, query: data.value } });
         } else if (data.method === 'app.context' && installed.permissions.includes('app.context')) {
           result = appContext();
         } else if (data.method === 'app.navigate' && installed.permissions.includes('app.navigate')) {

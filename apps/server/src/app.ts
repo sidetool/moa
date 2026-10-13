@@ -1,3 +1,4 @@
+import {PluginSchedule,type ScheduleOptions} from './plugin-schedule.js';
 import { Downloads } from './downloads.js';
 import { GeneralMarkers } from './general-markers.js';
 import { Recommendations } from './recommendations.js';
@@ -75,7 +76,7 @@ export async function sendFile(reply: FastifyReply, file: string, mime: string, 
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
   return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
 }
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { schedule?:ScheduleOptions; downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -262,7 +263,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.post('/api/shorts/:key/seen', {schema:{params:shortsKey}}, async req => { shorts.seen(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb));
+  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb), new PluginSchedule(db,tmdb,services.schedule));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));

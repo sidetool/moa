@@ -1,3 +1,4 @@
+import type {PluginSchedule} from './plugin-schedule.js';
 import { WatchlistReader } from './watchlist-reader.js';
 import { HistoryReader } from './history-reader.js';
 import type { PluginPeople } from './plugin-people.js';
@@ -38,7 +39,7 @@ export function pluginPackage(value: unknown): WebsitePluginPackage {
     !Number.isSafeInteger(p.apiVersion) || p.apiVersion < 1 || p.apiVersion > 1000 || p.minMoaVersion !== undefined && (typeof p.minMoaVersion !== 'string' || p.minMoaVersion.length > 80 || !semver.test(p.minMoaVersion)) || typeof p.id !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(p.id) || typeof p.name !== 'string' || !p.name.trim() || p.name.length > 80 ||
     typeof p.version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(p.version) || p.version.length > 40 ||
     typeof p.description !== 'string' || p.description.length > 500 || !list(p.placements, ['app', 'settings', 'player', 'home', 'detail']) || !p.placements.length ||
-    !list(p.permissions, ['app.context', 'app.navigate', 'ui', 'player.context', 'player.control', 'subtitles.import', 'storage', 'notifications', 'catalog.modify', 'discovery.read', 'metadata.read', 'history.read', 'watchlist.read']) || !Array.isArray(p.connect) || p.connect.length > 10 || new Set(p.connect).size !== p.connect.length ||
+    !list(p.permissions, ['app.context', 'app.navigate', 'ui', 'player.context', 'player.control', 'subtitles.import', 'storage', 'notifications', 'catalog.modify', 'discovery.read', 'metadata.read', 'history.read', 'schedule.read', 'watchlist.read']) || !Array.isArray(p.connect) || p.connect.length > 10 || new Set(p.connect).size !== p.connect.length ||
     p.hooks !== undefined && (!list(p.hooks, ['catalog.transform', 'title.people']) || p.hooks.includes('catalog.transform') && !p.permissions.includes('catalog.modify') || p.hooks.includes('title.people') && !p.permissions.includes('metadata.read') || !p.script || p.apiVersion < 2) || p.placements.includes('detail') && p.apiVersion < 2 ||
     (p.html !== undefined && typeof p.html !== 'string') || (p.script !== undefined && typeof p.script !== 'string') || (typeof p.html === 'string') === (typeof p.script === 'string') || typeof (p.html ?? p.script) !== 'string' || !(p.html ?? p.script)!.trim() || Buffer.byteLength((p.html ?? p.script)!) > 200 * 1024 ||
     p.actions !== undefined && (!p.script || !Array.isArray(p.actions) || p.actions.length > 8 || new Set(p.actions.map(action => action?.id)).size !== p.actions.length || p.actions.some(action => !action || Object.keys(action).some(key => !['id', 'label'].includes(key)) || typeof action.id !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(action.id) || typeof action.label !== 'string' || !action.label.trim() || action.label.length > 60))) throw new ApiFailure(400, 'invalid-plugin');
@@ -153,7 +154,7 @@ export async function fetchPluginPackage(raw: unknown, signal: AbortSignal, requ
   }
 }
 
-export function registerWebsitePlugins(app: FastifyInstance, db: Store, discovery?: PluginDiscovery, people?: PluginPeople) {
+export function registerWebsitePlugins(app: FastifyInstance, db: Store, discovery?: PluginDiscovery, people?: PluginPeople, schedule?:PluginSchedule) {
   db.db.exec('CREATE TABLE IF NOT EXISTS website_plugins(id TEXT PRIMARY KEY,package TEXT NOT NULL,enabled INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS website_plugin_data(plugin_id TEXT REFERENCES website_plugins(id) ON DELETE CASCADE,profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,value TEXT NOT NULL,PRIMARY KEY(plugin_id,profile_id))');
   const metadata = (row: Record<string, any>): WebsitePlugin => {
     const { html, script, ...p } = JSON.parse(row.package) as WebsitePluginPackage;
@@ -169,7 +170,7 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
   const history = new HistoryReader(db);
   const watchlist = new WatchlistReader(db);
   const pending = new Set<string>(), abort = new AbortController();
-  app.addHook('onClose', async () => abort.abort());
+  app.addHook('onClose', async () => {abort.abort();schedule?.close();});
   app.get('/api/plugins', async () => db.all('SELECT * FROM website_plugins ORDER BY id').map(metadata));
   app.get('/api/plugin-runtime', async (): Promise<WebsitePluginRuntime[]> => db.all('SELECT * FROM website_plugins WHERE enabled=1 ORDER BY id').map(metadata).filter(p => p.compatibility!.supported).map(({ id, name, revision, kind, placements, permissions, actions, hooks, enabled }) => ({ id, name, revision, kind, placements, permissions, actions, hooks, enabled })));
   app.get('/api/plugins/:id', async req => { const row = get((req.params as { id: string }).id); return { ...JSON.parse(row.package), revision: hash(row.package) }; });
@@ -264,6 +265,27 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
       check();
       if (!discovery) throw new ApiFailure(503, 'plugin-discovery-unavailable');
       const result = await discovery.trending(req.moaProfile!, body.query);
+      check(); // Permission revocation or a package update during the provider request wins.
+      return reply.header('Cache-Control', 'private, no-store').send(result);
+    });
+    app.post(`${base}/:id/discovery/schedule`, { bodyLimit: 4096, schema: { body: {
+      type: 'object', additionalProperties: false, required: ['revision', 'query'], properties: {
+        revision: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+        query: { type: 'object', additionalProperties: false, required: ['kind', 'date'], properties: {
+          kind: { type: 'string', enum: ['movie', 'tv'] }, date: {type:'string',pattern:'^\\d{4}-\\d{2}-\\d{2}$'}
+        } }
+      }
+    } } }, async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const body = req.body as { revision: string; query: import('@moa/shared').ScheduleQuery };
+      const check = () => {
+        const row = get(id), p = JSON.parse(row.package) as WebsitePluginPackage;
+        if (body.revision !== hash(row.package)) throw new ApiFailure(409, 'plugin-updated');
+        if (!p.permissions.includes('schedule.read')) throw new ApiFailure(403, 'plugin-permission-denied');
+      };
+      check();
+      if (!schedule) throw new ApiFailure(503, 'plugin-discovery-unavailable');
+      const result = await schedule.list(req.moaProfile!, body.query);
       check(); // Permission revocation or a package update during the provider request wins.
       return reply.header('Cache-Control', 'private, no-store').send(result);
     });
