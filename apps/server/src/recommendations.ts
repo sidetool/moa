@@ -4,6 +4,7 @@ import { KidsPolicy } from './kids.js';
 import { ApiFailure } from './util.js';
 import { WatchlistReader } from './watchlist-reader.js';
 import { HistoryReader } from './history-reader.js';
+import { AniListRecommendations } from './anilist-recommendations.js';
 import type { Tmdb } from './tmdb.js';
 
 const keyOf = (kind: string, id: number) => `${kind}:${id}`;
@@ -14,7 +15,10 @@ export class Recommendations {
   private kids: KidsPolicy;
   private history: HistoryReader;
   private watchlist: WatchlistReader;
-  constructor(private db: Store, private tmdb: Pick<Tmdb, 'enabled' | 'ensureDetail'>, private clock = Date.now) {
+  private anime?:Pick<AniListRecommendations,'lookup'|'busy'|'close'>;
+  close(){this.anime?.close();}
+  constructor(private db: Store, private tmdb: Pick<Tmdb, 'enabled' | 'ensureDetail'> & Partial<Pick<Tmdb,'search'>>, private clock = Date.now, anime?:Pick<AniListRecommendations,'lookup'|'busy'|'close'>) {
+    this.anime=anime??(tmdb.search?new AniListRecommendations(q=>tmdb.search!(q)):undefined);
     this.kids = new KidsPolicy(db); this.history=new HistoryReader(db); this.watchlist=new WatchlistReader(db);
     db.db.exec(`CREATE TABLE IF NOT EXISTS recommendation_feedback(profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,external_key TEXT NOT NULL,created_at INTEGER NOT NULL,PRIMARY KEY(profile_id,external_key));`);
   }
@@ -91,11 +95,32 @@ export class Recommendations {
       if(genre&&(genres.get(genre)||0)>=4){deferred.push(entry);continue;}
       if(genre)genres.set(genre,(genres.get(genre)||0)+1);diversified.push(entry);
     }
-    const items:RecommendationItem[]=[...diversified,...deferred].slice(0,40).map(([key,r])=>{
+    // Supplemental provider has its own ordering; never add AniList community votes to TMDB scores.
+    // Keep TMDB identity everywhere (including Shorts) and only fill up to 12 animation suggestions.
+    const chosen=[...diversified,...deferred].slice(0,40);
+    const animationCount=chosen.filter(([,r])=>r.item.genreIds?.includes(16)).length;
+    if(this.anime&&this.db.settings(profile).anilistRecommendationsEnabled===true&&!this.kids.active(profile)&&animationCount<12&&chosen.length<40){
+      const present=new Set([...excluded,...chosen.map(([key])=>key)]);
+      let added=0,seeds=0;
+      for(const seed of selected){
+        const row=this.db.get('SELECT card FROM tmdb_titles WHERE kind=? AND tmdb_id=?',seed.kind,seed.tmdb_id);
+        const card=row?JSON.parse(row.card):undefined;
+        const link=this.db.get('SELECT season FROM tmdb_links WHERE media_id=?',seed.id);
+        if(!card?.genreIds?.includes(16)||!Number.isSafeInteger(card.year)||!card.originalTitle||link?.season>1)continue;
+        if(++seeds>3)break;
+        for(const item of this.anime.lookup({kind:seed.kind as 'movie'|'tv',id:seed.tmdb_id,title:card.title,originalTitle:card.originalTitle,year:card.year})){
+          const key=keyOf(item.kind,item.id);if(!valid(item)||present.has(key))continue;
+          present.add(key);chosen.push([key,{item,score:0,reason:`${seed.title} 기반 애니 추천 · AniList`}]);
+          if(++added>=12-animationCount||chosen.length>=40)break;
+        }
+        if(added>=12-animationCount||chosen.length>=40)break;
+      }
+    }
+    const items:RecommendationItem[]=chosen.map(([key,r])=>{
       const matches=this.db.all("SELECT m.id FROM media m JOIN tmdb_links l ON l.media_id=m.id AND l.status IN ('auto','manual') WHERE l.kind=? AND l.tmdb_id=? ORDER BY m.added_at DESC",r.item.kind,r.item.id);
       const match=this.kids.filter(matches,profile)[0];
       return {...r.item,key,reason:r.reason,href:match?`/title/${encodeURIComponent(match.id)}`:`/search?q=${encodeURIComponent(r.item.title)}`};
     });
-    return {items,status:'ready',...(this.warming.size?{refreshAfterMs:3000}:{})};
+    return {items,status:'ready',...(this.warming.size||this.anime?.busy?{refreshAfterMs:3000}:{})};
   }
 }

@@ -5,7 +5,7 @@ import type { ShortsNativeSession } from "../api/shorts";
 import { ApiError } from "../lib/api";
 import { NativePool } from "../lib/shorts-native-pool";
 import { ShortsCaptions } from "./ShortsCaptions";
-import { useWatchTime, type ShortsControl, type ShortsSession } from "./ShortsPlayer";
+import { reportShortFailure, useWatchTime, type ShortsControl, type ShortsSession } from "./ShortsPlayer";
 import { Spinner } from "./ui";
 
 const PREPARE_TIMEOUT = 85_000; // the server may try two references for up to 40s each
@@ -110,7 +110,7 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
     };
     const fail = (next: "unavailable" | "error") => {
       if (stopped) return;
-      used = true; stop(); session.failed.add(itemKey); setPhase(next);
+      used = true; stop(); reportShortFailure(itemKey, session, next === "unavailable" ? "unavailable" : "temporary"); setPhase(next);
     };
     function onError() { fail("error"); }
     setPhase("prepare");

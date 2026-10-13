@@ -283,7 +283,8 @@ export function SettingsPage() {
       </div></section>}
       {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /></>}<AboutPage embedded /></>}
       {category === "tabs" && <NavigationSettings />}
-      {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} onChange={value => void save({ recommendationsEnabled: value }).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
+      {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} anilist={s.anilistRecommendationsEnabled === true}
+        onChange={patch => void save(patch).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
       {admin && category === "sources" && <SourcesPage embedded />}
       {admin && category === "accounts" && <AccountsPage embedded />}
       {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}
@@ -299,12 +300,13 @@ export function SettingsPage() {
   );
 }
 
-function RecommendationSettings({ enabled, onChange }: { enabled: boolean; onChange: (value: boolean) => void }) {
+function RecommendationSettings({ enabled, anilist, onChange }: { enabled: boolean; anilist: boolean; onChange: (patch: Pick<Settings, "recommendationsEnabled" | "anilistRecommendationsEnabled">) => void }) {
   const reset = useResetDismissals();
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
   const run = async () => { setState("busy"); try { await reset(); setState("done"); } catch { setState("error"); } };
   return <section className="settings-group"><h2>추천</h2><div className="settings-card">
-    <div className="setting"><div><b>취향 기반 추천</b><small>홈에 시청 기록과 내 목록을 바탕으로 작품을 추천해요.</small></div><Toggle label="취향 기반 추천" checked={enabled} onChange={onChange} /></div>
+    <div className="setting"><div><b>취향 기반 추천</b><small>홈에 시청 기록과 내 목록을 바탕으로 작품을 추천해요.</small></div><Toggle label="취향 기반 추천" checked={enabled} onChange={value => onChange({ recommendationsEnabled: value })} /></div>
+    <div className="setting"><div><b>AniList 애니 추천 보강</b><small>애니 추천이 부족할 때만 AniList로 채워요. TMDB 추천은 그대로예요.</small></div><Toggle label="AniList 애니 추천 보강" checked={anilist} disabled={!enabled} onChange={value => onChange({ anilistRecommendationsEnabled: value })} /></div>
     <div className="setting"><div><b>숨긴 추천 초기화</b><small>{state === "done" ? "숨긴 작품이 다시 추천될 수 있어요." : state === "error" ? <span className="settings-error">초기화하지 못했어요. 다시 시도해 주세요.</span> : "‘관심 없음’으로 숨긴 작품을 다시 추천 후보에 넣어요."}</small></div><Button disabled={state === "busy" || state === "done"} onClick={() => void run()}>{state === "busy" ? "초기화 중…" : state === "done" ? "초기화됨" : "초기화"}</Button></div>
   </div></section>;
 }

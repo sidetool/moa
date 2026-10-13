@@ -13,6 +13,7 @@ import { ApiFailure, hash, safePath, contained } from './util.js';
 import { DOWNLOAD_QUALITIES, preferredQuality, qualityHeight } from './download-quality.js';
 import { transferVideo } from './download-transfer.js';
 
+const MAX_QUEUED_DOWNLOADS=500;
 const activeStates=['queued','resolving','downloading','finalizing'];
 const terminal=['failed','cancelled','interrupted'];
 const fingerprint=(v:SourceVideo)=>hash(JSON.stringify([v.quality||'',(()=>{try{return new URL(v.originalUrl||v.url).origin;}catch{return '';}})(),(v.audios||[]).map(a=>a.label)]));
@@ -20,6 +21,9 @@ export class Downloads {
   private choicesCache=new Map<string,{episode:string;profile:string;until:number;choices:Map<string,{fingerprint:string;quality:string}>}>();
   private running?:{id:string;abort:AbortController;promise:Promise<void>};
   private untrackedBytes=0;
+  private timer?:NodeJS.Timeout;
+  private mayRun=()=>true;
+  start(mayRun=()=>true){this.mayRun=mayRun;if(!this.timer){this.timer=setInterval(()=>this.pump(),1000);this.timer.unref();}this.pump();}
   private configuring: Promise<void> = Promise.resolve();
   private closed=false; private paused=false; private setup=false;
   private kids:KidsPolicy;
@@ -51,7 +55,7 @@ export class Downloads {
   }
   async initialize(){
     this.untrackedBytes=0;
-    this.db.run("UPDATE download_jobs SET state='interrupted',error='download-interrupted',updated_at=? WHERE state IN ('queued','resolving','downloading','finalizing')",new Date().toISOString());
+    this.db.run("UPDATE download_jobs SET state='interrupted',error='download-interrupted',updated_at=? WHERE state IN ('resolving','downloading','finalizing')",new Date().toISOString());
     try{
       const root=await this.storage();
       for(const entry of await readdir(root,{withFileTypes:true})){
@@ -66,6 +70,7 @@ export class Downloads {
       for(const a of this.db.all('SELECT episode_id FROM download_assets'))await this.asset(a.episode_id);
     }catch{/* Optional mount absent: retain metadata for the next mount/restart. */}
     this.setup=true;
+    // Queued work stays durable. The host starts it only after checking maintenance leases.
   }
   configure(bytes:number){if(!Number.isSafeInteger(bytes)||bytes<1||bytes>1000*1024**4)throw new ApiFailure(400,'download-quota-invalid');if(this.busy||bytes<this.used())throw new ApiFailure(409,'download-quota-in-use');this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('downloadQuota',?)",String(bytes));}
   enabled(){return this.db.get("SELECT value FROM admin_settings WHERE key='downloadEnabled'")?.value==='true';}
@@ -86,6 +91,7 @@ export class Downloads {
         if(patch.enabled===false)this.db.run("UPDATE download_jobs SET state='interrupted',error='download-disabled',updated_at=? WHERE state='queued'",new Date().toISOString());
       });
       if(patch.enabled===false){this.choicesCache.clear();if(this.running){this.running.abort.abort();await this.running.promise;}}
+      this.pump();
     });
     this.configuring=operation.catch(()=>{});return operation;
   }
@@ -160,18 +166,48 @@ export class Downloads {
     const preference=this.quality();
     return this.enqueue(episode,profile,preference==='best'?'최고 화질':preference,`auto:${preference}`);
   }
+  private batchScope(mediaId:string,profile:string,season?:number){
+    if(typeof mediaId!=='string'||!mediaId||mediaId.length>512||season!==undefined&&(!Number.isSafeInteger(season)||season<0||season>10000))throw new ApiFailure(400,'download-query-invalid');
+    const rows=this.db.all(`SELECT id FROM episodes WHERE media_id=? ${season===undefined?'':'AND season=?'} ORDER BY season,number,id`,mediaId,...(season===undefined?[]:[season]));
+    if(!rows.length)throw new ApiFailure(404,'episode-not-found');
+    this.assertRequest(rows[0].id,profile);
+    const live=new Set(this.db.all("SELECT episode_id FROM download_jobs WHERE media_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",mediaId).map(r=>r.episode_id));
+    return {total:rows.length,eligible:rows.filter(r=>!live.has(r.id)),skipped:rows.filter(r=>live.has(r.id)).length};
+  }
+  previewBatch(mediaId:string,profile:string,season?:number){
+    const scope=this.batchScope(mediaId,profile,season);
+    return {total:scope.total,eligible:scope.eligible.length,skipped:scope.skipped};
+  }
+  async createBatch(mediaId:string,profile:string,season?:number){
+    this.batchScope(mediaId,profile,season);await this.storage();
+    // Re-read after async work and insert atomically. Simultaneous clicks cannot create duplicate jobs.
+    let result!:{total:number;added:number;skipped:number};
+    this.db.transaction(()=>{
+      const scope=this.batchScope(mediaId,profile,season);
+      const queued=this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n as number;
+      if(queued+scope.eligible.length>MAX_QUEUED_DOWNLOADS)throw new ApiFailure(429,'download-queue-full');
+      const preference=this.quality(),now=new Date().toISOString();
+      for(const row of scope.eligible){
+        const mapping=this.assertRequest(row.id,profile);
+        this.db.run('INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+          randomUUID(),row.id,mediaId,mapping.source_id,profile,'queued',preference==='best'?'최고 화질':preference,`auto:${preference}`,now,now);
+      }
+      result={total:scope.total,added:scope.eligible.length,skipped:scope.skipped};
+    });
+    this.pump();return result;
+  }
   private enqueue(episode:string,profile:string,quality:string,selection:string){
     const mapping=this.assertRequest(episode,profile);
     if(this.db.get("SELECT 1 FROM download_jobs WHERE episode_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",episode))throw new ApiFailure(409,'download-already-exists');
-    if(this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n>=8)throw new ApiFailure(429,'download-queue-full');
+    if(this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n>=MAX_QUEUED_DOWNLOADS)throw new ApiFailure(429,'download-queue-full');
     const id=randomUUID(),now=new Date().toISOString();
     this.db.run('INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',id,episode,mapping.media_id,mapping.source_id,profile,'queued',quality,selection,now,now);
     this.pump();return this.job(id);
   }
   private change(id:string,state:string,error:string|null=null){this.db.run('UPDATE download_jobs SET state=?,error=?,updated_at=? WHERE id=?',state,error,new Date().toISOString(),id);}
   private pump(){
-    if(this.running||this.closed||this.paused||!this.enabled()||this.cfg.downloadsEnabled===false)return;
-    const row=this.db.get("SELECT * FROM download_jobs WHERE state='queued' ORDER BY created_at LIMIT 1");if(!row)return;
+    if(this.running||this.closed||this.paused||!this.setup||!this.mayRun()||!this.enabled()||this.cfg.downloadsEnabled===false)return;
+    const row=this.db.get("SELECT * FROM download_jobs WHERE state='queued' ORDER BY created_at,rowid LIMIT 1");if(!row)return;
     const abort=new AbortController();const state={id:row.id,abort,promise:Promise.resolve()};this.running=state;
     state.promise=this.run(row,abort.signal).finally(()=>{if(this.running===state)this.running=undefined;this.pump();});
   }
@@ -217,11 +253,13 @@ export class Downloads {
     }catch(e){
       const code=leaseError?'download-auth-expired':signal.aborted?(!this.enabled()?'download-disabled':this.closed||this.paused?'download-interrupted':'download-cancelled'):e instanceof ApiFailure?e.error:'download-failed';
       this.change(row.id,['download-interrupted','download-disabled'].includes(code)?'interrupted':code==='download-cancelled'?'cancelled':'failed',code);
+      // Stop the remaining queue on server-wide storage failure instead of extracting hundreds of doomed jobs.
+      if(['download-quota-exceeded','download-space-low','download-storage-unavailable','download-storage-unconfigured','download-storage-overlap'].includes(code))this.db.run("UPDATE download_jobs SET state='interrupted',error=?,updated_at=? WHERE state='queued'",code,new Date().toISOString());
       if(dir)await rm(dir,{recursive:true,force:true}).catch(()=>{});
     }finally{clearInterval(timer);await this.sources.apk.release(lease);}
   }
   async cancel(id:string){const j=this.job(id);if(!activeStates.includes(j.state))throw new ApiFailure(409,'download-not-active');if(this.running?.id===id){this.running.abort.abort();await this.running.promise;}else this.change(id,'cancelled');return this.job(id);}
-  retry(id:string,profile:string){const row=this.db.get('SELECT * FROM download_jobs WHERE id=?',id);if(!row)throw new ApiFailure(404,'download-not-found');if(!terminal.includes(row.state))throw new ApiFailure(409,'download-not-retryable');this.assertRequest(row.episode_id,profile);if(this.db.get("SELECT 1 FROM download_jobs WHERE episode_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",row.episode_id))throw new ApiFailure(409,'download-already-exists');if(this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n>=8)throw new ApiFailure(429,'download-queue-full');this.db.run('UPDATE download_jobs SET profile_id=?,bytes=0,total_bytes=NULL WHERE id=?',profile,id);this.change(id,'queued');this.pump();return this.job(id);}
+  retry(id:string,profile:string){const row=this.db.get('SELECT * FROM download_jobs WHERE id=?',id);if(!row)throw new ApiFailure(404,'download-not-found');if(!terminal.includes(row.state))throw new ApiFailure(409,'download-not-retryable');this.assertRequest(row.episode_id,profile);if(this.db.get("SELECT 1 FROM download_jobs WHERE episode_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",row.episode_id))throw new ApiFailure(409,'download-already-exists');if(this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n>=MAX_QUEUED_DOWNLOADS)throw new ApiFailure(429,'download-queue-full');this.db.run('UPDATE download_jobs SET profile_id=?,bytes=0,total_bytes=NULL WHERE id=?',profile,id);this.change(id,'queued');this.pump();return this.job(id);}
   async withSaved<T>(episode:string,work:(asset:Awaited<ReturnType<Downloads['asset']>>)=>Promise<T>):Promise<T>{
     if(this.deleting.has(episode))throw new ApiFailure(409,'download-in-use');
     this.opening.set(episode,(this.opening.get(episode)||0)+1);
@@ -245,5 +283,5 @@ export class Downloads {
   }
   async suspend(){this.paused=true;if(this.running){this.running.abort.abort();await this.running.promise;}}
   resume(){if(!this.closed){this.paused=false;this.pump();}}
-  async close(){this.closed=true;await this.suspend();this.choicesCache.clear();}
+  async close(){clearInterval(this.timer);this.closed=true;await this.suspend();this.choicesCache.clear();}
 }

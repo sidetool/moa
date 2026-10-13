@@ -60,7 +60,7 @@ const POOL = [
 const TRAILERS = { 'movie:1': ['e101aaaaaaa', 'okaaaaaaaaa'], 'tv:2': [], 'movie:3': ['blkcccccccc'], 'tv:4': ['e153ddddddd'], 'tv:5': ['okeeeeeeeee'], 'movie:6': ['okfffffffff'] };
 
 let settings, kids, log;
-const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [] }; };
+const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], failures: [], patches: [] }; };
 const route = async context => {
   await context.route(url => !['127.0.0.1', 'localhost'].includes(url.hostname), r => {
     const url = new URL(r.request().url());
@@ -79,12 +79,18 @@ const route = async context => {
       log.feed.push(url.search);
       if (!settings.shortsEnabled) return r.fulfill({ json: { status: 'disabled', items: [], nextCursor: null } });
       const picked = settings.shortsCategories ?? ['movie', 'series', 'anime'], pool = POOL.filter(i => picked.includes(i.category));
-      const start = Number(url.searchParams.get('cursor') ?? 0), end = start + 4;
+      let end = Number(url.searchParams.get('cursor') ?? 0);
+      const selected = [];
       const hide = url.searchParams.get('replay') !== '1';
-      return r.fulfill({ json: { status: 'ready', items: pool.slice(start, end).filter(i => !hide || !(log.seen.includes(i.key) || log.skips.includes(i.key))), nextCursor: end < pool.length ? String(end) : null } });
+      // Match production: scan excluded rows until a full page or the pool's end.
+      for (; end < pool.length && selected.length < 4; end++) {
+        const i = pool[end];
+        if (!log.failures.some(f => f.key === i.key) && (!hide || !(log.seen.includes(i.key) || log.skips.includes(i.key)))) selected.push(i);
+      }
+      return r.fulfill({ json: { status: 'ready', items: selected, nextCursor: end < pool.length ? String(end) : null } });
     }
-    const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
-    if (m) { const key = decodeURIComponent(m[1]); if (m[2] !== 'trailers') { assert.equal(method, 'POST'); (m[2] === 'seen' ? log.seen : log.skips).push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
+    const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip|failed)$/.exec(path);
+    if (m) { const key = decodeURIComponent(m[1]); if (m[2] === 'failed') { assert.equal(method, 'POST'); log.failures.push({key, ...r.request().postDataJSON()}); return r.fulfill({json:{ok:true}}); } if (m[2] !== 'trailers') { assert.equal(method, 'POST'); (m[2] === 'seen' ? log.seen : log.skips).push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
     return r.fulfill({ json: [] });
   });
 };
@@ -138,6 +144,7 @@ try {
   await page.goto(`${base}settings#experimental`);
   await page.getByRole('switch', { name: '쇼츠' }).click();
   await until(() => settings.shortsEnabled === true, 'enable');
+  await page.getByRole('button', { name: '세부 설정' }).click();
   const group = page.getByRole('group', { name: '종류' });
   await group.getByRole('button', { name: '애니' }).click();
   await group.getByRole('button', { name: '시리즈' }).click();
@@ -263,18 +270,19 @@ try {
   await page.locator('.tabbar').getByRole('link', { name: '홈' }).click();
   await until(async () => (await yt(page)).live === 0, 'leave cleanup');
 
+  assert.deepEqual(log.failures, [{key:'tv:2',reason:'unavailable'},{key:'tv:4',reason:'temporary'}], 'only exhausted candidates and environment failures, not autoplay/fallback');
+
   // Fit OFF keeps 16:9; a revisit leaves out seen and skipped works; replay brings them back.
   await page.goto(`${base}settings#experimental`);
+  await page.getByRole('button', { name: '세부 설정' }).click();
   await page.getByRole('switch', { name: '화면 맞춤' }).click();
   await until(() => settings.shortsScreenFit === false, 'fit off');
   await page.goto(`${base}shorts`);
   await page.locator('.shorts-slide.is-active').waitFor();
-  assert.deepEqual(await page.locator('article.shorts-slide h2').allTextContents(), ['예고편 없음', '환경 오류', '둘째 페이지'], 'revisit excludes seen + skipped');
+  assert.deepEqual(await page.locator('article.shorts-slide h2').allTextContents(), ['둘째 페이지'], 'revisit excludes seen + skipped + failures');
   assert.equal(await page.locator('.shorts.is-fit').count(), 0);
   const plain = await page.locator('.shorts-slide.is-active .shorts-stage').boundingBox();
   assert.ok(Math.abs(plain.width / plain.height - 16 / 9) < .05, `16:9 when off ${plain.width}x${plain.height}`);
-  await until(async () => (await activeTitle(page)) === '환경 오류', 'fit off auto next', 5000);
-  await page.keyboard.press('ArrowDown');
   await until(async () => (await activeTitle(page)) === '둘째 페이지', 'fit off playable');
   await until(async () => (await yt(page)).live === 1, 'fit off player');
   await wait(300);
@@ -286,6 +294,7 @@ try {
   await until(() => log.feed.at(-1) === '?replay=1', 'replay request');
   await until(async () => (await activeTitle(page)) === '첫 작품', 'replay restarts');
   assert.equal(log.skips.length, skipsBefore, 'programmatic scroll is not a skip');
+  assert.ok(!(await page.locator('article.shorts-slide h2').allTextContents()).some(t => ['예고편 없음','환경 오류'].includes(t)), 'replay still excludes failures');
   await page.screenshot({ path: verificationPath('fit-replay.png') });
   await context.close();
 
@@ -294,12 +303,12 @@ try {
   ({ context, page } = await open(390, 844));
   await page.goto(`${base}shorts`);
   await page.locator('.shorts-slide.is-active').waitFor();
-  assert.deepEqual(await page.locator('article.shorts-slide h2').allTextContents(), ['환경 오류', '둘째 페이지']);
+  assert.deepEqual(await page.locator('article.shorts-slide h2').allTextContents(), ['둘째 페이지']);
   await context.close();
 
   // Desktop: topnav link, side arrows, keyboard.
   ({ context, page } = await open(1280, 800));
-  settings.shortsCategories = undefined; settings.shortsScreenFit = undefined; log.seen = []; log.skips = [];
+  settings.shortsCategories = undefined; settings.shortsScreenFit = undefined; log.seen = []; log.skips = []; log.failures = [];
   await page.goto(`${base}shorts`);
   await page.locator('.topnav').getByRole('link', { name: '쇼츠' }).waitFor();
   await page.locator('.shorts-slide.is-active').waitFor();
