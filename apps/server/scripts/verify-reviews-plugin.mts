@@ -13,7 +13,7 @@ const {createServer}=await import(require.resolve('vite'));
 const {chromium}=require(process.env.MOA_PLAYWRIGHT_PATH||'playwright');
 const out=process.env.MOA_VERIFY_DIR||path.join(tmpdir(),'moa-reviews-verify');await mkdir(out,{recursive:true});
 const dir=await mkdtemp(path.join(tmpdir(),'moa-reviews-app-'));
-process.env.MOA_VERSION='0.1.2-beta.2';process.env.VITE_MOCK='0';
+process.env.MOA_VERSION='0.1.2-beta.3';process.env.VITE_MOCK='0';
 const upstream:string[]=[];
 const env=await buildApp({dataDir:dir,mediaRoot:dir,webDir:path.join(dir,'web'),requireAccount:false},false,{
 reviews:{fetch:async(input,init)=>{
@@ -21,6 +21,7 @@ reviews:{fetch:async(input,init)=>{
  return Response.json({data:body.variables.search?{Page:{media:[{id:1,isAdult:false,title:{native:'검증용 시리즈',english:'Example Season One'},startDate:{year:2023},format:'TV'},{id:2,isAdult:false,title:{native:'검증용 시리즈 2기',english:'Example Season Two'},startDate:{year:2025},format:'TV'}]}}:{Media:{id:1,isAdult:false,reviews:{nodes:[{mediaId:1,summary:'A story worth revisiting',body:'Synthetic anime review, not a real user review.',siteUrl:'https://anilist.co/review/123',user:{name:'Example viewer'}}]}}}});}},
 tmdb:{token:'synthetic-provider-token',fetch:async input=>{
  const u=new URL(String(input));upstream.push(u.pathname);
+ if(u.pathname==='/3/tv/1/videos')return Response.json({results:[]}); // Title page trailer lookup is independent of reviews.
  if(u.pathname==='/3/tv/1/reviews')return Response.json({results:[{author:'Example writer',url:'https://www.themoviedb.org/review/abcdef',content:'Synthetic review. Not a real user review.',created_at:'2026-10-11'}]});
  throw Error(`Unexpected upstream endpoint ${u.pathname}`);
 }}});
@@ -54,7 +55,7 @@ try {
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',(e:Error)=>errors.push(e.message));
   await page.goto(`${base}title/demo`);
   const section=page.getByRole('region',{name:'리뷰 모아보기'});
-  await section.getByRole('button',{name:/리뷰 모아보기/}).waitFor();assert.equal(upstream.length,0,'no requests until the user opens reviews');
+  await section.getByRole('button',{name:/리뷰 모아보기/}).waitFor();assert.deepEqual(upstream.filter(x=>x!=='/3/tv/1/videos'),[],'no review requests until the user opens reviews');
   await section.getByRole('button',{name:/리뷰 모아보기/}).click();
   await section.getByText('Example writer',{exact:false}).waitFor();
   assert.equal(await section.locator('details[open]').count(),0);

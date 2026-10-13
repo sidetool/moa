@@ -4,7 +4,7 @@ MOA 홈에서 현재 프로필이 **최근 찜한 작품** 중 일부의 앞으�
 
 ## 설치 조건
 
-이 브랜치의 `moa.watchlist.news` SDK와 `watchlist.read`·`schedule.read` 권한을 포함한 MOA가 필요합니다. `minMoaVersion: 0.1.2-beta.3`은 **미발행 후보 번호**이며 공개 버전 지원을 의미하지 않습니다. 실제 통합 릴리스 번호에 맞춰 조정한 뒤 배포해야 합니다.
+MOA 0.1.2-beta.3 이상의 `moa.watchlist.news` SDK와 `watchlist.read`·`schedule.read` 권한을 포함한 MOA가 필요합니다. 이전 버전에는 ZIP만 설치해도 동작하지 않습니다.
 
 영화·시리즈 정보는 MOA 서버에 설정된 TMDB 인증을 사용하며 플러그인에는 키가 없습니다. TMDB가 연결되지 않은 서버에서는 연결 안내만 표시합니다. 키즈 프로필에서는 제공하지 않습니다.
 

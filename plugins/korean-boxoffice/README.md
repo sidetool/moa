@@ -4,7 +4,7 @@ MOA 홈에서 영화진흥위원회 영화관입장권 통합전산망(KOBIS) �
 
 ## 설치 조건
 
-이 브랜치의 `moa.discovery.boxOffice` SDK와 `boxoffice.read` 권한을 포함한 MOA가 필요합니다. `minMoaVersion: 0.1.2-beta.3`은 **미발행 후보 번호**이며 공개 버전 지원을 의미하지 않습니다. 실제 통합 릴리스 번호에 맞춰 조정한 뒤 배포해야 합니다. 키즈 프로필에서는 제공하지 않습니다.
+MOA 0.1.2-beta.3 이상의 `moa.discovery.boxOffice` SDK와 `boxoffice.read` 권한을 포함한 MOA가 필요합니다. 이전 버전에는 ZIP만 설치해도 동작하지 않습니다. 키즈 프로필에서는 제공하지 않습니다.
 
 ## 운영자 설정 (KOBIS 키)
 

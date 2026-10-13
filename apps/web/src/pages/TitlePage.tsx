@@ -133,7 +133,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
           {episodes.length > 1 && (
             <button className="icon-btn" aria-label={descending ? "1화부터 보기" : "최신화부터 보기"} title={descending ? "1화부터" : "최신화부터"} onClick={() => { const next = !descending; setDescending(next); if (long) setRange(next ? rangeCount - 1 : 0); }}><ArrowDownUp size={18} /></button>
           )}
-          {saves && episodes.length > 1 && (
+          {saves?.configured && episodes.length > 1 && (
             // Only this title's shown season; without season splits the server takes the whole title.
             <BatchDownload key={`${media.id}:${season.number}`} mediaId={media.id} season={media.seasons.length > 1 ? season.number : undefined}
               label={media.seasons.length > 1 ? `${season.title} 전체` : "전체 회차"} quality={saves.quality} onDone={setBatchResult} />

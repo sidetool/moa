@@ -1,18 +1,18 @@
+import { AniListClient } from './anilist-client.js';
 import {load} from 'cheerio';
 import type {Store} from './db.js';
 import type {Tmdb} from './tmdb.js';
 import type {ReviewResponse,ReviewItem,ReviewProvider,ReviewCandidate} from '@moa/shared';
-export interface ReviewOptions { fetch?:typeof fetch }
+export interface ReviewOptions { fetch?:typeof fetch; anilist?:AniListClient }
 export function reviewText(value:unknown,max=600){return typeof value==='string'?load(value.slice(0,40_000)).text().replace(/\s+/g,' ').trim().slice(0,max):'';}
 
 /** On-demand, public reviews. No accounts, tracking sync, full-text archive or background crawling. */
 export class PluginReviews {
   private cache=new Map<string,{until:number;promise:Promise<any>}>();
   private active=0;
-  private retryAt=0;
-  private requests:number[]=[];
+  private anilist:AniListClient;
   private abort=new AbortController();
-  constructor(private db:Store,private tmdb:Tmdb,private options:ReviewOptions={},private now=Date.now){}
+  constructor(private db:Store,private tmdb:Tmdb,options:ReviewOptions={},private now=Date.now){this.anilist=options.anilist??new AniListClient(options.fetch,now);}
   close(){this.abort.abort();this.cache.clear();}
   private title(id:string){
     const row=this.db.get('SELECT title,type FROM media WHERE id=?',id);
@@ -34,21 +34,9 @@ export class PluginReviews {
     this.cache.set(key,target);return target.promise;
   }
   private async graphql(query:string,variables:object):Promise<any>{
-    this.requests=this.requests.filter(t=>t>this.now()-60_000);
-    if(this.retryAt>this.now()||this.requests.length>=20)throw Error('provider-busy');
-    this.requests.push(this.now());
-    const r=await (this.options.fetch||fetch)('https://graphql.anilist.co',{
-      method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},redirect:'error',
-      body:JSON.stringify({query,variables}),signal:AbortSignal.any([AbortSignal.timeout(8000),this.abort.signal])
-    });
-    if(r.status===429){const seconds=Number(r.headers.get('retry-after'));this.retryAt=this.now()+Math.min(300,Math.max(60,Number.isFinite(seconds)?seconds:60))*1000;}
-    if(!r.ok){await r.body?.cancel();throw Error('review-provider-unavailable');}
-    const reader=r.body?.getReader();if(!reader)throw Error('empty-response');
-    const chunks:Uint8Array[]=[];let total=0;
-    try{while(true){const x=await reader.read();if(x.done)break;total+=x.value.length;if(total>512*1024)throw Error('response-too-large');chunks.push(x.value);}}finally{await reader.cancel();}
-    const json=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    if(json.errors?.length||!json.data)throw Error('invalid-graphql-response');return json.data;
+    return this.anilist.graphql(query,variables,this.abort.signal,512*1024);
   }
+
   private candidates(search:string):Promise<ReviewCandidate[]>{
     return this.cached(`anilist-search:${search}`,async()=>{
       const data=await this.graphql('query($search:String!){Page(page:1,perPage:5){media(search:$search,type:ANIME,isAdult:false){id isAdult title{romaji english native}startDate{year}format}}}',{search});

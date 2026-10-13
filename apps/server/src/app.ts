@@ -1,3 +1,5 @@
+import { AniListClient } from './anilist-client.js';
+import { AniListRecommendations } from './anilist-recommendations.js';
 import {PluginNews} from './plugin-news.js';
 import {PluginBoxOffice,type BoxOfficeOptions} from './plugin-boxoffice.js';
 import {PluginSchedule,type ScheduleOptions} from './plugin-schedule.js';
@@ -108,7 +110,8 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const youtube = new YouTubeTrailers(db, services.youtube);
   const nativeShorts = new NativeShorts(cfg.shortsExtractor ? ytDlpExtractor(cfg.shortsExtractor) : undefined);
   catalog.metadata = tmdb.enabled;
-  const recommendations = new Recommendations(db, tmdb);
+  const anilist = new AniListClient(services.reviews?.fetch);
+  const recommendations = new Recommendations(db, tmdb, Date.now, new AniListRecommendations(q=>tmdb.search(q),undefined,Date.now,anilist));
   const groups = new TitleGroups(catalog);
   const franchises = new Franchises(catalog, groups, sources, tmdb);
   // Session tokens live only in memory. Remove their obsolete segments after a restart.
@@ -268,7 +271,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.post('/api/shorts/:key/failed', {schema:{params:shortsKey,body:object({reason:{type:'string',enum:['unavailable','temporary']}},['reason'])}}, async req => { shorts.failed(profile(req),params(req).key,(req.body as {reason:'unavailable'|'temporary'}).reason); return {ok:true}; });
   app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,services.reviews));
+  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,{...services.reviews,anilist}));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
@@ -693,6 +696,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { recommendations.close(); nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { recommendations.close(); anilist.close(); nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

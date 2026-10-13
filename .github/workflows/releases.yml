@@ -35,7 +35,7 @@ jobs:
           pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
-        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
       - name: Source playback integration
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Media features and plugin contracts
@@ -148,9 +148,13 @@ jobs:
           mkdir -p release-output
           node plugins/template/build.mjs ../title-people
           node plugins/template/build.mjs ../trending-titles
+          node plugins/template/build.mjs ../release-calendar
+          node plugins/template/build.mjs ../watchlist-news
+          node plugins/template/build.mjs ../korean-boxoffice
+          node plugins/template/build.mjs ../title-reviews
           node --input-type=module - <<'JS'
           import {readFileSync,copyFileSync} from 'node:fs';
-          for (const id of ['title-people','trending-titles']) {
+          for (const id of ['title-people', 'trending-titles', 'release-calendar', 'watchlist-news', 'korean-boxoffice', 'title-reviews']) {
             const pkg=JSON.parse(readFileSync(`plugins/${id}/manifest.json`));
             copyFileSync(`plugins/template/dist/${id}.zip`,`release-output/${id}-${pkg.version}.zip`);
           }

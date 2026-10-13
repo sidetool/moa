@@ -1,3 +1,4 @@
+import { AniListClient } from './anilist-client.js';
 import type { MetadataCandidate } from '@moa/shared';
 
 export interface AnimeSeed { kind:'tv'|'movie'; id:number; title:string; originalTitle?:string; year:number }
@@ -26,14 +27,14 @@ export class AniListRecommendations {
   private nextRequest=0;
   private closed=false;
   private abort?:AbortController;
-  constructor(private search:(q:string)=>Promise<MetadataCandidate[]>,private fetcher:typeof fetch=fetch,private now=Date.now){}
+  constructor(private search:(q:string)=>Promise<MetadataCandidate[]>,fetcher:typeof fetch=fetch,private now=Date.now,private client=new AniListClient(fetcher,now)){}
   get busy(){return this.pending;}
   close(){this.closed=true;this.abort?.abort();this.cache.clear();}
   lookup(seed:AnimeSeed):MetadataCandidate[]{
     const key=JSON.stringify([seed.kind,seed.id,seed.year,seed.originalTitle||seed.title]);
     const cached=this.cache.get(key);
     if(cached&&cached.until>this.now())return cached.items;
-    if(this.closed||this.pending||this.now()<this.nextRequest)return [];
+    if(this.closed||this.pending||this.now()<this.nextRequest||!this.client.available)return [];
     this.pending=true;this.nextRequest=this.now()+3000;
     const abort=new AbortController();this.abort=abort;
     void this.load(seed,AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])).then(items=>{
@@ -45,18 +46,9 @@ export class AniListRecommendations {
     return [];
   }
   private async load(seed:AnimeSeed,signal:AbortSignal):Promise<MetadataCandidate[]>{
-    const response=await this.fetcher('https://graphql.anilist.co',{method:'POST',redirect:'error',signal,headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({query,variables:{search:(seed.originalTitle||seed.title).slice(0,300),format:seed.kind==='movie'?'MOVIE':'TV',from:seed.year*10000+100,to:(seed.year+1)*10000+101}})});
-    if(response.status===429||response.headers.get('x-ratelimit-remaining')==='0'){
-      const retry=Number(response.headers.get('retry-after'))||0,reset=Number(response.headers.get('x-ratelimit-reset'))*1000;
-      this.nextRequest=Math.max(this.nextRequest,this.now()+Math.min(3600_000,Math.max(60_000,retry*1000,Number.isFinite(reset)?reset-this.now():0)));
-    }
-    if(!response.ok){await response.body?.cancel();throw Error('anilist-unavailable');}
-    const reader=response.body?.getReader();if(!reader)throw Error('anilist-empty');
-    let size=0;const chunks:Uint8Array[]=[];
-    try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>1024*1024)throw Error('anilist-response-limit');chunks.push(value);}}finally{await reader.cancel().catch(()=>{});}
-    const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    if(body.errors?.length||body.data?.Page?.pageInfo?.hasNextPage!==false||!Array.isArray(body.data?.Page?.media))return [];
-    const matched=matchAnimeSeed(seed,body.data.Page.media.slice(0,10));if(!matched)return [];
+    const data=await this.client.graphql(query,{search:(seed.originalTitle||seed.title).slice(0,300),format:seed.kind==='movie'?'MOVIE':'TV',from:seed.year*10000+100,to:(seed.year+1)*10000+101},signal);
+    if(data?.Page?.pageInfo?.hasNextPage!==false||!Array.isArray(data?.Page?.media))return [];
+    const matched=matchAnimeSeed(seed,data.Page.media.slice(0,10));if(!matched)return [];
     const results:MetadataCandidate[]=[],seen=new Set<number>();
     for(const node of (matched.recommendations?.nodes??[]).slice(0,8)){
       if(this.closed||signal.aborted)break;
