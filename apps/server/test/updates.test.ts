@@ -84,6 +84,9 @@ test('release discovery sorts versions, uses installed metadata, caches and neve
   const beta = await new Updates('', async () => Response.json([release('v1.9.1-beta.2', { prerelease: true }), release('v1.9.0')]), { ...installed, MOA_VERSION: 'v1.9.1-beta.1' }).status();
   assert.equal(beta.discovery?.latestVersion, 'v1.9.1-beta.2');
   assert.equal(beta.discovery?.updateAvailable, true);
+  assert.deepEqual(beta.discovery?.releases.map(item => item.version), ['v1.9.1-beta.2']);
+  const prereleaseOnly = await new Updates('', async () => Response.json([release('v2.0.0'), release('v1.9.1-beta.2', { prerelease: true }), release('v3.0.0-beta.1')]), { ...installed, MOA_VERSION: 'v1.9.1-beta.1' }).status();
+  assert.equal(prereleaseOnly.discovery?.latestVersion, 'v1.9.1-beta.2');
   const unknown = await new Updates('', async () => Response.json([release('v2.0.0')]), { ...installed, MOA_VERSION: 'latest' }).status();
   assert.equal(unknown.discovery?.currentVersion, null);
   assert.equal(unknown.discovery?.updateAvailable, null);

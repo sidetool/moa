@@ -57,7 +57,12 @@ export class Recommendations {
     // A small background warmup never blocks the Home response. No independent recommendation cache:
     // changes to history, watchlist, links, dismissals and kids policy apply on the next request.
     for (const s of selected) {
-      const cached = this.db.get('SELECT fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?',s.kind,s.tmdb_id);
+      const cached = this.db.get('SELECT card,fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?',s.kind,s.tmdb_id);
+      const title = cached && JSON.parse(cached.card).title;
+      if (typeof title === 'string' && /[가-힣]/.test(title)) {
+        s.reason = s.reason.replace(s.title, () => title);
+        s.title = title;
+      }
       if (cached && cached.fetched_at > this.clock()-7*86400_000) continue;
       if (this.warming.size >= 2 || this.warming.has(s.id) || (this.attempted.get(s.id) ?? 0) > this.clock()-3600_000) continue;
       this.attempted.set(s.id,this.clock()); this.warming.add(s.id);
@@ -91,7 +96,8 @@ export class Recommendations {
     for (const entry of sorted) {
       const [key,r]=entry;
       const c=this.db.get('SELECT card FROM tmdb_titles WHERE kind=? AND tmdb_id=?',r.item.kind,r.item.id);
-      const genre=c && JSON.parse(c.card).genres?.[0];
+      const card=c && JSON.parse(c.card), genre=card?.genres?.[0];
+      if(typeof card?.title==='string'&&/[가-힣]/.test(card.title))r.item={...r.item,title:card.title};
       if(genre&&(genres.get(genre)||0)>=4){deferred.push(entry);continue;}
       if(genre)genres.set(genre,(genres.get(genre)||0)+1);diversified.push(entry);
     }

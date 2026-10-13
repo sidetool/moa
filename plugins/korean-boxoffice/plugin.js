@@ -12,9 +12,11 @@ button:focus-visible{outline:2px solid #fff;outline-offset:2px;border-radius:6px
 h2{font-size:clamp(1.08rem,1.6vw,1.32rem);font-weight:750;letter-spacing:-.035em;word-break:keep-all}
 #range{margin-top:2px;color:#8e8e99;font-size:.82rem;font-variant-numeric:tabular-nums}
 .tools{display:flex;align-items:center;gap:6px}
-.segment{display:inline-flex;padding:3px;border-radius:8px;background:#202025}
+.segment{position:relative;isolation:isolate;display:inline-grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:3px;border-radius:8px;background:#202025}
+.segment::before{content:"";position:absolute;z-index:-1;top:3px;bottom:3px;left:3px;width:calc((100% - 6px)/2);border-radius:6px;background:#fff;transform:translateX(0);transition:transform .3s cubic-bezier(.2,.7,.2,1)}
+.segment:has(>button:nth-child(2)[aria-pressed=true])::before{transform:translateX(100%)}
 .segment button{height:34px;padding:0 16px;border-radius:6px;color:#8e8e99;font-weight:600;font-size:.9rem;white-space:nowrap}
-.segment button[aria-pressed=true]{background:#fff;color:#0b0b0d}
+.segment button[aria-pressed=true]{color:#0b0b0d}
 .icon{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;color:#c7c7cf;transition:background-color .15s,color .15s}
 .icon:hover{background:rgba(255,255,255,.1);color:#fff}
 .scope{display:flex;align-items:flex-start;gap:7px;margin-bottom:16px;color:#8e8e99;font-size:.8rem;line-height:1.55;word-break:keep-all;overflow-wrap:anywhere}
@@ -44,8 +46,8 @@ h2{font-size:clamp(1.08rem,1.6vw,1.32rem);font-weight:750;letter-spacing:-.035em
 #retry{margin-top:8px;height:36px;padding:0 16px;border-radius:6px;background:rgba(120,120,128,.38);font-size:.9rem;font-weight:650}
 #retry:hover{background:rgba(120,120,128,.54)}
 footer{margin-top:14px;color:#8e8e99;font-size:.74rem;line-height:1.5;overflow-wrap:anywhere}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-@media (max-width:640px){.tools{width:100%}.segment{flex:1}.segment button{flex:1}#list,.skel{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-flow:row}.skel span:nth-child(n+5){display:none}.item{grid-template-columns:44px minmax(0,1fr) auto;gap:10px;min-height:62px}.rank{font-size:2rem}}
+@media (prefers-reduced-motion:reduce){*,.segment::before{animation:none!important;transition:none!important}}
+@media (max-width:640px){.tools{width:100%}.segment{flex:1}#list,.skel{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-flow:row}.skel span:nth-child(n+5){display:none}.item{grid-template-columns:44px minmax(0,1fr) auto;gap:10px;min-height:62px}.rank{font-size:2rem}}
 </style><section id="boxoffice" aria-labelledby="heading">
 <header class="head"><div><h2 id="heading">국내 박스오피스</h2><p id="range"></p></div><div class="tools"><div class="segment" role="group" aria-label="집계 기간"><button type="button" data-period="day">일간</button><button type="button" data-period="week">주간</button></div><button type="button" id="refresh" class="icon" aria-label="다시 확인" title="다시 확인">${ICON.refresh}</button></div></header>
 <p class="scope">${ICON.info}<span>국내 극장에서 상영된 한국·외국 영화의 관객 수 순위예요. OTT 시청 순위가 아니며, 선택하면 MOA에서 같은 제목을 검색해요.</span></p>

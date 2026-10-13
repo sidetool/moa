@@ -1,4 +1,4 @@
-import type { DiscoveryItem, LinkedPluginTitle, PersonWorksResponse, TitlePeople, TitlePeopleResponse, PeopleStatus } from '@moa/shared';
+import type { DiscoveryItem, LinkedPluginTitle, PersonWorksResponse, TitlePeople, TitlePeopleResponse, PeopleStatus, TitleMetadata, TitleMetadataResponse } from '@moa/shared';
 import type { Store } from './db.js';
 import { ApiFailure } from './util.js';
 
@@ -8,6 +8,7 @@ export interface PeopleProvider {
   readonly configurationRevision: number;
   linkedTitle(mediaId: string): LinkedPluginTitle | null;
   peopleCredits(title: LinkedPluginTitle): Promise<TitlePeople>;
+  titleDetails?(title: LinkedPluginTitle): Promise<TitleMetadata>;
   personWorks(id: string): Promise<{items: DiscoveryItem[]; truncated: boolean}>;
 }
 type Cached = {value?: unknown; until: number; retry: number; pending?: Promise<unknown>};
@@ -60,6 +61,20 @@ export class PluginPeople {
     catch { return creditsEmpty(provider,this.status(profile,generation,title) || 'unavailable'); }
     const changed = this.status(profile,generation,title);
     return changed ? creditsEmpty(provider,changed) : {provider,status:'ready',title,...result};
+  }
+  async details(profile: string, mediaId: string): Promise<TitleMetadataResponse> {
+    const provider = this.source.providerId, generation = this.generation();
+    const empty = (status: PeopleStatus): TitleMetadataResponse => ({ provider, status, title: null, details: null });
+    if (!this.allowed(profile)) return empty('restricted');
+    if (!this.source.enabled) return empty('unconfigured');
+    const title = this.source.linkedTitle(mediaId);
+    if (!title) return empty('unlinked');
+    if (!this.source.titleDetails) return empty('unavailable');
+    let details: TitleMetadata;
+    try { details = await this.cached(JSON.stringify(['details',provider,title.kind,title.id]), () => this.source.titleDetails!(title)); }
+    catch { return empty(this.status(profile,generation,title) || 'unavailable'); }
+    const changed = this.status(profile,generation,title);
+    return changed ? empty(changed) : { provider, status: 'ready', title, details };
   }
   async person(profile: string, mediaId: string, identity: {provider:string;id:string}): Promise<PersonWorksResponse> {
     const generation = this.generation(), credits = await this.credits(profile,mediaId);

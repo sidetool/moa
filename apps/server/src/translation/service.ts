@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, renameSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { TranslationConfig, TranslationJob, SubtitleTrack } from '@moa/shared';
+import { TRANSLATION_MAX_KEYS } from '@moa/shared';
 import { Store } from '../db.js';
 import { Catalog } from '../catalog.js';
 import { ApiFailure } from '../util.js';
@@ -91,7 +92,7 @@ export class Translations {
       const saved = JSON.parse(readFileSync(this.filename, 'utf8'));
       const keys = (Array.isArray(saved.apiKeys) ? saved.apiKeys : saved.apiKey ? [saved.apiKey] : [])
         .filter(validKey)
-        .slice(0, 8);
+        .slice(0, TRANSLATION_MAX_KEYS);
       if (validModel(saved.model))
         this.secret = {
           provider: saved.provider === 'openai' ? 'openai' : 'gemini',
@@ -184,7 +185,7 @@ export class Translations {
       if (!validKey(key)) throw new ApiFailure(400, 'translation-key-invalid');
       if (!next.apiKeys.includes(key)) next.apiKeys.push(key);
     }
-    if (next.apiKeys.length > 8) throw new ApiFailure(400, 'translation-too-many-keys');
+    if (next.apiKeys.length > TRANSLATION_MAX_KEYS) throw new ApiFailure(400, 'translation-too-many-keys');
     if (update.batchSize !== undefined) {
       if (!Number.isInteger(update.batchSize) || update.batchSize < 10 || update.batchSize > 300)
         throw new ApiFailure(400, 'translation-batch-invalid');

@@ -75,7 +75,7 @@ export function UpdateSettings() {
         {discovery ? <>
           <div className="setting"><div><b>MOA {discovery.currentVersion ? version(discovery.currentVersion) : '개발 빌드'}</b><small>{discovery.repository} · {discovery.currentVersion ? `현재 ${version(discovery.currentVersion)}` : `커밋 ${revision(data.current)}`}</small></div><span className={cx('status-pill', discovery.updateAvailable === false && 'is-ok')} role="status">{discovery.error ? '확인 실패' : !discovery.releases.length ? '공개 릴리스 없음' : discovery.updateAvailable === true ? '새 릴리스 있음' : discovery.updateAvailable === false ? '새 버전 없음' : '버전 비교 불가'}</span></div>
           <div className="setting"><div><b>최근 확인 · {when(discovery.checkedAt)}</b></div><Button disabled={busy} onClick={() => action.mutate('check')}>업데이트 확인</Button></div>
-          {discovery.releases.map(item => <div className="setting" key={item.version}><div><b>{version(item.version)}</b><small>{new Date(item.publishedAt).toLocaleDateString('ko-KR')} 공개</small></div><Button variant="ghost" onClick={() => setNotes(item.version)}>릴리스 보기</Button></div>)}
+          {discovery.releases.map(item => <div className="setting" key={item.version}><div><b>{version(item.version)}</b><small>{item.version.includes('-beta.') ? '사전 릴리스' : '안정 릴리스'} · {new Date(item.publishedAt).toLocaleDateString('ko-KR')} 공개</small></div><Button variant="ghost" onClick={() => setNotes(item.version)}>릴리스 보기</Button></div>)}
           <p className="settings-hint translation-message">{data.configured ? '업데이트 서비스가 시작되면 설치할 수 있습니다.' : 'Compose의 moa-updater 서비스가 필요합니다.'}</p>
         </> : <>
         {release
@@ -95,7 +95,7 @@ export function UpdateSettings() {
 
         </>}
         {(release || discovery) && <div className="setting"><div><b>업데이트 채널</b><small>{pending ? '채널 변경 중…' : channel === 'beta' ? '새 기능을 먼저 받지만 문제가 있을 수 있어요.' : '충분히 확인한 버전만 받아요.'}</small></div>
-          <Select className="setting-select" aria-label="업데이트 채널" value={channel} disabled={busy || !!pending} options={[{ value: 'stable', label: '안정 릴리스' }, { value: 'beta', label: '사전 릴리스 포함' }]} onChange={value => value !== channel && save.mutate(value as Channel)} /></div>}
+          <Select className="setting-select" aria-label="업데이트 채널" value={channel} disabled={busy || !!pending} options={[{ value: 'stable', label: '안정 릴리스' }, { value: 'beta', label: '사전 릴리스' }]} onChange={value => value !== channel && save.mutate(value as Channel)} /></div>}
         <div className="setting"><div><b>업데이트 알림</b><small>새 버전이 나오면 알려 드려요. 이 브라우저에만 적용돼요.</small></div>
           <button type="button" role="switch" aria-checked={notice.enabled} aria-label="업데이트 알림" className={cx('switch', notice.enabled && 'is-on')} disabled={!me} onClick={() => notice.setEnabled(!notice.enabled)}><i /></button></div>
         {message && <p className="settings-error translation-message" role="alert">{message}</p>}

@@ -10,9 +10,11 @@ document.body.innerHTML = `
     header{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:12px}#refresh,#retry{padding:8px 12px;white-space:nowrap;min-height:40px}
     .scope{color:var(--moa-muted,#a1a1aa);font-size:12px;margin:-6px 0 12px}
     .controls{display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:4px}
-    .segment{display:inline-grid;grid-auto-flow:column;grid-auto-columns:minmax(64px,auto);gap:4px;padding:3px;border-radius:12px;background:#18181b}
+    .segment{position:relative;isolation:isolate;display:inline-grid;grid-template-columns:repeat(2,minmax(64px,1fr));gap:4px;padding:3px;border-radius:12px;background:#18181b}
+    .segment::before{content:"";position:absolute;z-index:-1;top:3px;bottom:3px;left:3px;width:calc((100% - 10px)/2);border-radius:10px;background:#f4f4f5;transform:translateX(0);transition:transform .3s cubic-bezier(.2,.7,.2,1)}
+    .segment:has(>button:nth-child(2)[aria-pressed=true])::before{transform:translateX(calc(100% + 4px))}
     .segment button{min-height:38px;padding:6px 14px;border-color:transparent;background:transparent;color:#a1a1aa}
-    .segment button[aria-pressed=true]{background:#f4f4f5;color:#18181b;font-weight:700}
+    .segment button[aria-pressed=true]{color:#18181b;font-weight:700}
     #status{padding:12px 0 10px;color:var(--moa-muted,#a1a1aa);font-size:13px}#status.warn{color:#fbbf24}#retry{margin-bottom:12px}
     #list{display:grid;grid-auto-flow:column;grid-auto-columns:132px;gap:12px;list-style:none;padding:2px 2px 10px;margin:0;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scrollbar-width:thin}
     #list[hidden],#retry[hidden]{display:none}#list li{min-width:0;scroll-snap-align:start}
@@ -26,6 +28,7 @@ document.body.innerHTML = `
     .meta{color:var(--moa-muted,#a1a1aa);font-size:12px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
     footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:10px;color:#85858f;font-size:12px}footer img{width:80px;height:auto;flex:none}footer p{flex:1 1 260px}
     @media(max-width:600px){h2{font-size:20px}#list{grid-auto-columns:112px;gap:10px}}
+    @media(prefers-reduced-motion:reduce){.segment::before{transition:none}}
   </style>
   <section id="trending" aria-labelledby="trending-title">
     <header><h2 id="trending-title">요즘 인기 영화·TV</h2><button id="refresh" type="button">새로고침</button></header>

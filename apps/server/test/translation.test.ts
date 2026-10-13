@@ -373,6 +373,18 @@ test('routes enforce admin key writes, profile jobs, account assets and persist 
       ).statusCode,
       403,
     );
+    const capacityKeys = Array.from({ length: 20 }, (_, i) => `test-api-capacity-key-${i}`);
+    const capacity = await env.app.inject({ method: 'PATCH', url: '/api/admin/translation/config', payload: { addKeys: capacityKeys } });
+    assert.equal(capacity.statusCode, 200);
+    assert.equal(capacity.json().keys.length, 20);
+    for (const key of capacityKeys) assert.ok(!capacity.body.includes(key));
+    for (const addKeys of [[...capacityKeys, 'test-api-overflow-key'], ['test-api-overflow-key']]) {
+      assert.equal((await env.app.inject({ method: 'PATCH', url: '/api/admin/translation/config', payload: { addKeys } })).statusCode, 400);
+      assert.deepEqual((await env.app.inject({ url: '/api/translation/config', headers })).json(), capacity.json());
+    }
+    const removed = await env.app.inject({ method: 'PATCH', url: '/api/admin/translation/config', payload: { removeKeyIds: capacity.json().keys.map((key: { id: string }) => key.id) } });
+    assert.equal(removed.statusCode, 200);
+    assert.equal(removed.json().keys.length, 0);
     const config = await env.app.inject({
       method: 'PATCH',
       url: '/api/admin/translation/config',
@@ -453,6 +465,34 @@ test('routes enforce admin key writes, profile jobs, account assets and persist 
   }
 });
 
+test('twenty translation keys are deduplicated, masked and preserved across restart', async () => {
+  let calls = 0;
+  const f = await fixture(async () => { calls++; throw new Error('Unexpected API request'); });
+  const keys = Array.from({ length: 20 }, (_, i) => `test-capacity-key-${String(i).padStart(2, '0')}`);
+  try {
+    const config = f.service.configure({ clearKey: true, addKeys: [...keys, keys[0]] });
+    assert.equal(config.keys.length, 20);
+    assert.equal(new Set(config.keys.map(key => key.id)).size, 20);
+    for (const key of keys) assert.ok(!JSON.stringify(config).includes(key));
+    const filename = path.join(f.dir, 'translation-secret.json');
+    const saved = await readFile(filename, 'utf8');
+    assert.deepEqual(JSON.parse(saved).apiKeys, keys);
+    assert.equal((await stat(filename)).mode & 0o777, 0o600);
+    assert.throws(() => f.service.configure({ addKeys: ['test-capacity-key-overflow'] }), /translation-too-many-keys/);
+    assert.equal(await readFile(filename, 'utf8'), saved);
+    assert.deepEqual(f.service.config(), config);
+    await f.service.close();
+    const restored = f.create();
+    try {
+      assert.deepEqual(restored.config(), config);
+      restored.configure({ removeKeyIds: config.keys.map(key => key.id) });
+      assert.equal(restored.config().keys.length, 0);
+      assert.equal(restored.config().enabled, false);
+    } finally { await restored.close(); }
+    assert.equal(calls, 0);
+  } finally { await f.close(); }
+});
+
 test('configurable batch size and key-chain failover reuse the successful key', async () => {
   const used: string[] = [],
     sizes: number[] = [];
@@ -476,7 +516,7 @@ test('configurable batch size and key-chain failover reuse the successful key', 
     assert.equal(f.service.config().keys.length, 1);
     assert.throws(() => f.service.configure({ batchSize: 0 }), /translation-batch-invalid/);
     assert.throws(
-      () => f.service.configure({ addKeys: Array.from({ length: 9 }, (_, i) => `valid-long-key-number-${i}`) }),
+      () => f.service.configure({ addKeys: Array.from({ length: 20 }, (_, i) => `valid-long-key-number-${i}`) }),
       /translation-too-many-keys/,
     );
   } finally {
@@ -692,7 +732,7 @@ test('retry count bounds transient failures and key failover; permanent errors a
     let calls = 0;
     const f = await fixture(async () => { calls++; return new Response('', { status }); });
     try {
-      f.service.configure({ retryCount: retries, addKeys: ['second-valid-key-test', 'third-valid-key-test'] });
+      f.service.configure({ retryCount: retries, addKeys: Array.from({ length: 19 }, (_, i) => `test-retry-limit-key-${i}`) });
       const job = await wait(f.service, f.service.start('e', 'p', input).id);
       assert.equal(job.state, 'failed');
       assert.equal(calls, expected, `status ${status}, retries ${retries}`);

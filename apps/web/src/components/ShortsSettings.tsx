@@ -25,11 +25,11 @@ export function ShortsSettings({ settings, kids, save }: { settings: Settings; k
   return <section className="settings-group"><h2>이 프로필</h2><div className="settings-card">
     {row("쇼츠", kids ? "어린이 프로필에서는 쓸 수 없어요." : on ? <>작품 예고편을 세로로 넘겨 봐요. <Link className="setting-inline-link" to="/shorts">열기</Link></> : "작품 예고편을 세로로 넘겨 봐요.",
       <Toggle label="쇼츠" checked={on} disabled={kids} onChange={value => save({ shortsEnabled: value })} />)}
-    {on && <button type="button" className="setting setting-disclosure" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+    {on && <details open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary className="setting setting-disclosure">
       <div><b>세부 설정</b></div>
       <ChevronDown size={18} className={cx("disclosure-chevron", open && "is-open")} aria-hidden="true" />
-    </button>}
-    {on && open && <div className="settings-advanced" role="region" aria-label="쇼츠 세부 설정">
+    </summary>
+    <div className="settings-advanced" role="region" aria-label="쇼츠 세부 설정">
       {row("고르는 방식", "", <Select className="setting-select" aria-label="고르는 방식" value={settings.shortsMode ?? "mixed"} onChange={value => save({ shortsMode: value as Settings["shortsMode"] })} options={MODES.map(([value, label]) => ({ value, label }))} />)}
       {row("종류", "여러 개 고를 수 있어요.", <div className="choice-chips" role="group" aria-label="종류">
         {SHORTS_CATEGORIES.map(([value, label]) => {
@@ -44,6 +44,6 @@ export function ShortsSettings({ settings, kids, save }: { settings: Settings; k
       {nativeOn && row("화질", "", <Select className="setting-select" aria-label="화질" value={settings.shortsQuality ?? "auto"} onChange={value => save({ shortsQuality: value as Settings["shortsQuality"] })} options={QUALITY.map(([value, label]) => ({ value, label }))} />)}
       {row("화면 맞춤", "화면을 꽉 채워요. 이 기기에만 적용돼요.", <Toggle label="화면 맞춤" checked={settings.shortsScreenFit !== false} onChange={value => save({ shortsScreenFit: value })} />)}
       {row("본 작품 숨기기", "5초 넘게 봤거나 직접 넘긴 작품을 이 기간 동안 빼요.", <Select className="setting-select" aria-label="본 작품 숨기기" value={String(settings.shortsRepeatDays ?? 7)} onChange={value => save({ shortsRepeatDays: Number(value) as Settings["shortsRepeatDays"] })} options={REPEAT.map(([value, label]) => ({ value: String(value), label }))} />)}
-    </div>}
+    </div></details>}
   </div></section>;
 }

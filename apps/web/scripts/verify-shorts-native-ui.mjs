@@ -59,8 +59,8 @@ const POOL = [
 ];
 const TRAILERS = { 'movie:1': ['okaaaaaaaaa'], 'tv:2': ['okbbbbbbbbb'], 'movie:3': ['okccccccccc'] };
 let nativeAvailable = false, fixture, fixtureType = 'video/webm', busy = true;
-let settings, kids, log;
-const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [], prepare: [], closed: [], media: 0, warm: [], translate: [], cancelled: [], variants: [] }; };
+let settings, device, kids, log;
+const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; device = { holdSpeed: 2 }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [], prepare: [], closed: [], media: 0, warm: [], translate: [], cancelled: [], variants: [] }; };
 const route = async context => {
   await context.route(url => !['127.0.0.1', 'localhost'].includes(url.hostname), r => {
     const url = new URL(r.request().url());
@@ -72,6 +72,7 @@ const route = async context => {
   await context.route(url => url.pathname.startsWith('/api/') || url.pathname.startsWith('/__moa/api/'), r => {
     const url = new URL(r.request().url()), path = url.pathname, method = r.request().method();
     if (path === '/api/settings') { if (method === 'PATCH') { log.patches.push(r.request().postDataJSON()); settings = { ...settings, ...r.request().postDataJSON() }; } return r.fulfill({ json: settings }); }
+    if (path === '/api/settings/device') { if (method === 'PATCH') device = { ...device, ...r.request().postDataJSON().settings }; return r.fulfill({ json: { settings: device } }); }
     if (path === '/api/home') return r.fulfill({ json: { hero: [], rows: [] } });
     if (path === '/api/me') return r.fulfill({ json: { id: 'u', username: '테스트', role: 'member', permissions: ['video.watch', 'subtitles.translate'] } });
     if (path === '/api/translation/config') return r.fulfill({ json: { provider: 'openai', baseUrl: '', configured: true, enabled: true, model: 'mock', batchSize: 120, requestIntervalMs: 0, retryCount: 0, keys: [] } });
@@ -263,6 +264,18 @@ try {
   assert.equal((await state()).rate, 1, 'moving cancels the hold');
   await page.mouse.up(); await wait(150);
   if ((await state()).paused) await video.click();
+
+  for (const speed of [1.25, 3]) {
+    await page.evaluate(async speed => { const { saveDevicePrefs } = await import('/src/lib/device-prefs.ts'); await saveDevicePrefs({ holdSpeed: speed }); }, speed);
+    assert.equal(device.holdSpeed, speed);
+    await page.mouse.move(cx, cy); await page.mouse.down();
+    await page.waitForFunction(speed => document.querySelector('.shorts-slide.is-active video')?.playbackRate === speed, speed);
+    assert.equal(await page.locator('.shorts-fast').textContent(), `${speed}×`);
+    assert.notEqual(await page.locator('.shorts-fast').evaluate(element => getComputedStyle(element).backdropFilter), 'none');
+    await page.screenshot({ path: verificationPath(`shorts-hold-${speed}x.png`) });
+    await page.mouse.up();
+    assert.deepEqual(await state(), { rate: 1, paused: false });
+  }
 
   // Quality: no player control; the HLS work starts at the profile's 480p and never goes above 720p.
   assert.equal(await page.locator('.shorts [aria-label="화질"]').count(), 0, 'no quality control in the player');

@@ -49,9 +49,9 @@ const REVISION_MAX_WAIT = 45_000;
 
 /** Where the server reads the video: a ready saved copy first (auto), or the original source on request. */
 type PlaybackLocation = "auto" | "source";
-type Session = PlaybackSession & { saved?: boolean };
+type Session = PlaybackSession & { saved?: boolean; resumeFromHistory?: boolean };
 
-function useSession(episodeId: string, startOverride: number | null, initialLocation: PlaybackLocation) {
+function useSession(episodeId: string, startOverride: number | null, initialLocation: PlaybackLocation, initialResume: boolean) {
   const [session, setSession] = useState<Session | null>(null);
   const [location, setLocation] = useState(initialLocation);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +60,7 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
   const [compatible, setCompatible] = useState(compatibilityPlayback);
   const [audioTrackId, setAudioTrackId] = useState<string | undefined>();
   const resumeAt = useRef<number | null>(startOverride);
+  const initialSession = useRef(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,13 +68,15 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
     setError(null);
     preparePlayback(async () => {
       if (cancelled) return;
+      const resumeFromHistory = initialSession.current && (resumeAt.current === null || initialResume);
+      initialSession.current = false;
       const result = await api<Session>("/playback", {
         method: "POST",
         body: { episodeId, capabilities: detectCapabilities(compatible), audioTrackId, streamId, ...(location !== "auto" ? { location } : {}), ...(resumeAt.current !== null ? { startPosition: resumeAt.current } : {}) }
       });
       created = result;
       if (cancelled) await retirePlayback(result.sessionId, result.runtimeDependent);
-      else setSession(result);
+      else setSession({ ...result, resumeFromHistory });
     }).catch(e => { if (!cancelled) setError(e instanceof ApiError && e.code === "permission-denied" ? "영상 보기 권한이 없어요. 관리자에게 문의해 주세요." : e instanceof ApiError && e.code === "kids-restricted" ? KIDS_RESTRICTED : e instanceof ApiError && e.code === "apk_playback_capacity" ? "다른 기기에서 재생 중입니다. 재생이 끝난 뒤 다시 시도해 주세요." : e instanceof ApiError && e.code === "no-streams" ? "소스에서 재생할 영상을 찾지 못했습니다." : e instanceof ApiError && ["unsupported-stream-format", "unsupported-inline-hls"].includes(e.code) ? "소스가 반환한 영상 형식을 지원하지 않습니다." : "재생을 준비하지 못했습니다."); });
     return () => {
       cancelled = true;
@@ -126,7 +129,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const canTranslate = admin || Boolean(account?.permissions?.includes('subtitles.translate'));
   const carried = useLocation().state as { subtitle?: SubtitleTrack } | null;
   const t = params.get("t");
-  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto");
+  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto", params.get("resume") === "1");
   // Only asked when the viewer chose the source over a saved copy, to offer the way back.
   const savedCopy = useEpisodeDownload(episodeId, playbackLocation === "source").data?.saved;
   const changeLocation = (value: PlaybackLocation) => {
@@ -171,6 +174,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [subtitle, setSubtitle] = useState<SubtitleTrack | null>(carried?.subtitle ?? null);
   const [resumeChip, setResumeChip] = useState(false);
   const [nextDismissed, setNextDismissed] = useState(false);
+  const [nextCancelled, setNextCancelled] = useState(false);
+  const resumeNextChecked = useRef(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ key: number; side: "left" | "right" | "center"; label: string } | null>(null);
   const prefs = useDevicePrefs();
@@ -184,6 +189,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   useEffect(() => () => randomRequest.current?.abort(), []);
   const [levels, setLevels] = useState<Array<{ index: number; height: number }>>([]);
   const [level, setLevel] = useState(-1);
+  const sortedLevels = useMemo(() => [...levels].sort((a, b) => b.height - a.height), [levels]);
   const [manualSubOffset, setSubOffset] = useState(0);
   const [autoAlignment, setAutoAlignment] = useState<{key:string;offset:number} | null>(null);
   const alignmentKey = `${session?.sessionId}:${subtitle?.id}`;
@@ -199,9 +205,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const subOutline = settings?.subtitleOutline ?? 'original';
   const subScale = settings?.subtitleScale ?? undefined;
   const subPadding = settings?.subtitlePadding ?? 6;
+  const subPreserveAss = settings?.subtitlePreserveAss !== false;
   const originalSubAppearance = (subScale === undefined ? subSize === 'medium' : subScale === 100) && subBackground === 'original' && subShadow === 'original' && subOutline === 'original' && subHeight === 0;
   useEffect(() => { subs.current?.setHeight(subHeight); }, [subHeight, subtitle, session]);
-  useEffect(() => { void subs.current?.setAppearance({ size: subSize, background: airplayMedia ? 'original' : subBackground, shadow: airplayMedia ? 'original' : subShadow, outline: airplayMedia ? 'original' : subOutline, scale: subScale, padding: subPadding }).catch(() => {}); }, [subSize, subBackground, subShadow, subOutline, subScale, subPadding, subtitle, session, airplayMedia]);
+  useEffect(() => { void subs.current?.setAppearance({ size: subSize, background: airplayMedia ? 'original' : subBackground, shadow: airplayMedia ? 'original' : subShadow, outline: airplayMedia ? 'original' : subOutline, scale: subScale, padding: subPadding, preserveAss: subPreserveAss }).catch(() => {}); }, [subSize, subBackground, subShadow, subOutline, subScale, subPadding, subPreserveAss, subtitle, session, airplayMedia]);
   const [extraSubs, setExtraSubs] = useState<SubtitleTrack[]>(carried?.subtitle ? [carried.subtitle] : []);
   const [importing, setImporting] = useState(false);
   const [draggingSubtitle, setDraggingSubtitle] = useState(false);
@@ -243,7 +250,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     castProgress.current = null;
     let disposed = false;
     let advancedStream = false;
-    setFatal(null); setEnded(false); setNextDismissed(false); setCountdown(null); setWaiting(true);
+    setFatal(null); setEnded(false); setNextDismissed(false); setNextCancelled(false); setCountdown(null); setWaiting(true);
 
     const start = session.startPosition;
     // Home resume links carry ?t= too; an explicit positive position still offers restart.
@@ -400,14 +407,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const list = session?.subtitles ?? [];
     return [...list, ...extraSubs.filter(extra => !list.some(track => track.id === extra.id))];
   }, [session, extraSubs]);
-  const searchOnline = useCallback(async (manual?: OnlineSubtitleQuery) => {
+  const searchOnline = useCallback(async (manual?: OnlineSubtitleQuery, refresh = false) => {
     if (!session) return null;
     onlineAbort.current?.abort();
     const controller = new AbortController();
     onlineAbort.current = controller;
     setOnline({ status: "searching" });
     try {
-      const params = manual ? `?${new URLSearchParams({ title: manual.title.trim(), season: String(manual.season), episode: String(manual.episode), episodeOffset: String(manual.episodeOffset) })}` : "";
+      const params = manual ? `?${new URLSearchParams({ title: manual.title.trim(), season: String(manual.season), episode: String(manual.episode), episodeOffset: String(manual.episodeOffset) })}` : refresh ? "?refresh=true" : "";
       const result = await api<OnlineSubtitleSearch>(`/episodes/${encodeURIComponent(session.episodeId)}/subtitles/online${params}`, { signal: controller.signal });
       if (controller.signal.aborted) return null;
       setOnline({ status: "done", result });
@@ -689,6 +696,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
   /* ---------- actions ---------- */
   const togglePlay = useCallback(() => {
+    resumeNextChecked.current = true;
     const v = video.current;
     if (!v) return;
     window.clearTimeout(playFeedbackTimer.current);
@@ -700,12 +708,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   }, []);
   useEffect(() => () => { window.clearTimeout(playFeedbackTimer.current); setPlayFeedback(false); }, [session]);
   const seekBy = useCallback((delta: number, side?: "left" | "right", label?: string) => {
+    resumeNextChecked.current = true;
     const v = video.current;
     if (!v || live) return;
     v.currentTime = Math.max(0, Math.min((v.duration || total) - 0.5, v.currentTime + delta));
     setFlash({ key: Date.now(), side: side ?? (delta < 0 ? "left" : "right"), label: label ?? `${delta > 0 ? "+" : ""}${delta}초` });
   }, [total, live]);
-  const seekTo = (seconds: number) => { const v = video.current; if (v && !live && Number.isFinite(seconds)) v.currentTime = seconds; };
+  const seekTo = (seconds: number) => { resumeNextChecked.current = true; const v = video.current; if (v && !live && Number.isFinite(seconds)) v.currentTime = seconds; };
   /* Remote seeking previews the target on the bar and seeks once the presses stop; holding the key speeds it up. */
   const [remoteSeek, setRemoteSeek] = useState<number | null>(null);
   const pendingSeek = useRef<number | null>(null);
@@ -713,6 +722,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const holdStart = useRef(0);
   const lastNudge = useRef(0);
   const nudgeSeek = (direction: 1 | -1, held: boolean) => {
+    resumeNextChecked.current = true;
     const v = video.current;
     if (!v || live) return;
     // TVs repeat keys at different rates, so a held key steps by time: at most ~8 steps a second, 3x after 1.5s.
@@ -820,9 +830,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   // Local, source and saved playback all ask for markers bound to this playback session.
   const generalSkip = settings?.generalSkipEnabled !== false;
   const remoteSkip = Boolean(session && !live && (session.mediaType === 'anime' || generalSkip));
+  const markerRequest = remoteSkip && markerDuration >= 60 && Number.isFinite(markerDuration);
   useEffect(() => {
     setSkipStatus('idle');
-    if (!remoteSkip || !markerSessionId || markerDuration < 60 || !Number.isFinite(markerDuration)) return;
+    if (!markerRequest || !markerSessionId) return;
     const controller = new AbortController();
     setSkipStatus('loading');
     void api<{markers:PlaybackSession['markers']|null;status:string}>(`/episodes/${encodeURIComponent(episodeId)}/markers?${new URLSearchParams({ duration: String(markerDuration), sessionId: markerSessionId })}`,{signal:controller.signal}).then(result=>{
@@ -837,22 +848,28 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       setSkipStatus(result.status);
     }).catch(()=>{if(!controller.signal.aborted)setSkipStatus('error');});
     return ()=>controller.abort();
-  },[remoteSkip,markerSessionId,episodeId,markerDuration]);
+  },[markerRequest,markerSessionId,episodeId,markerDuration]);
   const markers = mergePlaybackMarkers(session?.markers,remoteSkip && remoteMarkerState?.sessionId === markerSessionId ? remoteMarkerState?.markers : undefined);
   const skipRanges = total > 0 ? [
     { label: '오프닝', kind: 'intro', start: markers?.introStart ?? 0, end: markers?.introEnd },
     { label: '엔딩', kind: 'credits', start: markers?.creditsStart, end: markers?.creditsEnd ?? total }
   ].filter((range): range is { label: string; kind: string; start: number; end: number } => Number.isFinite(range.start) && Number.isFinite(range.end))
     .map(range => ({ ...range, start: Math.max(0, Math.min(total, range.start)), end: Math.max(0, Math.min(total, range.end)) })).filter(range => range.end > range.start) : [];
-  // Post-credits content (> 20s after the ending song) means the episode is
-  // not over at the credits: offer "skip ending" and save next-up for the end.
   const postCredits = Boolean(markers?.creditsEnd && total && total - markers.creditsEnd > 20);
-  const generalCredits = (markers?.provenance?.credits ?? markers?.source) === 'theintrodb';
-  const creditsAt = generalCredits ? (total ? total - (postCredits ? 15 : 30) : Infinity) : postCredits ? total - 15 : markers?.creditsStart ?? (total ? total - 30 : Infinity);
-  const inCredits = Boolean((postCredits || generalCredits) && markers?.creditsEnd !== undefined && markers?.creditsStart !== undefined && time >= markers.creditsStart && time < markers.creditsEnd! - 1);
-  const showNext = Boolean(session?.next && !nextDismissed && total && time >= creditsAt && !ended);
-  const autoplay = settings?.autoplayNext ?? true;
-  const showEnd = !live && ended && !(session?.next && autoplay);
+  const creditsEnd = Math.min(markers?.creditsEnd ?? total, total);
+  const fallbackCreditsAt = session?.mediaType === 'anime' && total >= 23 * 60 && total < 25 * 60 ? 22 * 60 : total ? Math.max(total - 30, total * .9) : Infinity;
+  const creditsAt = postCredits ? total - 15 : markers?.creditsStart ?? fallbackCreditsAt;
+  const inCredits = Boolean(markers?.creditsStart !== undefined && time >= markers.creditsStart && time < creditsEnd - .1);
+  const autoplay = Boolean(settings && settings.autoplayNext !== false);
+  const markersPending = markerRequest && ['idle', 'loading'].includes(skipStatus);
+  const showNext = Boolean(session?.next && !nextDismissed && total && (ended ? autoplay : time >= creditsAt && (!postCredits || !inCredits)));
+  const showEnd = !live && ended && !showNext;
+  useEffect(() => {
+    const v = video.current;
+    if (resumeNextChecked.current || !session || !settings || !duration || waiting || !v || v.readyState < 2 || v.seeking || (markerRequest && ['idle', 'loading', 'error'].includes(skipStatus))) return;
+    resumeNextChecked.current = true;
+    if (session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextCancelled && !nextDismissed && (!postCredits || !inCredits)) goNext();
+  }, [session, settings, duration, waiting, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextCancelled, nextDismissed, postCredits, inCredits, goNext]);
   useEffect(() => {
     if (!showEnd) return;
     void recommendOther();
@@ -860,11 +877,11 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   }, [showEnd, recommendOther]);
   const delay = settings?.autoplayDelay ?? 5;
   useEffect(() => {
-    if (!showNext || !autoplay || !playing || waiting || panel || sourcePicker) { setCountdown(null); return; }
+    if (!showNext || !autoplay || markersPending || nextCancelled || (!playing && !ended) || waiting || panel || sourcePicker) { setCountdown(null); return; }
     setCountdown(delay);
     const timer = setInterval(() => setCountdown(value => (value === null ? null : value - 1)), 1000);
     return () => clearInterval(timer);
-  }, [showNext, autoplay, playing, waiting, panel, sourcePicker, delay]);
+  }, [showNext, autoplay, markersPending, nextCancelled, playing, ended, waiting, panel, sourcePicker, delay]);
   useEffect(() => { if (countdown !== null && countdown <= 0) goNext(); }, [countdown, goNext]);
 
   const intro = markers;
@@ -886,7 +903,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   useEffect(() => {
     if (!prefs.autoSkip || !playing || waiting) return;
     if (inIntro && !skipped.current.intro) { skipped.current.intro = true; seekTo(intro!.introEnd!); setFlash({ key: Date.now(), side: "center", label: "오프닝 건너뜀" }); }
-    else if (inCredits && !skipped.current.credits) { skipped.current.credits = true; seekTo(markers!.creditsEnd!); setFlash({ key: Date.now(), side: "center", label: "엔딩 건너뜀" }); }
+    else if (inCredits && !skipped.current.credits) { skipped.current.credits = true; seekTo(creditsEnd); setFlash({ key: Date.now(), side: "center", label: "엔딩 건너뜀" }); }
   }, [inIntro, inCredits, playing, waiting]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------- TV remote ---------- */
@@ -1063,7 +1080,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     holdOrigin.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
     pressTimer.current = window.setTimeout(() => {
       const v = video.current;
-      if (v && !v.paused && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = 2; }
+      if (v && !v.paused && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
     }, 450);
   };
   const onSurfacePointerMove = (event: React.PointerEvent) => {
@@ -1124,12 +1141,15 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   /* ---------- seek bar ---------- */
   const bar = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
+  const previewPosition = useRef<number | null>(null);
+  if (hover !== null) previewPosition.current = hover;
   const [scrub, setScrub] = useState<number | null>(null);
   const ratioAt = (clientX: number) => {
     const rect = bar.current!.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
   const onBarDown = (event: React.PointerEvent) => {
+    resumeNextChecked.current = true;
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
     setScrub(ratioAt(event.clientX));
   };
@@ -1172,7 +1192,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       onDragOver={event => { if (canAddSubtitles && event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDraggingSubtitle(true); } }}
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingSubtitle(false); }}
       onDrop={event => { event.preventDefault(); setDraggingSubtitle(false); void addSubtitleFiles(Array.from(event.dataTransfer.files)); }}
-      onPointerMove={event => { if (event.pointerType !== "touch") poke(); }}
+      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); if (showNext) { setNextCancelled(true); setCountdown(null); } } }}
     >
       {session && <PluginScripts player={pluginPlayer} />}
       <input ref={subtitleInput} type="file" accept={SUBTITLE_FILES} multiple hidden aria-label="자막 파일 선택" onChange={event => { void addSubtitleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
@@ -1186,7 +1206,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         crossOrigin="anonymous"
         onPlay={event => { setPlaying(!event.currentTarget.paused); setEnded(false); }}
         onPause={event => { setPlayFeedback(false); setPlaying(!event.currentTarget.paused); endPress(true); saveProgress(); swapRevision(); }}
-        onSeeked={event => { swapRevision(); if (translation.busy) translation.prioritize(event.currentTarget.currentTime); }}
+        onSeeked={event => { setTime(event.currentTarget.currentTime); setEnded(event.currentTarget.ended || event.currentTarget.currentTime >= event.currentTarget.duration); setWaiting(false); swapRevision(); if (translation.busy) translation.prioritize(event.currentTarget.currentTime); }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
         onCanPlay={() => setWaiting(false)}
@@ -1200,7 +1220,6 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         }}
         onEnded={() => {
           setEnded(true); setPlaying(false); saveProgress();
-          if (session?.next && autoplay) goNext();
         }}
       />
 
@@ -1212,7 +1231,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
       {(waiting || !session) && !error && <div className={cx("player-loading", session && !ended && !panel && chrome && "has-center-control")} role="status" aria-label="영상 불러오는 중"><Spinner size={52} /></div>}
       {flash && <div key={flash.key} className={cx("player-flash", `flash-${flash.side}`)} aria-hidden="true"><div>{flash.side === "left" ? <Rewind size={26} fill="currentColor" /> : flash.side === "right" ? <FastForward size={26} fill="currentColor" /> : null}<span>{flash.label}</span></div></div>}
-      {boost && <div className="player-boost"><FastForward size={18} />2배속</div>}
+      {boost && <div className="player-boost" role="status"><FastForward size={18} />{prefs.holdSpeed}배속</div>}
 
       <header className="player-top">
         <button className="icon-btn icon-btn-l" aria-label="뒤로" onClick={back}><ArrowLeft size={28} /></button>
@@ -1262,25 +1281,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         <Button className="player-skip" variant="secondary" data-remote-initial icon={<SkipForward size={18} />} onClick={() => seekTo(intro!.introEnd!)}>오프닝 건너뛰기</Button>
       )}
       {inCredits && !showNext && showSkip && (
-        <Button className="player-skip" variant="secondary" data-remote-initial icon={<SkipForward size={18} />} onClick={() => seekTo(markers!.creditsEnd!)}>엔딩 건너뛰기</Button>
+        <Button className="player-skip" variant="secondary" data-remote-initial icon={<SkipForward size={18} />} onClick={() => seekTo(creditsEnd)}>엔딩 건너뛰기</Button>
       )}
 
-      {showNext && session?.next && (
-        <div className="next-card" role="dialog" aria-label="다음 화">
-          <Artwork src={session.next.thumb} title={session.next.title} ratio="landscape" width={480} labelFallback={false} />
-          <div className="next-card-body">
-            <small>다음 화 · {session.next.label}</small>
-            <b>{session.next.title}</b>
-            <div className="next-card-actions">
-              <Button variant="primary" icon={<Play size={18} fill="currentColor" />} onClick={goNext} className="next-play">
-                {countdown !== null ? `${countdown}초 후 재생` : "다음 화 재생"}
-                {countdown !== null && <i className="next-countdown" style={{ animationDuration: `${delay}s` }} />}
-              </Button>
-              <Button variant="ghost" onClick={() => setNextDismissed(true)}>크레딧 보기</Button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {showEnd && (
         <div className="player-end">
@@ -1315,12 +1319,30 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
       {sourcePicker && <PlaybackSources episodeId={episodeId} position={live?0:video.current?.currentTime || time || session?.startPosition || 0} onClose={()=>setSourcePicker(false)} onPlay={(id,at,sameEpisode)=>{saveProgress(true); handingOff.current = sameEpisode && isTranslationTrack(subtitle) && translation.handoff(id); const carry = sameEpisode && (isTranslationTrack(subtitle) || subtitle?.source === 'upload'); const remembered = subtitlePreference(episodeId); if (carry) saveSubtitle(id, subtitle, remembered?.episodeId ?? episodeId); else if (sameEpisode && remembered === null) saveSubtitle(id, null); navigate(`/watch/${encodeURIComponent(id)}?t=${Math.max(0,Math.floor(at))}`, { state: carry ? { subtitle } : null });}}/>}
       <footer className="player-bottom">
+        {showNext && session?.next && (
+          <div className="next-card" role="dialog" aria-label="다음 화">
+            <Artwork src={session.next.thumb} title={session.next.title} ratio="landscape" width={480} labelFallback={false} />
+            <div className="next-card-body">
+              <small>다음 화 · {session.next.label}</small>
+              <b>{session.next.title}</b>
+              <div className="next-card-actions">
+                <Button variant="primary" icon={<Play size={18} fill="currentColor" />} onClick={goNext} className="next-play">
+                  {countdown !== null ? `${countdown}초 후 재생` : "다음 화 재생"}
+                  {countdown !== null && <i className="next-countdown" style={{ animationDuration: `${delay}s` }} />}
+                </Button>
+                {inCredits && <Button variant="ghost" onClick={() => seekTo(creditsEnd)}>엔딩 건너뛰기</Button>}
+                <Button variant="ghost" onClick={() => setNextDismissed(true)}>크레딧 보기</Button>
+              </div>
+            </div>
+          </div>
+        )}
         {notice && <div className="player-notice" role="status">
           <Captions size={16} /><span>{typeof notice === "string" ? notice : notice.text}</span>
           {typeof notice === "string"
             ? <button onClick={() => { setNotice(null); setPanel("subs"); }}>변경</button>
             : <button onClick={() => { setNotice(null); notice.action.run(); }}>{notice.action.label}</button>}
         </div>}
+        <div className="player-controls-chrome">
         {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => setHover(null)}
           role="slider" aria-label="재생 위치" aria-valuemin={0} aria-valuemax={Math.round(total)} aria-valuenow={Math.round(shown)} aria-valuetext={clock(shown)} tabIndex={0}>
           <div className="seek-rail">
@@ -1329,7 +1351,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             {skipRanges.map(range => <i key={range.kind} className={`seek-marker seek-${range.kind}`} title={`${range.label} ${clock(range.start)}–${clock(range.end)}`} style={{ left: `${range.start / total * 100}%`, width: `${(range.end - range.start) / total * 100}%` }} />)}
           </div>
           <i className="seek-thumb" style={{ left: `${total ? (shown / total) * 100 : 0}%` }} />
-          {hover !== null && total > 0 && <span className="seek-tip" style={{ left: `clamp(84px, ${hover * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={session.sessionId} session={session} seconds={hover * total} />}<span>{skipRanges.find(range => hover * total >= range.start && hover * total < range.end)?.label} {clock(hover * total)}</span></span>}
+          {previewPosition.current !== null && total > 0 && <span className="seek-tip" hidden={hover === null} style={{ left: `clamp(84px, ${previewPosition.current * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={session.sessionId} session={session} seconds={previewPosition.current * total} />}<span>{skipRanges.find(range => previewPosition.current! * total >= range.start && previewPosition.current! * total < range.end)?.label} {clock(previewPosition.current * total)}</span></span>}
         </div>}
 
         <div className="player-controls" data-remote-group>
@@ -1366,6 +1388,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
           </div>
         </div>
 
+        </div>
       </footer>
 
       {panel && session && (
@@ -1407,13 +1430,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                 {canTranslate && <TranslationEntry config={translationConfig} admin={admin} state={translation.state} tracks={allSubs} onOpen={() => { autopilot.hide(); setSubsView("translate"); }} />}
                 {canAddSubtitles && <div className="online-subs">
                   {online.status === "idle" && (
-                    <button className="opt opt-action" onClick={() => void searchOnline()}><CloudDownload size={18} /><span>온라인에서 한국어 자막 찾기</span></button>
+                    <button className="opt opt-action" onClick={() => void searchOnline(undefined, true)}><CloudDownload size={18} /><span>온라인에서 한국어 자막 찾기</span></button>
                   )}
                   {online.status === "searching" && (
                     <div className="online-searching" role="status"><Spinner size={16} /><span>한국어 자막을 찾는 중…</span></div>
                   )}
                   {online.status === "error" && (
-                    <button className="opt opt-action" onClick={() => void searchOnline()}><RotateCw size={18} /><span>찾지 못했어요 · 다시 시도</span></button>
+                    <button className="opt opt-action" onClick={() => void searchOnline(undefined, true)}><RotateCw size={18} /><span>찾지 못했어요 · 다시 시도</span></button>
                   )}
                   {online.status === "done" && online.result && (
                     <>
@@ -1497,7 +1520,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               <Stepper label="이전 시즌까지의 화수" unit="화" value={subQuery.episodeOffset} min={0} max={10000} onChange={episodeOffset => setSubQuery({ ...subQuery, episodeOffset })} />
               <p className="panel-note">영어 사이트는 화수를 처음부터 이어 세는 경우가 많아요. 예를 들어 ‘25화’가 실제로는 주술회전 2기 1화라면 시즌 2, 화수 1, 이전 시즌까지 24화로 맞춰 주세요. 자막 블로그에 ‘25화’로 올라온 자막도 함께 찾아요.</p>
               <div className="sub-search-actions">
-                <button type="button" className="pf-reset" onClick={() => { setSubsView("main"); void searchOnline(); }}>자동으로 다시 찾기</button>
+                <button type="button" className="pf-reset" onClick={() => { setSubsView("main"); void searchOnline(undefined, true); }}>자동으로 다시 찾기</button>
                 <Button type="submit" variant="primary" icon={<Search size={16} />} disabled={!subQuery.title.trim()}>이 조건으로 찾기</Button>
               </div>
             </form>
@@ -1507,7 +1530,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               <PluginTools {...pluginPlayer} />
               <div className="pf-block">
                 <span className="pf-label">재생 속도</span>
-                <div className="seg seg-fill" role="group" aria-label="재생 속도">
+                <div className="seg seg-fill" role="group" aria-label="재생 속도" style={{ "--segments": SPEEDS.length, "--selected": SPEEDS.indexOf(speed) } as React.CSSProperties}>
                   {SPEEDS.map(value => (
                     <button key={value} className={cx(speed === value && "is-active")} aria-pressed={speed === value} onClick={() => { setSpeed(value); if (video.current) video.current.playbackRate = value; }}>{value === 1 ? "1x" : `${value}x`}</button>
                   ))}
@@ -1516,9 +1539,9 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               <div className="pf-block">
                 <span className="pf-label">화질</span>
                 {levels.length > 1 ? (
-                  <div className="seg seg-fill" role="group" aria-label="화질">
+                  <div className="seg seg-fill" role="group" aria-label="화질" style={{ "--segments": sortedLevels.length + 1, "--selected": level === -1 ? 0 : sortedLevels.findIndex(item => item.index === level) + 1 } as React.CSSProperties}>
                     <button className={cx(level === -1 && "is-active")} aria-pressed={level === -1} onClick={() => { setLevel(-1); engine.current?.setLevel(-1); }}>자동</button>
-                    {[...levels].sort((a, b) => b.height - a.height).map(item => (
+                    {sortedLevels.map(item => (
                       <button key={item.index} className={cx(level === item.index && "is-active")} aria-pressed={level === item.index} onClick={() => { setLevel(item.index); engine.current?.setLevel(item.index); }}>{item.height}p</button>
                     ))}
                   </div>

@@ -160,4 +160,4 @@ button.shorts-overview { padding: 0; text-align: left; text-shadow: inherit; cur
 
 /* Press-and-hold speed-up. */
 .shorts-native-video { touch-action: pan-y; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
-.shorts-fast { position: absolute; top: calc(var(--safe-top) + 16px); left: 50%; z-index: 4; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px; background: rgba(0, 0, 0, .5); color: #fff; font-size: .86rem; font-weight: 700; pointer-events: none; }
+.shorts-fast { position: absolute; top: calc(var(--safe-top) + 16px); left: 50%; z-index: 4; transform: translateX(-50%); padding: 4px 12px; border-radius: 999px; background: rgba(24, 24, 28, .55); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 0 0 1px var(--hairline); color: #fff; font-size: .86rem; font-weight: 700; pointer-events: none; }

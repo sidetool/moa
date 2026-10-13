@@ -11,6 +11,7 @@ export function SeekPreview({ session, seconds }: { session: PlaybackSession; se
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [image, setImage] = useState('');
+  const imageUrl = useRef('');
   const at = Math.min(Math.max(0, Math.floor(seconds / 2) * 2), session.duration > 0 ? Math.max(0, session.duration - .01) : Infinity);
   target.current = at;
   const server = session.mode !== 'direct';
@@ -18,16 +19,18 @@ export function SeekPreview({ session, seconds }: { session: PlaybackSession; se
   useEffect(() => {
     if (!server) return;
     const abort = new AbortController();
-    let blob = '';
-    setImage(''); setFailed(false);
+    setFailed(false);
     const timer = window.setTimeout(() => {
       fetch(`/api/playback/${encodeURIComponent(session.sessionId)}/preview?at=${at}`, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(12_000)]), credentials: 'same-origin' })
         .then(response => response.ok ? response.blob() : Promise.reject(new Error('preview')))
-        .then(value => { if (!abort.signal.aborted) { blob = URL.createObjectURL(value); setImage(blob); } })
+        .then(value => { if (!abort.signal.aborted) { const blob = URL.createObjectURL(value); if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); imageUrl.current = blob; setImage(blob); } })
         .catch(() => { if (!abort.signal.aborted) setFailed(true); });
-    }, 200);
-    return () => { window.clearTimeout(timer); abort.abort(); if (blob) URL.revokeObjectURL(blob); };
+    }, 80);
+    return () => { window.clearTimeout(timer); abort.abort(); };
   }, [server, session.sessionId, at]);
+
+  useEffect(() => () => { if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); }, []);
+  useEffect(() => setFailed(false), [at, session.sessionId]);
 
   useEffect(() => {
     const element = video.current;
@@ -42,7 +45,7 @@ export function SeekPreview({ session, seconds }: { session: PlaybackSession; se
     element.addEventListener('loadeddata', loaded);
     element.addEventListener('seeked', loaded);
     element.addEventListener('error', error);
-    const timer = window.setTimeout(async () => {
+    void (async () => {
       const isHls = session.mime === 'application/vnd.apple.mpegurl' || /\.m3u8(?:\?|$)/.test(session.url);
       if (!isHls || element.canPlayType('application/vnd.apple.mpegurl')) { element.src = session.url; return; }
       try {
@@ -54,9 +57,9 @@ export function SeekPreview({ session, seconds }: { session: PlaybackSession; se
         instance.on(HlsClass.Events.ERROR, (_, data) => { if (data.fatal) { setFailed(true); instance.stopLoad(); } });
         instance.loadSource(session.url); instance.attachMedia(element);
       } catch { if (!stopped) setFailed(true); }
-    }, 200);
+    })();
     return () => {
-      stopped = true; window.clearTimeout(timer); window.clearTimeout(deadline.current);
+      stopped = true; window.clearTimeout(deadline.current);
       element.removeEventListener('loadedmetadata', seek); element.removeEventListener('loadeddata', loaded); element.removeEventListener('seeked', loaded); element.removeEventListener('error', error);
       hls.current?.destroy(); hls.current = null;
       element.pause(); element.removeAttribute('src'); element.load();
@@ -73,7 +76,7 @@ export function SeekPreview({ session, seconds }: { session: PlaybackSession; se
       if (Math.abs(element.currentTime - at) < .1 && element.readyState >= 2) { window.clearTimeout(deadline.current); setReady(true); return; }
       hls.current?.startLoad(at);
       element.currentTime = Math.min(at, Math.max(0, element.duration - .1));
-    }, 200);
+    }, 80);
     return () => { window.clearTimeout(timer); window.clearTimeout(deadline.current); };
   }, [server, failed, at]);
 

@@ -416,6 +416,8 @@ export interface Settings {
   subtitleOutline?: number | null;
   subtitleHeight?: number;
   subtitlePadding?: number;
+  subtitlePreserveAss?: boolean;
+  subtitleStep?: 1 | 5 | 10;
   preferredQuality: "auto" | "1080" | "720" | "480";
   hardwareTranscoding: boolean;
   /** Search Korean subtitles online when an anime episode has none. */
@@ -477,12 +479,12 @@ export interface BrowseSelection { revision: string; filters: FilterChange[] }
 export interface TitleGroup { id: string; manual: boolean; members: MediaCard[] }
 
 /* ---------- Accounts (auth service: /__moa/api) ---------- */
-export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | 'subtitleBackground' | 'subtitleShadow' | 'subtitleOutline' | 'subtitleHeight' | 'subtitlePadding'> & {
+export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | 'subtitleBackground' | 'subtitleShadow' | 'subtitleOutline' | 'subtitleHeight' | 'subtitlePadding' | 'subtitlePreserveAss' | 'subtitleStep'> & {
   /** null follows the device's mobile/desktop default. */
   shortsScreenFit: boolean | null;
-  fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
+  fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; holdSpeed: 1.25 | 1.5 | 2 | 2.5 | 3; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: true, subtitleStep: 5 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];
@@ -548,6 +550,7 @@ export interface UpdateStatus {
 }
 
 /* ---------- Gemini subtitle translation ---------- */
+export const TRANSLATION_MAX_KEYS = 20;
 export interface TranslationConfig { provider: "gemini" | "openai"; baseUrl: string; configured: boolean; enabled: boolean; model: string; batchSize: number; requestIntervalMs: number; retryCount: number; keys: { id: string; label: string; test?: { ok: boolean; error?: string } }[] }
 export interface TranslationJob {
   revision: number;
@@ -634,6 +637,13 @@ export interface TitlePeople { cast: PersonCredit[]; crew: PersonCredit[]; trunc
 export type PeopleStatus = 'ready' | 'unlinked' | 'unconfigured' | 'restricted' | 'unavailable';
 export interface TitlePeopleResponse extends TitlePeople {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;
+}
+export interface TitleMetadata {
+  title: string; originalTitle?: string; overview?: string; genres: string[];
+  year?: number; runtime?: number; rating?: number; certification?: string; poster?: string; backdrop?: string;
+}
+export interface TitleMetadataResponse {
+  provider: string; status: PeopleStatus; title: LinkedPluginTitle | null; details: TitleMetadata | null;
 }
 export interface PersonWorksResponse {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;

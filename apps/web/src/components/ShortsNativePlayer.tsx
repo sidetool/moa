@@ -3,6 +3,7 @@ import { AlertCircle, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ShortsNativeSession } from "../api/shorts";
 import { ApiError } from "../lib/api";
+import { useDevicePrefs } from "../lib/device-prefs";
 import { NativePool } from "../lib/shorts-native-pool";
 import { ShortsCaptions } from "./ShortsCaptions";
 import { reportShortFailure, useWatchTime, type ShortsControl, type ShortsSession } from "./ShortsPlayer";
@@ -57,6 +58,7 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
   const [round, setRound] = useState(0);
   const [phase, setPhase] = useState<Phase>("prepare");
   const [paused, setPaused] = useState(false);
+  const { holdSpeed } = useDevicePrefs();
   const { since, flush } = useWatchTime(itemKey, session);
   const callbacks = useRef({ onMuted, onBlocked, onPlaying, onStarted, onEnded, onFit });
   callbacks.current = { onMuted, onBlocked, onPlaying, onStarted, onEnded, onFit };
@@ -156,7 +158,6 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
   }, [itemKey, round]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (video.current) video.current.muted = muted; }, [muted]);
-  // Press and hold: 2× while held. Any release, cancel, drag, scroll or hiding restores the previous rate.
   function endHold() {
     const current = hold.current;
     if (!current) return;
@@ -184,7 +185,7 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
         const el = video.current, current = hold.current;
         if (!el || !current || el.paused || !live.current) return;
         current.prev = el.playbackRate;
-        el.playbackRate = 2;
+        el.playbackRate = holdSpeed;
         suppressClick.current = true; // the release after a hold is not a tap
         setFast(true);
       }, HOLD_MS) };
@@ -279,7 +280,7 @@ export function ShortsNativePlayer({ itemKey, title, session, pool, ahead, quali
         setTime(old => ({ ...old, at }));
       }} />
     {prepared && video.current && <ShortsCaptions video={video.current} prepared={prepared} rail={places.rail} info={places.info} />}
-    {fast && <span className="shorts-fast" aria-hidden="true">2×</span>}
+    {fast && <span className="shorts-fast" aria-hidden="true">{holdSpeed}×</span>}
     {phase === "ready" && paused && <span className="shorts-native-paused" aria-hidden="true"><Play size={30} fill="currentColor" /></span>}
     {(phase === "prepare" || phase === "loading") && <div className="shorts-overlay is-quiet"><Spinner size={28} /></div>}
     {failed && <div className="shorts-overlay" role="alert">

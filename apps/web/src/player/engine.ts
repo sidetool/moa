@@ -81,7 +81,7 @@ async function hlsSupported() {
 
 type Jassub = Pick<import("jassub").default, "destroy" | "ready" | "timeOffset" | "renderer" | "resize" | "_demandRender" | "_lastDemandTime">;
 type AssStyle = Awaited<ReturnType<Jassub["renderer"]["getStyles"]>>[number];
-export type SubtitleAppearance = { size: "small" | "medium" | "large" | "xlarge"; background: "original" | "none" | "soft" | "solid"; shadow?: "original" | "none" | "soft" | "strong" | number; outline?: "original" | "none" | "thin" | "thick" | number; scale?: number; padding?: number };
+export type SubtitleAppearance = { size: "small" | "medium" | "large" | "xlarge"; background: "original" | "none" | "soft" | "solid"; shadow?: "original" | "none" | "soft" | "strong" | number; outline?: "original" | "none" | "thin" | "thick" | number; scale?: number; padding?: number; preserveAss?: boolean };
 
 /** Shows one subtitle track at a time: VTT via <track>, ASS via libass (JASSUB). */
 export class SubtitleController {
@@ -163,7 +163,7 @@ export class SubtitleController {
     const renderer = this.ass, token = this.token;
     this.styling = this.styling.catch(() => {}).then(async () => {
       if (!renderer || token !== this.token || !this.originalStyles.length) return;
-      const { size, background, shadow = "original", outline = "original", scale, padding = 6 } = this.appearance;
+      const { size, background, shadow = "original", outline = "original", scale, padding = 6 } = this.appearance.preserveAss ? { size: "medium", background: "original" } as SubtitleAppearance : this.appearance;
       const originalEffects = background === "original" && shadow === "original" && outline === "original";
       const originalAppearance = (scale === undefined ? size === "medium" : scale === 100) && originalEffects;
       if (originalAppearance && !this.styled) return;

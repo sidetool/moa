@@ -17,7 +17,7 @@ const usePlugins = () => {
 const catalogQueries = ['home', 'media', 'media-list', 'search', 'watchlist', 'source-page', 'source-browse', 'tab-source', 'tab-source-latest', 'grouped-cards'];
 const path = (id: string) => `/plugins/${encodeURIComponent(id)}`;
 const runtimePath = (id: string) => `/plugin-runtime/${encodeURIComponent(id)}`;
-const permissionLabels = { 'reviews.read':'현재 작품의 공개 리뷰·애니 후보 읽기', 'boxoffice.read':'국내 극장 박스오피스 읽기', 'schedule.read':'한국 개봉·방영 일정 읽기', 'watchlist.read': '현재 프로필의 내 목록 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
+const permissionLabels = { 'reviews.read':'현재 작품의 공개 리뷰·애니 후보 읽기', 'boxoffice.read':'국내 극장 박스오피스 읽기', 'schedule.read':'한국 개봉·방영 일정 읽기', 'watchlist.read': '현재 프로필의 내 목록 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품 정보·출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
 type Player = { episodeId: string; title: string; getTime: () => number; onImport: (files: File[]) => Promise<boolean>; control: (action: string, seconds?: number) => Promise<void> };
 const act = (pluginId: string, actionId?: string) => window.dispatchEvent(new CustomEvent('moa:plugin-action', { detail: { pluginId, actionId } }));
 const sdk = `
@@ -72,7 +72,7 @@ const sdk = `
     watchlist: Object.freeze({ news: () => call('watchlist.news', {}), list: query => call('watchlist.read', query || {}) }),
     history: Object.freeze({ list: query => call('history.read', query || {}) }),
     reviews: Object.freeze({ list: (provider, selection) => call('reviews.list', {provider: provider || 'tmdb', ...(selection === undefined ? {} : {selection})}) }),
-    metadata: Object.freeze({ credits: () => call('metadata.credits'), person: identity => call('metadata.person', identity) }),
+    metadata: Object.freeze({ details: () => call('metadata.details'), credits: () => call('metadata.credits'), person: identity => call('metadata.person', identity) }),
     discovery: Object.freeze({ boxOffice: query => call('discovery.boxoffice',query), trending: query => call('discovery.trending', query), schedule: query => call('discovery.schedule',query) }),
     storage: Object.freeze({ get: () => call('storage'), set: value => call('storage', value) }),
     notify: text => call('notifications', text),
@@ -214,11 +214,11 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
         } else if (data.method === 'fetch') {
           if (typeof data.value?.url !== 'string' || data.value.url.length > 2048) throw new Error('주소를 확인해 주세요.');
           result = await api(`${runtimePath(plugin.id)}/request`, { method: 'POST', body: { url: data.value.url, revision: plugin.revision } });
-        } else if (['metadata.credits','metadata.person'].includes(data.method) && installed.permissions.includes('metadata.read')) {
+        } else if (['metadata.credits','metadata.person','metadata.details'].includes(data.method) && installed.permissions.includes('metadata.read')) {
           const pathname = page.current.pathname, match = /^\/title\/([^/]+)\/?$/.exec(pathname);
           if (!match) throw new Error('작품 상세에서 열어 주세요.');
           const mediaId = decodeURIComponent(match[1]);
-          const action = data.method === 'metadata.credits' ? 'credits' : 'person';
+          const action = data.method.slice('metadata.'.length);
           result = await api(`${runtimePath(plugin.id)}/metadata/${action}`, {method:'POST',body:{revision:plugin.revision,mediaId,...(action === 'person' ? {person:data.value} : {})}});
           if (page.current.pathname !== pathname) throw new Error('작품이 변경되었어요. 다시 열어 주세요.');
         } else if (data.method === 'reviews.list' && installed.permissions.includes('reviews.read')) {

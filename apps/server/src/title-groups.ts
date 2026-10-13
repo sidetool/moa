@@ -4,6 +4,7 @@ import { parseSeason } from '@moa/subtitles-ko';
 import type { MediaCard, TitleGroup } from '@moa/shared';
 import { Catalog } from './catalog.js';
 import { ApiFailure, normalize } from './util.js';
+import { subtitleQuery } from './subtitle-query.js';
 
 // Deliberately retain season, year and edition words. Similar titles are only suggestions.
 export function titleIdentity(title: string, type: string, year?: number): string {
@@ -117,6 +118,24 @@ export class TitleGroups {
     const map = this.mapping(profile), key = map.get(id);
     if (!key) throw new ApiFailure(404,'media-not-found');
     return { id:key, manual:key.startsWith('manual:'), members:[...map].filter(([,g]) => g === key).map(([mid]) => this.catalog.card(this.catalog.db.get('SELECT * FROM media WHERE id=?',mid)!,profile)) };
+  }
+  relatedEpisodes(episodeId: string, profile: string) {
+    const episode = this.catalog.db.get('SELECT media_id FROM episodes WHERE id=?', episodeId);
+    if (!episode) throw new ApiFailure(404, 'episode-not-found');
+    const mapping = this.mapping(profile), group = mapping.get(episode.media_id);
+    const mediaIds = group ? [...mapping].filter(([, key]) => key === group).map(([id]) => id) : [episode.media_id as string];
+    if (mediaIds.length === 1) return { episodeIds: [episodeId], mediaIds };
+    const rows = this.catalog.db.all(`SELECT e.*,m.title AS original_title FROM episodes e JOIN media m ON m.id=e.media_id
+      WHERE e.media_id IN (${mediaIds.map(() => '?').join(',')})`, ...mediaIds);
+    const identity = (row: Record<string, any>) => { try { return subtitleQuery(this.catalog.db, row); } catch { return undefined; } };
+    const current = identity(rows.find(row => row.id === episodeId)!);
+    const episodeIds = rows.filter(row => {
+      if (row.id === episodeId) return true;
+      if (row.media_id === episode.media_id) return false;
+      const query = identity(row);
+      return current && query && !current.warnings.length && !query.warnings.length && query.season === current.season && query.episode === current.episode;
+    }).map(row => row.id as string);
+    return { episodeIds, mediaIds };
   }
   resolve(ids: string[], profile: string, query?: string): MediaCard[] {
     return this.resolveMapped(ids,profile,this.mapping(profile),query);
