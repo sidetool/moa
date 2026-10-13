@@ -12,7 +12,7 @@ const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_
 try {
   const cases = modes.flatMap(mode => [
     ...[true, false].flatMap(early => ['', '?t=40', '?t=0'].map(query => ({ mode, early, query }))),
-    ...['steady', 'pause', 'buffer'].map(lifecycle => ({ mode, early: true, query: '?t=40', lifecycle }))
+    ...['steady', 'pause', 'buffer', 'loading'].map(lifecycle => ({ mode, early: true, query: '?t=40', lifecycle }))
   ]).filter(c => !process.env.MOA_TEST_DISMISS_ONLY || c.lifecycle === process.env.MOA_TEST_DISMISS_ONLY);
   for (const { mode, early, query, lifecycle } of cases) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
@@ -64,11 +64,40 @@ try {
       }
       await page.getByRole('button', { name: '처음부터', exact: true }).waitFor();
       if (lifecycle) {
+        if (lifecycle === 'loading') {
+          assert.equal(await page.locator('video').evaluate(v => v.readyState), 0);
+          await page.waitForTimeout(5500);
+          assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, 'hide five seconds after display even while media is still loading');
+          release();
+          await page.waitForFunction(() => { const v = document.querySelector('video'); return v && !v.paused && v.readyState >= 3 && v.currentTime >= 40; });
+          assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, 'playback starting later must not reopen the prompt');
+          assert.equal(calls.length, 1);
+          assert.deepEqual(errors, []);
+          console.log(`PASS: ${mode} prompt hides five seconds after display during loading`);
+          continue;
+        }
         release();
         await page.waitForFunction(() => { const v = document.querySelector('video'); return v && !v.paused && v.readyState >= 3 && v.currentTime >= 40; });
         await page.waitForTimeout(1000);
         if (lifecycle === 'pause') await page.locator('video').evaluate(v => v.pause());
         if (lifecycle === 'buffer') {
+          // The real touch player must keep spinning both with and without its controls.
+          await page.mouse.move(180, 110);
+          await page.locator('video').evaluate(v => v.dispatchEvent(new Event('waiting')));
+          const checkSpin = async selector => {
+            const spinner = page.locator(selector);
+            await spinner.waitFor({ state: 'visible' });
+            const sample = () => spinner.evaluate(el => { const s = getComputedStyle(el); return { names: s.animationName, iterations: s.animationIterationCount, transform: s.transform }; });
+            await page.waitForTimeout(200);
+            const first = await sample();
+            await page.waitForTimeout(230);
+            const second = await sample();
+            assert.ok(first.names.includes('spin') && first.iterations.includes('infinite'), selector);
+            assert.notEqual(first.transform, second.transform, `${selector} must actually rotate`);
+          };
+          await checkSpin('.player.is-chrome .center-play > .spinner');
+          await page.waitForFunction(() => document.querySelector('.player')?.classList.contains('is-idle'));
+          await checkSpin('.player.is-idle .player-loading > .spinner');
           // Exercise the media event sequence that used to cancel/restart the dismissal timer.
           for (let i = 0; i < 5; i++) {
             await page.locator('video').evaluate(v => v.dispatchEvent(new Event('waiting')));
@@ -83,15 +112,11 @@ try {
         assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, 'a later playing event must not reopen the prompt');
         assert.equal(calls.length, 1, 'dismissal must not start another playback session');
         assert.deepEqual(errors, []);
-        console.log(`PASS: ${mode} prompt hides after initial playback despite ${lifecycle}`);
+        console.log(`PASS: ${mode} prompt hides after display despite ${lifecycle}`);
         continue;
       }
       if (early) {
         assert.equal(await page.locator('video').evaluate(v => v.readyState), 0);
-        if (query) {
-          await page.waitForTimeout(7500);
-          assert.ok(await page.getByRole('button', { name: '처음부터', exact: true }).isVisible(), 'loading must not consume the restart prompt');
-        }
       }
       else await page.waitForFunction(() => { const v = document.querySelector('video'); return v && !v.paused && v.currentTime >= 40; });
       await page.getByRole('button', { name: '처음부터', exact: true }).click();
