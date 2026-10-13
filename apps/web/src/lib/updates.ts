@@ -18,6 +18,10 @@ export function useUpdateAction(onDone?: () => void) {
 }
 
 export const busyStates: UpdateStatus['state'][] = ['checking', 'updating', 'downloading', 'preflight', 'backup', 'applying', 'verifying', 'rolling-back'];
+export const updateStateLabels: Partial<Record<UpdateStatus['state'], string>> = {
+  idle: '확인 전', checking: '업데이트 확인 중…', updating: '업데이트 중…', current: '최신 상태', available: '업데이트 가능', blocked: '설치 확인 필요', failed: '업데이트 실패', 'restart-required': '서버 재시작 필요',
+  downloading: '다운로드 중…', preflight: '설치 전 확인 중…', backup: '백업 중…', applying: '적용 중…', verifying: '상태 확인 중…', 'rolling-back': '이전 버전 복구 중…', 'rolled-back': '이전 버전으로 복구됨', 'recovery-required': '수동 복구 필요'
+};
 export const updateErrors: Record<string, string> = {
   'updater-unavailable': '업데이트 서비스에 연결하지 못했습니다.',
   'update-dirty': '수정한 파일을 커밋하거나 정리한 뒤 다시 확인해 주세요.',
@@ -48,7 +52,9 @@ export const updateErrors: Record<string, string> = {
   'update-recovery-required': '자동 복구를 마치지 못했어요. 설치 안내의 복구 방법을 확인해 주세요.',
   'update-invalid-policy': '업데이트 채널을 다시 선택해 주세요.',
   'update-layout-unsupported': '현재 Compose 구성을 확인할 수 없습니다. 설치 폴더와 볼륨 구성을 확인해 주세요.',
-  'update-not-available': '업데이트 상태가 바뀌었어요. 다시 확인해 주세요.'
+  'update-not-available': '업데이트 상태가 바뀌었어요. 다시 확인해 주세요.',
+  'update-components-unsupported': '이 설치 방식에서는 웹에서 추가 기능을 설치할 수 없어요.',
+  'update-component-external': '직접 연결한 외부 서버를 쓰고 있어 여기서 바꾸지 않아요.'
 };
 export const errorCode = (error: unknown) => error instanceof ApiError ? error.code : error ? 'update-failed' : null;
 

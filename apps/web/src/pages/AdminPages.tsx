@@ -17,6 +17,7 @@ import { TranslationSettings } from "../components/TranslationSettings";
 import { DownloadSettings } from "../components/DownloadSettings";
 import { recommendationsKey, useResetDismissals } from "../api/recommendations";
 import { UpdateSettings } from "../components/UpdateSettings";
+import { ComponentSettings } from "../components/ComponentSettings";
 import { SystemInfo } from "../components/SystemInfo";
 import { SubtitleAdvancedSettings, RequestControls } from "../components/SubtitleAdvancedSettings";
 import { ShortsSettings } from "../components/ShortsSettings";
@@ -281,7 +282,7 @@ export function SettingsPage() {
         {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}
         {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />)}
       </div></section>}
-      {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /></>}<AboutPage embedded /></>}
+      {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /><ComponentSettings /></>}<AboutPage embedded /></>}
       {category === "tabs" && <NavigationSettings />}
       {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} anilist={s.anilistRecommendationsEnabled === true}
         onChange={patch => void save(patch).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}

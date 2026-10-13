@@ -1163,3 +1163,11 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
 @media(max-width:640px){.review-list{grid-template-columns:1fr}.review-heading{font-size:18px}.review-heading-aside{font-size:0;gap:0}.review-toolbar{align-items:flex-start}.review-filters button{padding:8px 10px}.review-attribution{align-items:flex-start}}
 
 .review-candidates{margin-top:20px}.review-candidates>button{display:flex;flex-direction:column;gap:6px;width:100%;padding:14px 0;text-align:left;color:inherit;font:inherit;background:none;border:0;border-bottom:1px solid #ffffff18;cursor:pointer}.review-candidates>button:hover strong{text-decoration:underline}.review-candidates>button span{font-size:12px;color:var(--muted,#a1a1aa)}
+
+/* Optional components */
+.setting > .component-side { display: flex; align-items: center; gap: 10px; flex: none; }
+.status-pill.is-busy { background: rgba(123, 97, 255, .16); color: var(--accent-strong); animation: component-pulse 1.6s ease-in-out infinite; }
+@keyframes component-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .status-pill.is-busy { animation: none; } }
+.component-manage > p { margin: 0 0 8px; color: var(--text-3); font-size: .84rem; line-height: 1.5; }
+.component-manage-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 12px; font-size: .9rem; }

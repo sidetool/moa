@@ -34,7 +34,7 @@ export class UpdateMaintenance {
     if (!this.dir) return;
     app.addHook('onRequest', async (req, reply) => {
       const route = req.routeOptions.url ?? req.url.split('?')[0];
-      if (!route.startsWith('/api/') || route === '/api/health' || route.startsWith('/api/admin/updates')) return;
+      if (!route.startsWith('/api/') || route === '/api/health' || route.startsWith('/api/admin/updates') || req.method === 'GET' && route === '/api/admin/components') return;
       if (this.paused) throw new ApiFailure(503, 'update-maintenance');
       this.inFlight++;
       let finished = false;

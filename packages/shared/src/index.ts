@@ -520,6 +520,19 @@ export interface SystemInfo {
   os: string; kernel: string; architecture: string; nodeVersion: string; version: string; revision: string;
   deployment: string; cpuCount: number; memoryTotal: number; memoryUsed: number; uptimeSeconds: number;
 }
+export type OptionalComponentId = 'apk' | 'browser';
+export interface OptionalComponent {
+  id: OptionalComponentId; installed: boolean; enabled: boolean; managed: boolean; supported: boolean;
+  reason: string | null; downloadBytes: number | null;
+}
+export interface ComponentsStatus {
+  available: boolean; reason: string | null; currentVersion: string | null; items: OptionalComponent[];
+  busy: boolean; phase: UpdateStatus['state']; error: string | null;
+  operation: { id: OptionalComponentId; enabled: boolean; state: 'working' | 'complete' | 'failed' | 'rolled-back'; error: string | null } | null;
+}
+// GET /api/admin/components -> ComponentsStatus
+// POST /api/admin/components/:id {enabled:boolean} -> 202 ComponentsStatus
+// POST /api/admin/updates/check refreshes component availability as well.
 export interface UpdateStatus {
   configured: boolean; connected: boolean;
   state: 'idle' | 'checking' | 'updating' | 'current' | 'available' | 'blocked' | 'failed' | 'restart-required'
@@ -528,6 +541,7 @@ export interface UpdateStatus {
   current: string; latest: string | null; branch: string | null;
   behind: number; ahead: number; checkedAt: number | null; error: string | null;
   policy?: UpdatePolicy; nextCheckAt?: number | null; notesUrl?: string | null;
+  components?: OptionalComponent[]; componentSupport?: boolean; componentOperation?: ComponentsStatus['operation'];
   updaterVersion?: string; history?: UpdateHistory[]; discovery?: ReleaseDiscovery;
 }
 

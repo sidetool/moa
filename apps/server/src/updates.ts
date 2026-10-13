@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import type { FastifyInstance } from 'fastify';
-import type { UpdateStatus, UpdatePolicy, ReleaseDiscovery, SystemInfo } from '@moa/shared';
+import type { UpdateStatus, UpdatePolicy, ReleaseDiscovery, SystemInfo, ComponentsStatus, OptionalComponentId } from '@moa/shared';
 import { ApiFailure } from './util.js';
 
 export function validatePolicy(value: unknown): UpdatePolicy {
@@ -19,6 +19,9 @@ function releaseFields(data: Record<string, any>): Partial<UpdateStatus> {
   let policy: UpdatePolicy | undefined;
   try { policy = validatePolicy(data.policy); } catch {}
   return {
+    componentSupport: data.componentSupport === true,
+    components: Array.isArray(data.components) ? data.components.filter((i: any) => i && ['apk','browser'].includes(i.id) && ['enabled','installed','managed','supported'].every(k => typeof i[k] === 'boolean')).slice(0,2).map((i: any) => ({ id: i.id, enabled: i.enabled, installed: i.installed, managed: i.managed, supported: i.supported, reason: typeof i.reason === 'string' && /^update-[a-z-]+$/.test(i.reason) ? i.reason : null, downloadBytes: Number.isSafeInteger(i.downloadBytes) && i.downloadBytes >= 0 ? i.downloadBytes : null })) : [],
+    componentOperation: data.componentOperation && ['apk','browser'].includes(data.componentOperation.id) && typeof data.componentOperation.enabled === 'boolean' && ['working','complete','failed','rolled-back'].includes(data.componentOperation.state) ? { id: data.componentOperation.id, enabled: data.componentOperation.enabled, state: data.componentOperation.state, error: typeof data.componentOperation.error === 'string' && /^update-[a-z-]+$/.test(data.componentOperation.error) ? data.componentOperation.error : null } : null,
     policy, updaterVersion: typeof data.updaterVersion === 'string' && /^\d+\.\d+\.\d+$/.test(data.updaterVersion) ? data.updaterVersion : undefined,
     nextCheckAt: Number.isSafeInteger(data.nextCheckAt) ? data.nextCheckAt : null,
     notesUrl: typeof data.notesUrl === 'string' && /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/releases\/tag\/v[0-9.]+(?:-beta\.\d+)?$/.test(data.notesUrl) ? data.notesUrl : null,
@@ -141,7 +144,22 @@ export class Updates {
     if (process.platform === 'linux') { try { name = (await readFile('/etc/os-release', 'utf8')).match(/^PRETTY_NAME=["']?([^"'\n]+)["']?$/m)?.[1] || name; } catch {} }
     return { os: name, kernel: os.release(), architecture: os.arch(), nodeVersion: process.versions.node, version: installed.version || 'unknown', revision: installed.revision, deployment: installed.mode || 'unknown', cpuCount: os.availableParallelism(), memoryTotal: os.totalmem(), memoryUsed: os.totalmem() - os.freemem(), uptimeSeconds: Math.floor(process.uptime()) };
   }
-  async request(action: 'check' | 'apply' | 'configure', policy?: UpdatePolicy) {
+  async components(status?: UpdateStatus): Promise<ComponentsStatus> {
+    const s = status || await this.hostStatus();
+    const reason = !s.connected ? 'updater-unavailable' : s.mode !== 'release' || !s.componentSupport ? 'update-components-unsupported' : s.state === 'recovery-required' ? 'update-recovery-required' : null;
+    return { available: !reason, reason, currentVersion: s.current, items: s.components || [], busy: ['checking','updating','downloading','preflight','backup','applying','verifying','rolling-back'].includes(s.state), phase: s.state, error: s.error, operation: s.componentOperation || null };
+  }
+  async componentReady(id: string, enabled: unknown) {
+    if (!['apk','browser'].includes(id) || typeof enabled !== 'boolean') throw new ApiFailure(400,'update-request-invalid');
+    const s = await this.components();
+    if (!s.available) throw new ApiFailure(503,s.reason!);
+    if (s.busy) throw new ApiFailure(409,'update-busy');
+    const item = s.items.find(i => i.id === id);
+    if (!item) throw new ApiFailure(409,'update-components-unsupported');
+    if (!item.managed) throw new ApiFailure(409,'update-component-external');
+    if (enabled && !item.supported) throw new ApiFailure(409,'update-platform-unsupported');
+  }
+  async request(action: 'check' | 'apply' | 'configure' | 'component', policy?: UpdatePolicy, component?: {id: OptionalComponentId; enabled: boolean}) {
     const status = await this.hostStatus();
     if (action === 'configure' && !status.connected) {
       const selected = validatePolicy(policy), directory = this.env.MOA_DATA_DIR || path.join(this.cwd, 'data');
@@ -157,21 +175,23 @@ export class Updates {
     if (['checking', 'updating', 'downloading', 'preflight', 'backup', 'applying', 'verifying', 'rolling-back'].includes(status.state)) throw new ApiFailure(409, 'update-busy');
     if (action === 'apply' && status.state !== 'available') throw new ApiFailure(409, 'update-not-available');
     if (action === 'configure' && status.mode !== 'release') throw new ApiFailure(409, 'update-release-required');
+    if (action === 'component') { if (!component || Object.keys(component).length !== 2) throw new ApiFailure(400,'update-request-invalid'); await this.componentReady(component.id, component.enabled); }
     const file = path.join(this.dir, 'request.json');
     const temp = path.join(this.dir, `request-${randomUUID()}.tmp`);
     try {
-      await writeFile(temp, JSON.stringify({ id: randomUUID(), action, createdAt: Date.now(), ...(action === 'configure' ? { policy: validatePolicy(policy) } : {}) }), { flag: 'wx', mode: 0o660 });
+      await writeFile(temp, JSON.stringify({ id: randomUUID(), action, createdAt: Date.now(), ...(action === 'configure' ? { policy: validatePolicy(policy) } : action === 'component' ? {component} : {}) }), { flag: 'wx', mode: 0o660 });
       await link(temp, file);
     } catch (error) {
       if (error instanceof ApiFailure) throw error;
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new ApiFailure(409, 'update-busy');
       throw new ApiFailure(503, 'updater-unavailable');
     } finally { await rm(temp, { force: true }).catch(() => {}); }
+    if (action === 'component') return { ...status, state: 'updating' as const, componentOperation: { ...component!, state: 'working' as const, error: null } };
     return action === 'configure' ? status : { ...status, state: action === 'check' ? 'checking' as const : 'updating' as const };
   }
 }
 
-export function registerUpdates(app: FastifyInstance, jobs?:{prepare:()=>Promise<void>;resume:()=>void;canResume?:()=>boolean}) {
+export function registerUpdates(app: FastifyInstance, jobs?:{prepare:()=>Promise<void>;prepareComponent?:()=>Promise<void>;resume:()=>void;canResume?:()=>boolean}) {
   const updates = new Updates();
   // Release the queue gate after a failed/cancelled host operation; successful restart
   // marks queued jobs interrupted. No automatic retry of partial files.
@@ -187,6 +207,20 @@ export function registerUpdates(app: FastifyInstance, jobs?:{prepare:()=>Promise
     }).catch(()=>{}).finally(()=>{polling=false;});
   },10000):undefined;
   timer?.unref();app.addHook('onClose',async()=>{clearInterval(timer);});
+  app.get('/api/admin/components', async (_req, reply) => reply.header('Cache-Control','private, no-store').send(await updates.components()));
+  app.post<{Params:{id:OptionalComponentId}}>('/api/admin/components/:id', async (req, reply) => {
+    const body = req.body as {enabled:boolean};
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join() !== 'enabled' || typeof body.enabled !== 'boolean') throw new ApiFailure(400,'update-request-invalid');
+    if (preparing || requestedAt) throw new ApiFailure(409,'update-busy');
+    preparing = true;
+    try {
+      await updates.componentReady(req.params.id, body.enabled);
+      await (jobs?.prepareComponent ?? jobs?.prepare)?.();
+      const result = await updates.request('component', undefined, {id:req.params.id, enabled:body.enabled});
+      requestedAt = Date.now();
+      return reply.code(202).header('Cache-Control','private, no-store').send(await updates.components(result));
+    } catch(error) { jobs?.resume(); throw error; } finally { preparing = false; }
+  });
   app.get('/api/admin/system', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.system()));
   app.get<{ Params: { version: string } }>('/api/admin/updates/releases/:version', async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.notes(req.params.version)));
   app.get('/api/admin/updates', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await updates.status()));

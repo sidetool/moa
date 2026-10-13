@@ -273,7 +273,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.post('/api/shorts/:key/failed', {schema:{params:shortsKey,body:object({reason:{type:'string',enum:['unavailable','temporary']}},['reason'])}}, async req => { shorts.failed(profile(req),params(req).key,(req.body as {reason:'unavailable'|'temporary'}).reason); return {ok:true}; });
   app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
   registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,{...services.reviews,anilist}));
-  registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
+  registerUpdates(app, { prepareComponent:()=>{if(downloads.busy)throw new ApiFailure(409,'update-app-busy');return downloads.suspend();}, prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
   app.get('/api/admin/tmdb/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(tmdb.status()));

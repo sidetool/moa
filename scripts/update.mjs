@@ -11,7 +11,7 @@ const exec = promisify(execFile);
 const blank = () => ({ configured: true, connected: true, state: 'idle', mode: null, current: 'unknown', latest: null, branch: null, behind: 0, ahead: 0, checkedAt: null, error: null });
 const fail = code => { throw new Error(code); };
 const errors = new Set(['update-dirty', 'update-diverged', 'update-deployment-diverged', 'update-version-unknown', 'update-no-upstream', 'update-not-installed', 'update-git-failed', 'update-docker-failed', 'update-build-failed', 'update-restart-failed', 'update-busy', 'update-request-invalid', 'update-invalid-options']);
-for (const code of ['manifest-invalid','signature-invalid','invalid-version','invalid-policy','download-invalid','download-failed','rate-limited','response-limit','feed-truncated','release-incomplete','bundle-invalid','release-mutated','state-invalid','migration-required','platform-unsupported','tool-required','compose-required','no-releases','space-required','backup-unavailable','app-busy','health-failed','lease-lost','recovery-required','rolled-back']) errors.add(`update-${code}`);
+for (const code of ['manifest-invalid','signature-invalid','invalid-version','invalid-policy','download-invalid','download-failed','rate-limited','response-limit','feed-truncated','release-incomplete','bundle-invalid','release-mutated','state-invalid','migration-required','platform-unsupported','tool-required','compose-required','no-releases','space-required','backup-unavailable','app-busy','health-failed','lease-lost','recovery-required','rolled-back','component-external','components-unsupported','layout-unsupported']) errors.add(`update-${code}`);
 const publicError = error => errors.has(error?.message) ? error.message : 'update-failed';
 const jsonLines = text => text.trim().startsWith('[') ? JSON.parse(text) : text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 const atomic = async (file, value, mode) => {
@@ -178,6 +178,18 @@ export class Updater {
     await this.persist();
     return this.state;
   }
+  async performComponent(component) {
+    try {
+      if (!this.release) fail('update-components-unsupported');
+      await this.release.changeComponent(component);
+    } catch (error) {
+      const code = publicError(error);
+      this.state.state = code === 'update-recovery-required' ? 'recovery-required' : 'failed';
+      this.state.error = code;
+      this.state.componentOperation = { ...component, state: 'failed', error: code };
+    }
+    await this.persist();
+  }
   async consume() {
     const file = path.join(this.dir, 'request.json');
     let request;
@@ -185,7 +197,8 @@ export class Updater {
       const info = await lstat(file);
       if (!info.isFile() || info.size > 4096) fail('update-request-invalid');
       request = JSON.parse(await readFile(file, 'utf8'));
-      if (!['check', 'apply', 'configure'].includes(request.action) || !/^[a-f0-9-]{36}$/.test(request.id) || !Number.isSafeInteger(request.createdAt) || Math.abs(Date.now() - request.createdAt) > 60000 || Object.keys(request).some(key => !(request.action === 'configure' ? ['id', 'action', 'createdAt', 'policy'] : ['id', 'action', 'createdAt']).includes(key))) fail('update-request-invalid');
+      if (!['check', 'apply', 'configure', 'component'].includes(request.action) || !/^[a-f0-9-]{36}$/.test(request.id) || !Number.isSafeInteger(request.createdAt) || Math.abs(Date.now() - request.createdAt) > 60000 || Object.keys(request).some(key => !(request.action === 'configure' ? ['id', 'action', 'createdAt', 'policy'] : request.action === 'component' ? ['id', 'action', 'createdAt', 'component'] : ['id', 'action', 'createdAt']).includes(key))) fail('update-request-invalid');
+      if (request.action === 'component' && (!request.component || !['apk','browser'].includes(request.component.id) || typeof request.component.enabled !== 'boolean' || Object.keys(request.component).length !== 2)) fail('update-request-invalid');
     } catch (error) {
       if (error.code === 'ENOENT') return;
       await rm(file, { force: true }).catch(() => {});
@@ -198,7 +211,8 @@ export class Updater {
       try { if (!this.release) fail('update-invalid-options'); await this.release.configure(policy(request.policy)); }
       catch { this.state.error = 'update-invalid-policy'; }
       await this.persist();
-    } else await this.perform(request.action);
+    } else if (request.action === 'component') await this.performComponent(request.component);
+    else await this.perform(request.action);
   }
 }
 

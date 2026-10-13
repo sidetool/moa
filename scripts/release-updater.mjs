@@ -2,10 +2,74 @@ import { readFile, mkdir, rm, statfs, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ReleaseFeed, DEFAULT_POLICY, UPDATER_VERSION, SERVICES, compare, version, policy, fail } from './release.mjs';
-import { atomic, readJson, optionalJson, privateDirectory } from './update-files.mjs';
+import { atomic, readJson, optionalJson, privateDirectory, composeJSON } from './update-files.mjs';
 import { stageBundle } from './release-bundle.mjs';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const lines = text => text.trim().startsWith('[') ? JSON.parse(text) : text.trim().split('\n').filter(Boolean).map(JSON.parse);
+const COMPONENTS = {
+  apk: { service: 'moa-apk', url: 'MOA_APK_URL', secret: 'MOA_APK_SECRET_FILE', endpoint: 'http://moa-apk:8797', mount: '/run/moa-apk' },
+  browser: { service: 'moa-source-browser', url: 'MOA_SOURCE_BROWSER_URL', secret: 'MOA_SOURCE_BROWSER_SECRET_FILE', endpoint: 'http://moa-source-browser:8799', mount: '/run/moa-source-browser' },
+};
+const mountTarget = value => typeof value === 'string' ? value.split(':')[1] : value?.target;
+export function componentItems(current, config, platform) {
+  return Object.entries(COMPONENTS).map(([id, spec]) => {
+    const url = config.services.moa.environment?.[spec.url] || '';
+    const active = current.services.includes(spec.service), saved = current.componentConnections?.[id];
+    const managed = (!url || url === spec.endpoint) && (active ? url === spec.endpoint : !url);
+    const supported = id !== 'browser' || platform === 'linux/amd64';
+    return { id, enabled: Boolean(url), installed: active || !!saved || !!url, managed, supported,
+      reason: !managed ? 'update-component-external' : !supported ? 'update-platform-unsupported' : null, downloadBytes: null };
+  });
+}
+
+/** Only the two release-owned runtime connections may change. Data mounts are retained. */
+export function componentCompose(current, existing, template, id, enabled, image) {
+  const spec = COMPONENTS[id]; if (!spec || typeof enabled !== 'boolean') fail('update-request-invalid');
+  const config = structuredClone(existing), app = config.services.moa;
+  if (app.network_mode) fail('update-layout-unsupported');
+  const connections = structuredClone(current.componentConnections || {});
+  const services = current.services.filter(name => name !== spec.service);
+  app.environment ??= {}; app.depends_on ??= {};
+  if (enabled) {
+    let worker = config.services[spec.service];
+    if (!worker) {
+      worker = structuredClone(template.services[spec.service]);
+      if (!worker) fail('update-layout-unsupported');
+      config.services[spec.service] = worker;
+      // New worker uses the app's existing internal networks; no published port is added.
+      if (app.networks) worker.networks = Object.fromEntries(Object.keys(app.networks).map(name => [name, null]));
+      else delete worker.networks;
+      const templateMount = template.services.moa.volumes?.find(v => mountTarget(v) === spec.mount);
+      if (!templateMount || typeof templateMount === 'string' || templateMount.type !== 'volume' || worker.volumes?.some(v => v.type !== 'volume')) fail('update-layout-unsupported');
+      app.volumes ??= [];
+      let shared = app.volumes.find(v => mountTarget(v) === spec.mount);
+      if (!shared) { shared = structuredClone(templateMount); app.volumes.push(shared); }
+      if (typeof shared === 'string') fail('update-layout-unsupported');
+      worker.volumes = worker.volumes.map(v => mountTarget(v) === spec.mount ? { ...shared, read_only: false } : v);
+      for (const mount of worker.volumes) if (mount.type === 'volume') {
+        config.volumes ??= {};
+        if (!Object.hasOwn(config.volumes, mount.source)) config.volumes[mount.source] = structuredClone(template.volumes?.[mount.source] || {});
+      }
+    }
+    const sharedMount = app.volumes?.find(v => mountTarget(v) === spec.mount);
+    const workerMount = worker.volumes?.find(v => mountTarget(v) === spec.mount);
+    if (!sharedMount || !workerMount || typeof sharedMount === 'string' || typeof workerMount === 'string' || sharedMount.source !== workerMount.source || sharedMount.type !== workerMount.type) fail('update-layout-unsupported');
+    delete worker.profiles; delete worker.build; worker.image = image; worker.pull_policy = 'never';
+    const previous = connections[id];
+    app.environment[spec.url] = previous?.url || spec.endpoint;
+    app.environment[spec.secret] = previous?.secret || template.services.moa.environment[spec.secret];
+    if (!app.environment[spec.secret]) fail('update-layout-unsupported');
+    app.depends_on[spec.service] = previous?.dependency || { condition: 'service_healthy', required: true };
+    services.push(spec.service);
+    connections[id] = { url: app.environment[spec.url], secret: app.environment[spec.secret], dependency: app.depends_on[spec.service] };
+  } else {
+    connections[id] = { url: app.environment[spec.url], secret: app.environment[spec.secret], dependency: app.depends_on[spec.service] };
+    app.environment[spec.url] = ''; app.environment[spec.secret] = ''; delete app.depends_on[spec.service];
+    config.services[spec.service].profiles = ['moa-optional-disabled'];
+  }
+  return { config, services, componentConnections: connections };
+}
+
 export class ReleaseUpdater {
   constructor(host) { this.host = host; this.root = path.join(host.cwd, '.moa-release'); this.failedVersion = null; }
   async init() {
@@ -22,8 +86,13 @@ export class ReleaseUpdater {
     this.ready = true;
     Object.assign(this.host.state, { mode: 'release', current: this.current.version, policy: this.policy, updaterVersion: UPDATER_VERSION, history: this.history, nextCheckAt: this.nextCheckAt });
     await this.recover();
+    await this.refreshComponents();
     const last = this.history[0];
     if (this.host.state.state === 'idle' && last?.outcome === 'rolled-back') Object.assign(this.host.state, { state: 'rolled-back', error: 'update-rolled-back' });
+  }
+  async refreshComponents() {
+    this.host.state.componentSupport = true;
+    this.host.state.components = componentItems(this.current, await readJson(this.current.compose), this.install.platform);
   }
   async phase(state, extra = {}) { Object.assign(this.host.state, { state, ...extra }); await this.host.persist(); }
   async compose(file, args, timeout = 120000) {
@@ -115,18 +184,28 @@ export class ReleaseUpdater {
     if (transaction.previous.schemaEpoch !== transaction.target.schemaEpoch) fail('update-recovery-required');
     await this.phase('rolling-back');
     await this.journal({ ...transaction, phase: 'rolling-back' });
+    if (transaction.kind === 'component') {
+      const added = transaction.target.services.filter(name => !transaction.previous.services.includes(name));
+      if (added.length) await this.compose(transaction.target.compose, ['stop', '--timeout', '30', ...added]);
+    }
     await this.compose(transaction.previous.compose, ['up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '180', ...transaction.previous.services], 300000);
     await this.verify(transaction.previous.compose, transaction.previous.services);
     if (transaction.gateway) await this.compose(transaction.previous.compose, ['restart', 'moa-gateway']);
     await atomic(path.join(this.root, 'current.json'), transaction.previous); this.current = transaction.previous;
-    await this.record('rolled-back', transaction.target.version, transaction.previous.version);
+    if (transaction.kind === 'component') this.host.state.componentOperation = { ...transaction.component, state: 'rolled-back', error: 'update-rolled-back' };
+    else await this.record('rolled-back', transaction.target.version, transaction.previous.version);
+    await this.refreshComponents();
     await this.journal({ ...transaction, phase: 'rolled-back' });
     await this.phase('rolled-back', { current: this.current.version, error: 'update-rolled-back' });
   }
   async recover() {
     const transaction = await optionalJson(path.join(this.root, 'journal.json'), null);
-    if (!transaction || ['complete', 'rolled-back', 'cancelled'].includes(transaction.phase)) return;
-    this.failedVersion = transaction.target.version;
+    if (!transaction) return;
+    if (['complete', 'rolled-back', 'cancelled'].includes(transaction.phase)) {
+      if (transaction.kind === 'component' && transaction.phase !== 'cancelled') this.host.state.componentOperation = { ...transaction.component, state: transaction.phase, error: transaction.phase === 'rolled-back' ? 'update-rolled-back' : null };
+      return;
+    }
+    if (transaction.kind !== 'component') this.failedVersion = transaction.target.version;
     // Never replay an interrupted installation automatically. A backward-compatible
     // deployment may restore images; database snapshots are never restored over writes.
     try {
@@ -191,7 +270,7 @@ export class ReleaseUpdater {
         app.environment = { ...app.environment, MOA_DOWNLOAD_ROOT: '/downloads' };
       }
       existing.services.moa.environment = { ...existing.services.moa.environment, MOA_VERSION: m.version, MOA_DEPLOYMENT: 'release' };
-      const target = { version: m.version, manifestDigest: this.candidate.digest, schemaEpoch: m.schemaEpoch, services: this.current.services, compose: path.join(targetDir, 'compose.json'), runtime: targetDir, previousRuntime: this.current.runtime };
+      const target = { version: m.version, manifestDigest: this.candidate.digest, schemaEpoch: m.schemaEpoch, services: this.current.services, componentConnections: this.current.componentConnections, compose: path.join(targetDir, 'compose.json'), runtime: targetDir, previousRuntime: this.current.runtime };
       // existing is already interpolation-escaped on disk, preserve it as-is.
       await atomic(target.compose, existing);
       await this.compose(target.compose, ['config', '--quiet']);
@@ -230,6 +309,7 @@ export class ReleaseUpdater {
       if (this.leaseLost) fail('update-lease-lost');
       await atomic(path.join(this.root, 'current.json'), target);
       this.current = target;
+      await this.refreshComponents();
       await this.record('complete', target.version, transaction.previous.version);
       await this.journal({ ...transaction, phase: 'complete' });
       await this.phase('current', { current: target.version, latest: target.version, behind: 0, error: null });
@@ -247,6 +327,82 @@ export class ReleaseUpdater {
         throw error;
       }
     } finally { await this.releaseLease(); await this.schedule(); }
+  }
+  async changeComponent(component) {
+    const { id, enabled } = component || {}, spec = COMPONENTS[id];
+    if (!spec || typeof enabled !== 'boolean' || Object.keys(component).length !== 2) fail('update-request-invalid');
+    await this.init();
+    if (this.host.state.state === 'recovery-required') fail('update-recovery-required');
+    await this.refreshComponents();
+    const item = this.host.state.components.find(item => item.id === id);
+    if (!item.managed) fail('update-component-external');
+    if (enabled && !item.supported) fail('update-platform-unsupported');
+    this.host.state.componentOperation = { id, enabled, state: 'working', error: null };
+    let transaction, templates;
+    try {
+      await this.phase('preflight', { error: null });
+      if (item.enabled === enabled) {
+        this.host.state.componentOperation.state = 'complete';
+        await this.phase(this.candidate ? 'available' : 'current'); return;
+      }
+      const existing = await readJson(this.current.compose);
+      await this.verify(this.current.compose, this.current.services.filter(name => enabled || name !== spec.service));
+      let template, image;
+      if (enabled) {
+        // Install only an image and definition authenticated for the installed release.
+        const release = (await this.feed.releases('beta')).find(r => r.tag_name === this.current.version);
+        if (!release) fail('update-release-incomplete');
+        const signed = await this.feed.manifest(release), m = signed.manifest;
+        if (m.version !== this.current.version || this.current.manifestDigest && this.current.manifestDigest !== signed.digest) fail('update-release-mutated');
+        if (!m.services[spec.service]?.platforms.includes(this.install.platform)) fail('update-platform-unsupported');
+        if (compare(UPDATER_VERSION, m.minimumUpdaterVersion) < 0) fail('update-tool-required');
+        if (compare((await this.host.run('docker', ['compose', 'version', '--short'])).trim(), m.minimumComposeVersion) < 0) fail('update-compose-required');
+        const space = await statfs(this.root);
+        if (space.bavail * space.bsize < 1024 ** 3) fail('update-space-required');
+        templates = path.join(this.root, 'component-template-' + randomUUID());
+        await privateDirectory(templates); await stageBundle(await this.feed.bundle(m), templates);
+        const files = ['-f', path.join(templates, 'compose.yaml')];
+        if (id === 'browser') files.push('-f', path.join(templates, 'compose.source-browser.yaml'));
+        template = composeJSON(JSON.parse(await this.host.run('docker', ['compose', '--project-name', this.install.project, '--project-directory', templates, ...files, '--profile', 'apk', 'config', '--format', 'json'])));
+        // The base template intentionally leaves APK disabled.
+        template.services.moa.environment ??= {};
+        template.services.moa.environment[spec.secret] = `${spec.mount}/token`;
+        image = `${m.services[spec.service].image}@${m.services[spec.service].digest}`;
+      }
+      const changed = componentCompose(this.current, existing, template, id, enabled, image);
+      const directory = path.join(this.root, 'configurations', randomUUID()); await privateDirectory(directory);
+      const target = { ...this.current, services: changed.services, componentConnections: changed.componentConnections, compose: path.join(directory, 'compose.json') };
+      await atomic(target.compose, changed.config); await this.compose(target.compose, ['config', '--quiet']);
+      if (enabled) {
+        await this.phase('downloading');
+        await this.host.run('docker', ['pull', '--platform', this.install.platform, image], 20 * 60000);
+      }
+      await this.lease(); if (this.leaseLost) fail('update-lease-lost');
+      transaction = { kind: 'component', component: { id, enabled }, phase: 'prepared', previous: this.current, target, gateway: Boolean(existing.services['moa-gateway']) };
+      await this.journal(transaction);
+      await this.phase('applying');
+      await this.compose(this.current.compose, ['stop', '--timeout', '30', 'moa', ...(item.enabled ? [spec.service] : [])]);
+      await this.journal({ ...transaction, phase: 'stopped' });
+      const start = names => this.compose(target.compose, ['up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '180', ...names], 300000);
+      // The helper creates its token before the app reads it on startup.
+      if (enabled) await start([spec.service]);
+      await start(['moa']);
+      await this.phase('verifying'); await this.journal({ ...transaction, phase: 'verifying' });
+      await this.verify(target.compose, target.services);
+      if (transaction.gateway) await this.compose(target.compose, ['restart', 'moa-gateway']);
+      if (this.leaseLost) fail('update-lease-lost');
+      await atomic(path.join(this.root, 'current.json'), target); this.current = target;
+      await this.refreshComponents(); await this.journal({ ...transaction, phase: 'complete' });
+      this.host.state.componentOperation = { id, enabled, state: 'complete', error: null };
+      await this.phase(this.candidate ? 'available' : 'current', { error: null });
+    } catch (error) {
+      if (!transaction) throw error;
+      try { await this.rollback(transaction); }
+      catch { await this.phase('recovery-required', { error: 'update-recovery-required' }); throw new Error('update-recovery-required'); }
+    } finally {
+      await this.releaseLease();
+      if (templates) await rm(templates, { recursive: true, force: true }).catch(() => {});
+    }
   }
   async tick() {
     await this.init();

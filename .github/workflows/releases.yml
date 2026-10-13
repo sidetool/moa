@@ -28,8 +28,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libarchive-tools
       - run: pnpm --filter @moa/extensions --filter @moa/subtitles-ko --filter @moa/skip-markers build
       - run: pnpm typecheck
-      - run: node --test scripts/update.test.mjs scripts/release.test.mjs scripts/release-updater.test.mjs scripts/install-release.test.mjs scripts/install-defaults.test.mjs scripts/container-updater.test.mjs scripts/release-artifacts.test.mjs
-      - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
+      - run: node --test scripts/update.test.mjs scripts/release.test.mjs scripts/release-updater.test.mjs scripts/components.test.mjs scripts/install-release.test.mjs scripts/install-defaults.test.mjs scripts/container-updater.test.mjs scripts/release-artifacts.test.mjs
+      - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/components.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
       - name: Device settings, subtitles and sessions
         run: |
           pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts

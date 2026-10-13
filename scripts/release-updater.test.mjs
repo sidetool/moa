@@ -295,3 +295,23 @@ test('background ticks check every six hours but never apply an available releas
   assert.deepEqual(f.commands, []);
   await assert.rejects(f.manager.configure({ channel: 'stable', autoApply: true }), /update-invalid-policy/);
 });
+
+test('a release upgrade retains enabled runtimes and disabled runtime connections', async t => {
+  const f = await fixture(t);
+  f.previous.services.push('moa-apk');
+  f.previous.componentConnections = {browser:{url:'http://moa-source-browser:8799',secret:'/run/custom/token'}};
+  f.compose.services['moa-apk'] = {image:'fixture-old-apk',volumes:['fixture-apk-data:/data']};
+  f.compose.services.moa.environment.MOA_APK_URL = 'http://moa-apk:8797';
+  f.compose.services.moa.environment.MOA_SOURCE_BROWSER_URL = '';
+  await atomic(f.previous.compose,f.compose);
+  f.manager.current = f.previous;
+  await atomic(path.join(f.root,'current.json'),f.previous);
+  await f.host.perform('check');
+  assert.equal((await f.host.perform('apply')).state,'current');
+  assert.deepEqual(f.manager.current.services,f.previous.services);
+  assert.deepEqual(f.manager.current.componentConnections,f.previous.componentConnections);
+  const deployed=await readJson(f.manager.current.compose);
+  assert.equal(deployed.services['moa-apk'].image,`ghcr.io/fixture-owner/moa-apk@sha256:${'b'.repeat(64)}`);
+  assert.deepEqual(deployed.services['moa-source-browser'],f.compose.services['moa-source-browser']);
+  assert.equal(deployed.services.moa.environment.MOA_SOURCE_BROWSER_URL,'');
+});
