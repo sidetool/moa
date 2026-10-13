@@ -1,0 +1,5 @@
+{
+ "apiVersion":2,"id":"watchlist-news","name":"찜한 작품 소식","version":"0.1.0",
+ "description":"내 목록에서 최근 찜한 작품의 30일 안 한국 극장 개봉일과 다음 회차 방영일을 홈에서 확인합니다.",
+ "minMoaVersion":"0.1.2-beta.3","placements":["home"],"permissions":["watchlist.read","schedule.read","app.navigate","ui"],"connect":[]
+}

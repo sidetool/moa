@@ -38,6 +38,7 @@ export function uniqueItems(pages: ShortsFeed[] | undefined): ShortsItem[] {
 const path = (key: string) => `/shorts/${encodeURIComponent(key)}`;
 export const shortsTrailers = (key: string, signal: AbortSignal) => api<{ trailers: string[]; checked: boolean }>(`${path(key)}/trailers`, { signal });
 export const markShortSeen = (key: string) => api<{ ok: true }>(`${path(key)}/seen`, { method: "POST", body: {}, keepalive: true });
+export const markShortFailed = (key: string, reason: "unavailable" | "temporary") => api<{ ok: true }>(`${path(key)}/failed`, { method: "POST", body: { reason }, keepalive: true });
 /** Only for a person moving on from the work on screen; never for automatic transitions. */
 export const markShortSkipped = (key: string) => api<{ ok: true }>(`${path(key)}/skip`, { method: "POST", body: {}, keepalive: true });
 

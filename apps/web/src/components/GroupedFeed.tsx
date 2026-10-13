@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, VideoSource } from '@moa/shared';
-import { api } from '../lib/api';
+import { api, currentProfileId } from '../lib/api';
 import { categorySelection, sourcePage, sourceUrl } from '../lib/source-browse';
 import { Row, RowSkeleton } from './Row';
 import { PosterCard } from './Cards';
@@ -53,16 +53,23 @@ export function useTabFeed(sources: VideoSource[], tab?: NavigationTab) {
     staleTime: 5 * 60_000, retry: false
   })) });
 
-  // TOP 10 and the hero mix every on-demand source round-robin, then merge
-  // the same title across sources.
+  // The hero keeps its mixed catalogue; TOP 10 combines ranks separately.
   const onDemand = sources.map((s, i) => s.live ? [] : popular[i].data?.items ?? []);
   const mixed: MediaCard[] = [];
   for (let i = 0; i < Math.max(0, ...onDemand.map(list => list.length)); i++) for (const list of onDemand) if (list[i]) mixed.push(list[i]);
+  const rankingLists=sources.flatMap((source,i)=>source.live||!popular[i].data?.items.length?[]:[{sourceId:source.id,ids:popular[i].data!.items.slice(0,20).map(c=>c.id)}]);
+  const ranking=useQuery({
+    queryKey:['source-popularity',currentProfileId(),rankingLists],
+    queryFn:({signal})=>api<MediaCard[]>('/media/popular',{method:'POST',body:{lists:rankingLists},signal}),
+    enabled:rankingLists.length>0,staleTime:5*60_000,retry:false
+  });
   const grouped = useGroupedCards(mixed);
   const settled = !grouped.groupingEnabled || !mixed.length || !grouped.isPending || grouped.isError;
   const cards = !grouped.groupingEnabled || grouped.isError ? mixed : mixed.length ? grouped.data || [] : [];
   return {
     sources, popular, latest,
+    top: rankingLists.length ? ranking.data ?? [] : [],
+    topPending: (popular.some(p=>p.isPending)&&!rankingLists.length)||(rankingLists.length>0&&ranking.isPending),
     cards: settled ? cards : [],
     pending: popular.some(p => p.isPending) && !mixed.length || !settled
   };
@@ -73,13 +80,13 @@ export type TabFeedData = ReturnType<typeof useTabFeed>;
 export function TabFeed({ feed, startIndex = 0 }: { feed: TabFeedData; startIndex?: number }) {
   const { sources, popular, latest } = feed;
   const single = sources.filter(s => !s.live).length <= 1;
-  const top = feed.cards.slice(0, 10);
+  const top = feed.top;
   const rows: React.ReactNode[] = [];
   let index = startIndex;
   const push = (key: string, node: React.ReactNode) => rows.push(<FeedSlot key={key}>{node}</FeedSlot>);
 
   if (top.length >= 5) push('top', <Row index={index++} rank row={{ id: 'top10', title: '오늘의 TOP 10', kind: 'media', layout: 'poster', items: top }} />);
-  else if (feed.pending) push('top-sk', <RowSkeleton />);
+  else if (feed.topPending) push('top-sk', <RowSkeleton />);
 
   const firstOnDemand = sources.findIndex(s => !s.live);
   if (firstOnDemand < 0) push('live', <LiveSlot sources={sources} popular={popular} />);

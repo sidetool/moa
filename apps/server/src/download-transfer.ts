@@ -52,7 +52,10 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
     if(!lines.includes('#EXT-X-ENDLIST')||!lines.some(s=>s.startsWith('#EXTINF:')))fail('download-live-unsupported');
     let range:string|undefined,lastUrl='',end=0,totalDuration=0;
     const output:string[]=[];
-    for(const line of lines){
+    // Three bounded transfers; placeholders preserve playlist order despite out-of-order completion.
+    const pending:Promise<{error:unknown}|null>[]=[];
+    const drain=async()=>{const results=await Promise.all(pending.splice(0));const failed=results.find(r=>r!==null);if(failed)throw failed.error;};
+    try { for(const line of lines){
       if(!line)continue;
       if(line.startsWith('#EXTINF:')){const segmentDuration=parseFloat(line.slice(8));if(!(segmentDuration>0))fail('download-playlist-invalid');totalDuration+=segmentDuration;if(!Number.isFinite(totalDuration)||totalDuration>21600)fail('download-duration-limit');}
       if(line.startsWith('#EXT-X-BYTERANGE:')){range=line.slice(17);continue;}
@@ -60,21 +63,31 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
         const target=new URL(line,base).href;let header:string|undefined;
         if(range){const m=/^(\d+)(?:@(\d+))?$/.exec(range);if(!m)fail('download-range-invalid');const length=Number(m![1]),offset=m![2]!==undefined?Number(m![2]):target===lastUrl?end:NaN;
           if(!Number.isSafeInteger(length)||length<1||!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(offset+length))fail('download-range-invalid');header=`bytes=${offset}-${offset+length-1}`;end=offset+length;range=undefined;}
-        lastUrl=target;output.push(await blob(target,header));continue;
+        lastUrl=target;
+        const slot=output.length;output.push('');
+        pending.push(blob(target,header).then(name=>{output[slot]=name;return null;},error=>({error})));
+        if(pending.length===3)await drain();
+        continue;
       }
       if(line.startsWith('#EXT-X-KEY:')){
+        await drain();
         const a=attributes(line);if(a.METHOD==='NONE'){output.push('#EXT-X-KEY:METHOD=NONE');continue;}
         if(a.METHOD!=='AES-128'||a.KEYFORMAT&&a.KEYFORMAT!=='identity'||!a.URI||a.IV&&!/^0x[0-9a-fA-F]{32}$/.test(a.IV))fail('download-drm-unsupported');
         const key=await blob(new URL(a.URI,base).href,undefined,16);if((await stat(path.join(dir,key))).size!==16)fail('download-key-invalid');
         output.push(`#EXT-X-KEY:METHOD=AES-128,URI="${key}"${a.IV?`,IV=${a.IV}`:''}`);continue;
       }
       if(line.startsWith('#EXT-X-MAP:')){
+        await drain();
         const a=attributes(line);if(!a.URI||a.BYTERANGE)fail('download-map-unsupported');output.push(`#EXT-X-MAP:URI="${await blob(new URL(a.URI,base).href)}"`);continue;
       }
       // Reject all remaining URL-bearing directives; no upstream address reaches ffmpeg.
       if(/URI=/.test(line))fail('download-hls-unsupported');
       if(/^#(?:EXTM3U|EXTINF:|EXT-X-(?:VERSION:|TARGETDURATION:|MEDIA-SEQUENCE:|DISCONTINUITY(?:-SEQUENCE:|$)|ENDLIST$|PLAYLIST-TYPE:|INDEPENDENT-SEGMENTS$))/.test(line))output.push(line);
     }
+    } finally { // Cancellation/parse errors must settle all writers before the job removes its directory.
+      await Promise.all(pending);
+    }
+    await drain();
     expectedDuration=totalDuration;
     const name=`list-${++sequence}.m3u8`;await writeFile(path.join(dir,name),output.join('\n')+'\n',{mode:0o600});files.push(name);return name;
   };

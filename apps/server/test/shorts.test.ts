@@ -101,6 +101,9 @@ test('routes require profile ownership and settings validate new controls',async
   assert.equal((await app.inject({url:'/api/shorts',headers})).json().status,'disabled');
   assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/skip',headers:{...headers,'x-moa-profile':'q'},payload:{}})).statusCode,401);
   assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/skip',headers,payload:{}})).statusCode,403);
+  assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/failed',headers:{...headers,'x-moa-profile':'q'},payload:{reason:'temporary'}})).statusCode,401);
+  assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/failed',headers,payload:{reason:'temporary'}})).statusCode,403);
+  assert.equal((await app.inject({method:'POST',url:'/api/shorts/movie:1/failed',headers,payload:{reason:'forever'}})).statusCode,400);
   assert.equal((await app.inject({url:'/api/settings',headers})).json().shortsQuality,'auto');
   for(const payload of [{shortsQuality:'1080p'},{shortsQuality:720},{shortsScreenFit:{}},{shortsCategories:[]},{shortsCategories:['sports']},{shortsCategories:['anime','anime']},{shortsRepeatDays:-1},{shortsRepeatDays:365},{shortsMode:'bad'}])assert.equal((await app.inject({method:'PATCH',url:'/api/settings',headers,payload})).statusCode,400);
   const enabled=await app.inject({method:'PATCH',url:'/api/settings',headers,payload:{shortsQuality:'480p',shortsEnabled:true,shortsScreenFit:false,shortsCategories:['movie','anime'],shortsRepeatDays:7,shortsMode:'mixed'}});
@@ -136,4 +139,28 @@ test('TMDB category queries are bounded, classify actual genres and reject misma
   assert.ok(urls.every(url=>url.searchParams.get('with_genres')==='16'&&url.searchParams.get('page')==='1'));
   const series=await tmdb.shortPopular('series');assert.deepEqual(series.map(item=>item.tmdbId),[2]);
   assert.equal(urls.at(-1)!.searchParams.get('without_genres'),'16,10763,10764,10767');
+});
+
+
+test('failed works stay excluded across feeds and replay without becoming watched or disliked',async t=>{
+  const f=await fixture(t);for(const id of ['viewer','other'])f.configure(id,{shortsEnabled:true,shortsMode:'personal'});
+  f.shorts.failed('viewer','movie:1','unavailable');
+  for(const replay of [false,true])assert.ok(!(await f.shorts.feed('viewer','0',replay)).items.some(i=>i.key==='movie:1'));
+  assert.ok((await f.shorts.feed('other')).items.some(i=>i.key==='movie:1'));
+  for(const table of ['shorts_seen','progress','recommendation_feedback'])assert.equal(f.db.get(`SELECT COUNT(*) AS n FROM ${table}`)!.n,0);
+  f.advance(6);f.shorts.failed('viewer','movie:1','temporary'); // Must not shorten the original exclusion.
+  f.advance(.5);assert.ok(!(await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
+  f.advance(.5);assert.ok((await f.shorts.feed('viewer')).items.some(i=>i.key==='movie:1'));
+});
+test('transient failures expire in an hour; unavailable works have a minimum day and reset is profile scoped',async t=>{
+  const f=await fixture(t);for(const id of ['viewer','other'])f.configure(id,{shortsEnabled:true,shortsMode:'personal',shortsRepeatDays:0});
+  f.shorts.failed('viewer','movie:1','unavailable');f.shorts.failed('viewer','movie:2','temporary');
+  assert.deepEqual((await f.shorts.feed('viewer')).items.map(i=>i.key),['movie:3']);
+  f.advance(1/24);assert.deepEqual((await f.shorts.feed('viewer')).items.map(i=>i.key),['movie:2','movie:3']);
+  f.advance(23/24);assert.equal((await f.shorts.feed('viewer')).items.length,3);
+  for(const id of ['viewer','other'])f.shorts.failed(id,'movie:1','unavailable');
+  f.shorts.reset('viewer');assert.equal((await f.shorts.feed('viewer')).items.length,3);
+  assert.equal((await f.shorts.feed('other')).items.length,2);
+  assert.throws(()=>f.shorts.failed('kid','movie:1','temporary'),{error:'shorts-restricted'});
+  assert.throws(()=>f.shorts.failed('viewer','invalid','temporary'),{error:'invalid-shorts-failure'});
 });

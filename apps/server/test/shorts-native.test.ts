@@ -236,3 +236,21 @@ test('caption URLs are opaque, validated, cached and lease-owned; releasing canc
     await assert.rejects(native.caption(lease.sessionId,track.id,'p',new AbortController().signal),{statusCode:410});
   }finally{native.close();}
 });
+
+
+test('warm buffers six seconds of matching quality with bounded concurrent audio/video tracks',async t=>{
+  const master='#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="audio.m3u8"\n'+[360,480,720].map(h=>`#EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=1280x${h},CODECS="avc1.4d401f,mp4a.40.2",AUDIO="a"\n${h}.m3u8\n`).join('');
+  const calls:string[]=[];let active=0,peak=0;
+  const native=new NativeShorts(async()=>({...selected,url:'https://rr1---sn-test.googlevideo.com/master.m3u8',mime:'application/vnd.apple.mpegurl',master:true}),async url=>{
+    const file=new URL(url).pathname.slice(1);calls.push(file);active++;peak=Math.max(peak,active);
+    await new Promise(r=>setTimeout(r,25));active--;
+    const body=file==='master.m3u8'?master:file.endsWith('.m3u8')?'#EXTM3U\n'+Array.from({length:6},(_,i)=>`#EXTINF:2,\n${file}-${i}.ts\n`).join('')+'#EXT-X-ENDLIST\n':'fragment';
+    return {url:String(url),response:Object.assign(Readable.from([Buffer.from(body)]),{statusCode:200,headers:{'content-type':file.endsWith('.m3u8')?'application/vnd.apple.mpegurl':'video/mp2t'}})} as any;
+  });
+  try{
+    const lease=await native.prepare('p',[id],new AbortController().signal);
+    assert.deepEqual(await native.warm(lease.sessionId,'p',new AbortController().signal,'480p'),{ready:true});
+    assert.equal(peak,2);assert.ok(!calls.some(u=>u.startsWith('360')||u.startsWith('720')));
+    for(const track of ['audio','480'])assert.deepEqual(calls.filter(u=>u.startsWith(track)&&u.endsWith('.ts')),Array.from({length:3},(_,i)=>`${track}.m3u8-${i}.ts`));
+  }finally{native.close();}
+});

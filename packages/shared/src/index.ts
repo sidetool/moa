@@ -218,7 +218,7 @@ export const PLUGIN_API_VERSION = 2;
 export interface WebsitePlugin {
   apiVersion: number;
   minMoaVersion?: string;
-  hooks?: Array<'catalog.transform' | 'title.people'>;
+  hooks?: Array<'catalog.transform' | 'title.people' | 'title.reviews'>;
   compatibility?: { supported: boolean; apiVersion: number; moaVersion: string | null };
   revision: string;
   id: string;
@@ -226,7 +226,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read' | 'schedule.read' | 'boxoffice.read' | 'reviews.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -399,6 +399,7 @@ export interface Settings {
   shortsHideWatched?: boolean;
   shortsRepeatDays?: 0 | 1 | 7 | 30;
   recommendationsEnabled?: boolean;
+  anilistRecommendationsEnabled?: boolean;
   generalSkipEnabled?: boolean;
   /** Per-profile navigation. Omitted uses source-based defaults. */
   navigation?: NavigationTab[];
@@ -573,6 +574,8 @@ export interface DownloadStatus {
   /** Active jobs across the entire server, independent of page/title filters. */
   activeJobs?: number; totalJobs?: number; nextCursor?: string | null;
 }
+export interface DownloadBatchPreview { total:number; eligible:number; skipped:number }
+export interface DownloadBatchResult { total:number; added:number; skipped:number }
 export interface DownloadChoice { id: string; label: string }
 export interface EpisodeDownloadStatus {
   saved: boolean; job?: DownloadJob;
@@ -630,3 +633,16 @@ export interface ShortsFeed {
   status: 'ready' | 'disabled' | 'restricted' | 'unconfigured' | 'unavailable';
   items: ShortsItem[]; nextCursor: string | null;
 }
+
+export interface ScheduleQuery {kind:'movie'|'tv';date:string}
+export interface ScheduleItem {id:string;title:string;date:string;time:string|null;detail:string}
+export interface ScheduleResponse {provider:'tmdb'|'tvmaze';date:string;status:'ready'|'restricted'|'unconfigured'|'unavailable';items:ScheduleItem[];truncated:boolean}
+
+export interface WatchlistNewsEvent {mediaId:string;title:string;date:string;kind:'release'|'episode';detail:string}
+export interface WatchlistNews {provider:'tmdb';status:'ready'|'restricted'|'unconfigured'|'unavailable';from:string;through:string;items:WatchlistNewsEvent[];unlinked:number;checked:number;truncated:boolean}
+export interface BoxOfficeResponse {provider:'kobis';period:'day'|'week';from:string;through:string;status:'ready'|'restricted'|'unconfigured'|'unavailable';items:Array<{id:string;title:string;rank:number;audience:number;totalAudience:number;change:number|null;isNew:boolean}>}
+/** Reviews are public provider data; article snippets are not verified viewer ratings. */
+export type ReviewProvider = 'tmdb' | 'anilist';
+export interface ReviewCandidate { id:string; title:string; alternative:string; year:number|null; format:string; }
+export interface ReviewItem { title:string; excerpt:string; author:string; date:string; url:string; kind:'article'|'review'; language:'unknown'|'en'; }
+export interface ReviewResponse { mediaId:string; provider:ReviewProvider; status:'ready'|'select'|'unconfigured'|'unlinked'|'restricted'|'unavailable'; query:string; items:ReviewItem[]; candidates:ReviewCandidate[]; }

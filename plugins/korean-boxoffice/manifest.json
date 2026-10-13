@@ -1,0 +1,5 @@
+{
+ "apiVersion":2,"id":"korean-boxoffice","name":"국내 박스오피스","version":"0.1.0",
+ "description":"영화진흥위원회(KOBIS) 기준 어제와 지난주 국내 극장 관객 수 순위를 보고 MOA에서 검색합니다.",
+ "minMoaVersion":"0.1.2-beta.3","placements":["home"],"permissions":["boxoffice.read","app.navigate","ui"],"connect":[]
+}

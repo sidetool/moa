@@ -400,6 +400,7 @@ const mockShorts: ShortsItem[] = [
 ];
 const shortsTrailerKeys: Record<string, string[]> = { "movie:101": ["aaaaaaaaaa1", "aaaaaaaaaa2"], "tv:201": ["bbbbbbbbbb1"], "tv:202": ["cccccccccc1"], "movie:102": [], "tv:203": ["dddddddddd1"], "tv:204": ["eeeeeeeeee1"] };
 const shortsSeen = new Set<string>();
+const shortsFailures = new Map<string, number>();
 
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -625,6 +626,27 @@ export function installMockApi() {
     const episodeDownload = /^\/episodes\/([^/]+)\/download$/.exec(path);
     if (episodeDownload) { const id = decodeURIComponent(episodeDownload[1]), job = downloadJobs.find(item => item.episodeId === id && item.state === "ready"); return json({ saved: Boolean(job), ...(job ? { job } : {}) }); }
     if (path.startsWith("/admin/downloads") && localStorage.getItem("moa.mockRole") === "member") return json({ error: "admin-required" }, 403);
+    // Batch: one season (or the whole title) at once; saved/active episodes are skipped. `moa.mockQueueFull=1` previews the 500-job limit.
+    if (path === "/admin/downloads/batch") {
+      tickDownloads();
+      const mediaId = String((method === "GET" ? url.searchParams.get("mediaId") : body?.mediaId) ?? ""), rawSeason = method === "GET" ? url.searchParams.get("season") : body?.season;
+      const scope = episodesOf(mediaId).filter(episode => rawSeason === null || rawSeason === undefined || episode.season === Number(rawSeason));
+      if (!byId.has(mediaId) || byId.get(mediaId)!.type === "movie" || !scope.length) return json({ error: "not-found" }, 404);
+      if (!downloadSummary().configured) return json({ error: "download-disabled" }, 503);
+      const taken = new Set(downloadJobs.filter(job => !["failed", "cancelled", "interrupted"].includes(job.state)).map(job => job.episodeId));
+      const eligible = scope.filter(episode => !taken.has(episode.id));
+      if (method === "GET") return json({ total: scope.length, eligible: eligible.length, skipped: scope.length - eligible.length });
+      if (method !== "POST") return json({ error: "not-found" }, 404);
+      await delay(700);
+      const queued = downloadJobs.filter(job => ["queued", "resolving", "downloading", "finalizing"].includes(job.state)).length;
+      if (localStorage.getItem("moa.mockQueueFull") === "1" || queued + eligible.length > 500) return json({ error: "download-queue-full" }, 429);
+      const card = byId.get(mediaId)!, now = Date.now();
+      eligible.forEach((episode, i) => {
+        const job: DownloadJob = { id: `dl-${now}-${i}`, episodeId: episode.id, mediaId, title: card.title, episodeTitle: `${episode.number}화`, state: "queued", bytes: 0, totalBytes: null, error: null, createdAt: new Date(now + i).toISOString(), updatedAt: new Date(now).toISOString(), quality: downloadQuality === "best" || downloadQuality === "1080p" ? "1080p" : "720p" };
+        downloadJobs.unshift(job); downloadStarted.set(job.id, now + i * 20_000); // the server runs them one after another
+      });
+      return json({ total: scope.length, added: eligible.length, skipped: scope.length - eligible.length });
+    }
     if (path === "/admin/downloads" && method === "GET") return json(downloadStatus(url.searchParams.get("cursor") ?? "", url.searchParams.get("mediaId") ?? ""));
     if (path === "/admin/downloads/config" && method === "PUT") {
       const keys = Object.keys(body ?? {});
@@ -675,13 +697,24 @@ export function installMockApi() {
       const hide = !replay && settings.shortsRepeatDays !== 0;
       // Like the server, the cursor walks the unfiltered pool so a fresh view never shifts later pages.
       const pool = mockShorts.filter(item => picked.includes(item.category!));
-      const start = Number(url.searchParams.get("cursor") ?? 0), end = start + 4;
-      return json({ status: "ready", items: pool.slice(start, end).filter(item => !hide || !shortsSeen.has(item.key)), nextCursor: end < pool.length ? String(end) : null });
+      let end = Number(url.searchParams.get("cursor") ?? 0);
+      const selected: ShortsItem[] = [];
+      for (; end < pool.length && selected.length < 4; end++) {
+        const item = pool[end];
+        if ((shortsFailures.get(item.key) ?? 0) <= Date.now() && (!hide || !shortsSeen.has(item.key))) selected.push(item);
+      }
+      return json({ status: "ready", items: selected, nextCursor: end < pool.length ? String(end) : null });
     }
-    if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); return json({ ok: true }); }
-    const short = /^\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
+    if (path === "/shorts/seen" && method === "DELETE") { shortsSeen.clear(); shortsFailures.clear(); return json({ ok: true }); }
+    const short = /^\/shorts\/([^/]+)\/(trailers|seen|skip|failed)$/.exec(path);
     if (short) {
       const key = decodeURIComponent(short[1]);
+      if (short[2] === "failed") {
+        if (method !== "POST" || !["unavailable", "temporary"].includes(body.reason)) return json({ error: "invalid-shorts-failure" }, 400);
+        const ttl = body.reason === "unavailable" ? Math.max(1, settings.shortsRepeatDays ?? 7) * 86400_000 : 3600_000;
+        shortsFailures.set(key, Math.max(shortsFailures.get(key) ?? 0, Date.now() + ttl));
+        return json({ ok: true });
+      }
       if (short[2] !== "trailers") { if (method !== "POST") return json({ error: "not-found" }, 404); shortsSeen.add(key); return json({ ok: true }); }
       return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
     }

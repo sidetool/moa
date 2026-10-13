@@ -419,3 +419,56 @@ ID, 현재 작품, 지원 공급자, 목록 수와 이미지 URL을 검증해 �
 등록 해제·프로필 변경·취소·20초 제한에 걸린 응답은 버린다. 결과는 최대
 262,144자이며, 캐시나 영구 저장을 하지 않는다. 요청 전후에 활성화·revision·
 권한을 확인하고 현재 상세 작품과 다른 응답을 거부한다.
+
+### 개봉·방영 일정 (0.1.2-beta.3+)
+
+새 명시적 권한 `schedule.read`를 승인하면
+`moa.discovery.schedule({kind:'movie'|'tv',date:'YYYY-MM-DD'})`를 사용할 수 있습니다.
+공급자에 종속되지 않는 계약이며 현재 구현은 영화 TMDB, 드라마 TVmaze입니다.
+날짜는 한국 시간의 오늘부터 6일 후까지만 허용합니다.
+응답은 `{provider,date,status,items,truncated}`이며 `status`는
+`ready | restricted | unconfigured | unavailable`입니다. 항목은
+`{id,title,date,time,detail}`이며 `time`은 한국 시간 HH:mm 또는 null입니다.
+`id`는 공급자 범위의 일정 식별자로, MOA 작품 ID나 재생 가능한 영상 ID가 아닙니다.
+
+읽기 전용이며 현재 프로필의 키즈 제한, 플러그인 활성화·권한·revision을
+요청 전후 검사합니다. POST 경로는
+`/api/plugin-runtime/:id/discovery/schedule`, 본문은 `{revision,query}`입니다.
+외부 인증 정보는 전달하지 않습니다. 상세 수록 범위와 라이선스는
+[일정 플러그인 안내](../plugins/release-calendar/README.md)를 참조하세요.
+
+### 찜한 작품 소식과 국내 박스오피스 (0.1.2-beta.3+)
+
+두 API는 `minMoaVersion: 0.1.2-beta.3` 이상의 호스트가 필요합니다.
+
+- `moa.watchlist.news()` — **`watchlist.read`와 `schedule.read` 모두** 승인되어야 합니다. 현재 프로필의 최신 찜 100개 중 TMDB 연결이 확정된 서로 다른 작품 최대 12개를 확인합니다. 오늘부터 30일 후까지 한국 영화 극장 개봉(재개봉 포함), TV/애니의 다음 회차 원방영일을 반환합니다. 한국 OTT 공개일이나 소스 업로드를 보장하지 않습니다. 자동 제목 매칭·알림·새 시즌 발견 엔진은 포함하지 않습니다.
+- `moa.discovery.boxOffice({period:'day'|'week'})` — 별도 **`boxoffice.read`** 권한이 필요합니다. KOBIS의 국내 극장 전체(한국·외국 영화) 관객수 순위이며 OTT 순위가 아닙니다. 한국 시간 기준 어제 또는 지난 완료 월~일 주간을 조회합니다. 집계가 아직 없거나 실패하면 가짜 순위나 과거 기간으로 대체하지 않습니다.
+
+실제 POST 경로는 `/api/plugin-runtime/:id/watchlist/news`와
+`/api/plugin-runtime/:id/discovery/boxoffice`입니다. 본문은 `{revision,query}`이며 뉴스의 query는 빈 객체입니다. 클라이언트가 프로필 ID나 공급자 URL/인증키를 지정할 수 없습니다. 활성화·권한·패키지 revision·프로필 정책을 확인하며 응답은 `private, no-store`입니다. 키즈 프로필에는 결과를 제공하지 않습니다.
+
+공통 상태는 `ready | restricted | unconfigured | unavailable`입니다.
+뉴스 응답은 `{provider,from,through,status,items,unlinked,checked,truncated}`,
+항목은 `{mediaId,title,date,kind:'release'|'episode',detail}`입니다.
+박스오피스 응답은 `{provider,period,from,through,status,items}`,
+항목은 `{id,title,rank,audience,totalAudience,change,isNew}`입니다.
+박스오피스 id는 KOBIS 식별자이며 MOA 작품 ID가 아닙니다. 날짜는 ISO 일자, 관객수는 음수가 아닌 정수, 순위 변화는 상승 양수/하락 음수 또는 미상 null입니다. 응답에 키를 포함하지 않습니다.
+
+서버 캐시는 30분, 실패 재시도 간격은 60초이며 백그라운드 정기 조회는 없습니다. 뉴스는 20초 응답 한도를 두며 느린 공급자 조회가 진행 중인 동안 동시 조회 제한을 유지합니다. 뉴스는 공개 작품별 일정만 캐시하고 찜 목록을 매번 다시 확인합니다. 요청 도중 목록 삭제·연결 변경·키즈 제한 전환은 반환 전에 반영됩니다. 데이터 공급자는 현재 TMDB/KOBIS지만 SDK 이름은 공급자에 종속되지 않습니다.
+
+#### KOBIS 키 설정
+
+[KOBIS 키 발급/관리](https://www.kobis.or.kr/kobisopenapi/homepg/apikey/ckUser/findApikeyList.do)에서 발급받은 키를 **서버**의 `MOA_KOBIS_API_KEY` 환경변수에 설정하고 앱 프로세스를 재시작합니다. 일반 Compose 설치는 로컬 `.env`의 같은 변수를 compose.yaml에서 앱 컨테이너로 전달합니다. 키를 플러그인 ZIP·브라우저 저장소·공개 저장소에 넣지 마세요.
+
+릴리스 설치는 생성된 Compose 설정을 보존하므로 `.env`만 고쳐서는 실행 중 컨테이너의 환경변수가 바뀌지 않을 수 있습니다. 관리 중인 실제 배포 설정에 변수를 전달한 뒤 컨테이너를 갱신해야 합니다. 이 개발 작업은 운영 설정을 변경하지 않았습니다. 키가 없으면 뉴스 기능은 기존 TMDB 설정으로 동작하고 박스오피스만 미설정으로 표시됩니다.
+
+공식 계약: [KOBIS 일별](https://www.kobis.or.kr/kobisopenapi/homepg/apiservice/searchServiceDesc.do?apiSvcId=searchDailyBoxOffice) · [주간](https://www.kobis.or.kr/kobisopenapi/homepg/apiservice/searchServiceDesc.do?apiSvcId=searchWeeklyBoxOffice) · [TMDB TV 상세](https://developer.themoviedb.org/reference/tv-series-details).
+### 작품 리뷰 (`title.reviews`, 0.1.2-beta.3+)
+
+0.1.2-beta.3 이상의 호스트에서 지원한다. `reviews.read` 권한과 `title.reviews` hook을 선언한 API 2 플러그인은 `moa.reviews.list(provider, selection?)`를 호출한다. 현재 provider는 `tmdb`, `anilist`이며 API 이름은 특정 공급자에 묶이지 않는다. 호스트가 현재 상세 페이지에서 작품을 결정하며 임의 쿼리/URL/키는 받지 않는다.
+
+Hook 입력은 `{mediaId, provider, selection?}`, 응답은 shared의 `ReviewResponse`다. `selection`은 AniList 후보 ID 문자열이며 서버가 해당 작품에 대해 반환한 후보에 있어야 한다. 선택하지 않았거나 후보에 없는 ID면 `select` 상태와 후보 목록이 반환된다. 임의 첫 항목을 자동 선택하지 않는다.
+
+호스트가 네이티브 리뷰 UI와 외부 링크를 렌더링하고 응답을 검증한다. 기존 플러그인은 새 기능을 선언하지 않으면 영향이 없다. 상태는 ready/select/unconfigured/unlinked/restricted/unavailable이며, ready+빈 목록은 리뷰 없음, select+빈 후보는 작품 검색 결과 없음이다. 평점 통합/국적 판별/원문 전체 저장은 제공하지 않는다. 설정·실측·한도·번역의 한계는 `plugins/title-reviews/README.md` 참조.
+
+AniList 요청 한도는 리뷰와 추천 보강이 공유합니다. 서버 전체 20회/분·동시 4개이며, 429 또는 잔여 한도 0 응답의 대기 시간도 두 기능에 함께 적용합니다. 두 기능의 결과 캐시와 사용자 권한은 별도로 유지합니다.

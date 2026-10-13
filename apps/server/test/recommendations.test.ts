@@ -142,3 +142,30 @@ test('uncached lower-ranked seeds are warmed without bypassing the two-request c
   service.get('viewer');assert.deepEqual(calls,['seed-6','seed-7','seed-8']);
   releases.splice(0).forEach(resolve=>resolve());await new Promise<void>(resolve=>setImmediate(resolve));
 });
+
+test('AniList is opt-in supplementation, preserves TMDB order/IDs and obeys per-profile exclusions',async t=>{
+  const {db,tmdb,title,detail}=await fixture(t);title('seed',1);detail(1,[candidate(10)]);
+  db.run('UPDATE tmdb_titles SET card=? WHERE tmdb_id=1',JSON.stringify({genreIds:[16],title:'Localized',originalTitle:'Synthetic Anime',year:2024,certification:'ALL'}));
+  let calls=0;const supplemental={busy:false,close(){},lookup(){calls++;return [candidate(10),{...candidate(20),genreIds:[16]},candidate(30)];}};
+  const service=new Recommendations(db,tmdb,()=>clock,supplemental);
+  assert.deepEqual(keys(service),['movie:10']);assert.equal(calls,0);
+  db.run('INSERT INTO settings VALUES(?,?)','viewer',JSON.stringify({anilistRecommendationsEnabled:true}));
+  assert.deepEqual(keys(service),['movie:10','movie:20','movie:30']);assert.match(service.get('viewer').items[1].reason,/AniList/);
+  service.dismiss('viewer','movie:20');assert.deepEqual(keys(service),['movie:10','movie:30']);
+  title('saved',30,'viewer',-1);db.run("INSERT INTO watchlist VALUES('viewer','saved','2026-10-10')");
+  assert.deepEqual(keys(service),['movie:10']);
+  const before=calls;assert.equal(service.get('other').status,'insufficient-history');assert.equal(calls,before);
+  db.run("UPDATE profiles SET kids=1 WHERE id='viewer'");detail(10,[],'ALL');service.get('viewer');assert.equal(calls,before);
+  assert.equal(db.get("SELECT tmdb_id FROM tmdb_links WHERE media_id='seed'")!.tmdb_id,1);
+  service.close();
+});
+
+test('AniList is not consulted for season-specific and unidentified evidence',async t=>{
+  const {db,tmdb,title,detail}=await fixture(t);title('seed',1);detail(1,[candidate(10)]);
+  db.run('INSERT INTO settings VALUES(?,?)','viewer',JSON.stringify({anilistRecommendationsEnabled:true}));
+  let calls=0;const service=new Recommendations(db,tmdb,()=>clock,{busy:false,close(){},lookup(){calls++;return[];}});
+  service.get('viewer');assert.equal(calls,0);
+  db.run('UPDATE tmdb_titles SET card=? WHERE tmdb_id=1',JSON.stringify({genreIds:[16],title:'Localized',originalTitle:'Synthetic Anime',year:2024}));
+  db.run("UPDATE tmdb_links SET season=2 WHERE media_id='seed'");service.get('viewer');assert.equal(calls,0);
+  service.close();
+});

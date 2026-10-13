@@ -59,7 +59,7 @@ const POOL = [
 const TRAILERS = { 'movie:1': ['okaaaaaaaaa'], 'tv:2': ['okbbbbbbbbb'], 'movie:3': ['okccccccccc'] };
 let nativeAvailable = false, fixture, fixtureType = 'video/webm', busy = true;
 let settings, kids, log;
-const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], patches: [], prepare: [], closed: [], media: 0, warm: [], translate: [], cancelled: [] }; };
+const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], failures: [], patches: [], prepare: [], closed: [], media: 0, warm: [], translate: [], cancelled: [] }; };
 const route = async context => {
   await context.route(url => !['127.0.0.1', 'localhost'].includes(url.hostname), r => {
     const url = new URL(r.request().url());
@@ -88,9 +88,15 @@ const route = async context => {
       log.feed.push(url.search);
       if (!settings.shortsEnabled) return r.fulfill({ json: { status: 'disabled', items: [], nextCursor: null } });
       const picked = settings.shortsCategories ?? ['movie', 'series', 'anime'], pool = POOL.filter(i => picked.includes(i.category));
-      const start = Number(url.searchParams.get('cursor') ?? 0), end = start + 4;
+      let end = Number(url.searchParams.get('cursor') ?? 0);
+      const selected = [];
       const hide = url.searchParams.get('replay') !== '1';
-      return r.fulfill({ json: { status: 'ready', items: pool.slice(start, end).filter(i => !hide || !(log.seen.includes(i.key) || log.skips.includes(i.key))), nextCursor: end < pool.length ? String(end) : null } });
+      // Match production: scan excluded rows until a full page or the pool's end.
+      for (; end < pool.length && selected.length < 4; end++) {
+        const i = pool[end];
+        if (!log.failures.some(f => f.key === i.key) && (!hide || !(log.seen.includes(i.key) || log.skips.includes(i.key)))) selected.push(i);
+      }
+      return r.fulfill({ json: { status: 'ready', items: selected, nextCursor: end < pool.length ? String(end) : null } });
     }
     if (path === '/api/shorts/native') return r.fulfill({ json: { available: nativeAvailable } });
     const closed = /^\/api\/shorts\/native\/([^/]+)$/.exec(path);
@@ -111,8 +117,8 @@ const route = async context => {
       const subtitles = key === 'movie:1' ? [{ id: 'en', label: 'English', lang: 'en', auto: false, url: '/api/test-subs/en.vtt' }] : undefined;
       return new Promise(resolve => setTimeout(resolve, key === 'movie:3' ? 2000 : 300)).then(() => r.fulfill({ json: { sessionId: id, url: `/api/playback/${id}/shorts/a1`, mime: 'video/mp4', subtitles } })).catch(() => {});
     }
-    const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip)$/.exec(path);
-    if (m) { const key = decodeURIComponent(m[1]); if (m[2] !== 'trailers') { assert.equal(method, 'POST'); (m[2] === 'seen' ? log.seen : log.skips).push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
+    const m = /^\/api\/shorts\/([^/]+)\/(trailers|seen|skip|failed)$/.exec(path);
+    if (m) { const key = decodeURIComponent(m[1]); if (m[2] === 'failed') { assert.equal(method, 'POST'); log.failures.push({key, ...r.request().postDataJSON()}); return r.fulfill({json:{ok:true}}); } if (m[2] !== 'trailers') { assert.equal(method, 'POST'); (m[2] === 'seen' ? log.seen : log.skips).push(key); return r.fulfill({ json: { ok: true } }); } log.trailers.push(key); return r.fulfill({ json: { trailers: TRAILERS[key] ?? [], checked: true } }); }
     return r.fulfill({ json: [] });
   });
 };
@@ -204,11 +210,13 @@ try {
   reset(); settings.shortsEnabled = true;
   let { context, page } = await open(390, 844);
   await page.goto(`${base}settings#experimental`);
+  await page.getByRole('button', { name: '세부 설정' }).click();
   const toggle = page.getByRole('switch', { name: '직접 재생' });
   await toggle.waitFor();
   assert.equal(await toggle.isDisabled(), true, 'disabled while unavailable');
   nativeAvailable = true;
   await page.reload();
+  await page.getByRole('button', { name: '세부 설정' }).click();
   await toggle.click();
   await until(() => settings.shortsPlayback === 'native', 'native saved');
   await page.screenshot({ path: verificationPath('native-settings.png') });
@@ -267,6 +275,8 @@ try {
   await page.locator('.shorts-slide.is-active video').click();
   await until(async () => !(await page.locator('.shorts-slide.is-active video').evaluate(v => v.paused)), 'resumed');
 
+  assert.deepEqual(log.failures, [], 'failed prefetch is not reported before visiting it');
+
   // The end advances and releases the lease. A busy server waits for the person, then the inline YouTube fallback.
   await until(async () => (await activeTitle(page)) === '준비 실패', 'ended advances', 12000);
   await until(() => log.closed.includes('s1'), 'lease closed on leave');
@@ -274,6 +284,7 @@ try {
   await wait(2000);
   assert.equal(await activeTitle(page), '준비 실패', 'no automatic advance');
   assert.equal(log.prepare.filter(key => key === 'tv:2').length, 1, 'the failed prefetch is shown, not repeated');
+  assert.deepEqual(log.failures,[{key:'tv:2',reason:'temporary'}], 'active failed work reported once');
   await page.getByRole('button', { name: 'YouTube로 재생' }).click();
   await until(async () => (await yt(page)).live === 1, 'inline fallback player');
   assert.equal(await page.locator('.shorts-slide.is-active.is-native').count(), 0, 'fallback uses the unobscured layout');

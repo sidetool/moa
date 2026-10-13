@@ -1,3 +1,9 @@
+import { AniListClient } from './anilist-client.js';
+import { AniListRecommendations } from './anilist-recommendations.js';
+import {PluginNews} from './plugin-news.js';
+import {PluginBoxOffice,type BoxOfficeOptions} from './plugin-boxoffice.js';
+import {PluginSchedule,type ScheduleOptions} from './plugin-schedule.js';
+import { PluginReviews, type ReviewOptions } from './plugin-reviews.js';
 import { Downloads } from './downloads.js';
 import { GeneralMarkers } from './general-markers.js';
 import { Recommendations } from './recommendations.js';
@@ -51,7 +57,7 @@ const object = (properties: Record<string, unknown>, required: string[] = []) =>
 const profileFields = { pin: { type: ['string', 'null'], pattern: '^[0-9]{4,8}$' }, avatar: { type: ['string', 'null'], pattern: '^[a-z]+-[0-9]{1,2}$', maxLength: 64 }, name: { ...string, pattern: '\\S' }, color: { type: 'string', enum: COLORS }, kids: { type: 'boolean' } };
 const filterChange = object({ position: { type: 'integer', minimum: 0, maximum: 511 }, groupPosition: { type: 'integer', minimum: 0, maximum: 511 }, value: { type:['string','number','boolean','object'], maxLength:2000, additionalProperties:false, properties:{index:{type:'integer',minimum:0},ascending:{type:'boolean'}}, required:['index','ascending'] } }, ['position','value']);
 const browseSelection = object({ revision: {type:'string',maxLength:80}, filters: {type:'array',maxItems:512,items:filterChange} }, ['revision','filters']);
-const settingsFields = { shortsQuality: {type:'string',enum:['auto','360p','480p','720p']}, shortsPlayback: {type:'string',enum:['embed','native']}, shortsCategories: {type:'array',minItems:1,maxItems:3,uniqueItems:true,items:{type:'string',enum:['movie','series','anime']}}, shortsEnabled: {type:'boolean'}, shortsScreenFit: {type:'boolean'}, shortsMode: {type:'string',enum:['mixed','personal','popular']}, shortsHideWatched: {type:'boolean'}, shortsRepeatDays: {type:'integer',enum:[0,1,7,30]}, recommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
+const settingsFields = { shortsQuality: {type:'string',enum:['auto','360p','480p','720p']}, shortsPlayback: {type:'string',enum:['embed','native']}, shortsCategories: {type:'array',minItems:1,maxItems:3,uniqueItems:true,items:{type:'string',enum:['movie','series','anime']}}, shortsEnabled: {type:'boolean'}, shortsScreenFit: {type:'boolean'}, shortsMode: {type:'string',enum:['mixed','personal','popular']}, shortsHideWatched: {type:'boolean'}, shortsRepeatDays: {type:'integer',enum:[0,1,7,30]}, recommendationsEnabled: {type:'boolean'}, anilistRecommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
 const validateNavigation = (tabs: NavigationTab[] | null | undefined) => {
   if (tabs && (tabs[0]?.id !== 'home' || new Set(tabs.map(t => t.id)).size !== tabs.length)) throw new ApiFailure(400, 'invalid-navigation');
 };
@@ -75,7 +81,7 @@ export async function sendFile(reply: FastifyReply, file: string, mime: string, 
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
   return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
 }
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { reviews?: ReviewOptions; boxoffice?:BoxOfficeOptions; schedule?:ScheduleOptions; downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -104,7 +110,8 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const youtube = new YouTubeTrailers(db, services.youtube);
   const nativeShorts = new NativeShorts(cfg.shortsExtractor ? ytDlpExtractor(cfg.shortsExtractor) : undefined);
   catalog.metadata = tmdb.enabled;
-  const recommendations = new Recommendations(db, tmdb);
+  const anilist = new AniListClient(services.reviews?.fetch);
+  const recommendations = new Recommendations(db, tmdb, Date.now, new AniListRecommendations(q=>tmdb.search(q),undefined,Date.now,anilist));
   const groups = new TitleGroups(catalog);
   const franchises = new Franchises(catalog, groups, sources, tmdb);
   // Session tokens live only in memory. Remove their obsolete segments after a restart.
@@ -126,6 +133,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     nativeShorts.busy || downloads.busy || playback.sessions.size > 0 || remotePlayback.sessions.size > 0 || library.status.running || translations.updaterBusy ||
     Boolean(db.get("SELECT 1 FROM skip_analysis_jobs WHERE status='running' LIMIT 1")));
   updateMaintenance.register(app);
+  app.addHook('onReady',async()=>{await updateMaintenance.tick();downloads.start(()=>!updateMaintenance.paused);});
   /** Give TMDB a moment to link new titles so first visits already show its artwork. */
   const withMetadata = async <T extends { items: { id: string }[] }>(page: T, profileId: string): Promise<T> => {
     const unlinked = page.items.map(c => c.id).filter(id => !db.get('SELECT 1 FROM tmdb_links WHERE media_id=?', id));
@@ -174,7 +182,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     const sessionAsset = ['GET','HEAD'].includes(req.method) && /^\/api\/playback\/[^/]+\//.test(url);
     const scoped = !(/^\/api\/(me$|profiles(?:\/|$)|admin\/|images\/)/.test(url)) && !sessionAsset;
     const header = req.headers['x-moa-profile'];
-    const downloadProfile = route === '/api/admin/downloads/choices' || route === '/api/admin/downloads' && req.method === 'POST' || route === '/api/admin/downloads/:id/retry';
+    const downloadProfile = route === '/api/admin/downloads/batch' || route === '/api/admin/downloads/choices' || route === '/api/admin/downloads' && req.method === 'POST' || route === '/api/admin/downloads/:id/retry';
     const copyNavigation = route === '/api/admin/default-navigation' && req.method === 'PUT' && header !== undefined;
     if (scoped || downloadProfile || copyNavigation || sessionAsset && header !== undefined) {
       if (typeof header !== 'string' || !db.get('SELECT id FROM profiles WHERE id=? AND account_id=?', header, req.moaAccount.id)) throw new ApiFailure(401, 'profile-required');
@@ -231,7 +239,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.post('/api/shorts/native/:sessionId/warm',{schema:{body:object({})}},async(req,reply)=>{
     const id=params(req).sessionId,owner=assertNativeShort(req,id),abort=new AbortController();
     const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
-    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal));}
+    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal,db.settings(owner).shortsQuality??'auto'));}
     finally{reply.raw.off('close',disconnect);}
   });
   app.get('/api/playback/:sessionId/shorts-captions/:trackId',async(req,reply)=>{
@@ -261,8 +269,9 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   });
   app.post('/api/shorts/:key/seen', {schema:{params:shortsKey}}, async req => { shorts.seen(profile(req),(req.params as {key:string}).key); return {ok:true}; });
   app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
+  app.post('/api/shorts/:key/failed', {schema:{params:shortsKey,body:object({reason:{type:'string',enum:['unavailable','temporary']}},['reason'])}}, async req => { shorts.failed(profile(req),params(req).key,(req.body as {reason:'unavailable'|'temporary'}).reason); return {ok:true}; });
   app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb));
+  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,{...services.reviews,anilist}));
   registerUpdates(app, { prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
@@ -404,6 +413,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     if (q.sort === 'year') cards.sort((a, b) => (b.year || 0) - (a.year || 0) || a.title.localeCompare(b.title));
     return catalog.page(cards, q.page);
   });
+  app.post('/api/media/popular', {schema:{body:object({lists:{type:'array',maxItems:32,items:object({sourceId:{type:'string',minLength:1,maxLength:128},ids:{type:'array',maxItems:20,items:{type:'string',minLength:1,maxLength:512}}},['sourceId','ids'])}},['lists'])}}, async req=>groups.popular((req.body as {lists:{sourceId:string;ids:string[]}[]}).lists,profile(req)));
   app.post('/api/media/groups/resolve', { schema: { body: object({ids:{type:'array',maxItems:1000,items:string},query:{type:'string',maxLength:500}},['ids']) } }, async req => groups.resolve((req.body as {ids:string[]}).ids,profile(req),(req.body as {query?:string}).query));
   app.get('/api/media/groups/candidates', { schema: {querystring:object({q:{type:'string',maxLength:200,default:''}})} }, async req => groups.candidates(query(req).q,profile(req)));
   app.get('/api/media/:id/group', {schema:{params:idParams()}}, async req => groups.group(params(req).id,profile(req)));
@@ -576,6 +586,8 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   app.get('/api/admin/downloads',{schema:{querystring:object({cursor:{type:'string',maxLength:2048},mediaId:{type:'string',minLength:1,maxLength:512}})}},async (req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.status(query(req))));
   app.put('/api/admin/downloads/config',{schema:{body:{...object({enabled:{type:'boolean'},quality:{type:'string',enum:['best','1080p','720p','480p']},quotaBytes:{type:'integer',minimum:1,maximum:1099511627776000}}),minProperties:1}}},async req=>{await downloads.configureSettings(req.body as {enabled?:boolean;quality?:import('@moa/shared').DownloadQuality;quotaBytes?:number});return downloads.status();});
   app.get('/api/admin/downloads/choices',{schema:{querystring:object({episodeId:string},['episodeId'])}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.choices(query(req).episodeId,profile(req))));
+  app.get('/api/admin/downloads/batch',{schema:{querystring:object({mediaId:{type:'string',minLength:1,maxLength:512},season:{type:'integer',minimum:0,maximum:10000}},['mediaId'])}},async(req,reply)=>{const q=req.query as {mediaId:string;season?:number};return reply.header('Cache-Control','private, no-store').send(downloads.previewBatch(q.mediaId,profile(req),q.season));});
+  app.post('/api/admin/downloads/batch',{schema:{body:object({mediaId:{type:'string',minLength:1,maxLength:512},season:{type:'integer',minimum:0,maximum:10000}},['mediaId'])}},async req=>{const b=req.body as {mediaId:string;season?:number};return downloads.createBatch(b.mediaId,profile(req),b.season);});
   app.post('/api/admin/downloads',{schema:{body:{...object({episodeId:string,selectionToken:string,choiceId:string},['episodeId']),dependencies:{selectionToken:['choiceId'],choiceId:['selectionToken']}}}},async req=>{const b=req.body as {episodeId:string;selectionToken?:string;choiceId?:string};return b.selectionToken!==undefined?downloads.create(b.episodeId,profile(req),b.selectionToken,b.choiceId!):downloads.createPreferred(b.episodeId,profile(req));});
   app.post('/api/admin/downloads/:id/cancel',{schema:{params:idParams()}},async req=>downloads.cancel(params(req).id));
   app.post('/api/admin/downloads/:id/retry',{schema:{params:idParams()}},async req=>downloads.retry(params(req).id,profile(req)));
@@ -684,6 +696,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { recommendations.close(); anilist.close(); nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

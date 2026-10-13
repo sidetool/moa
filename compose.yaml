@@ -22,6 +22,7 @@ services:
       MOA_TMDB_TOKEN: ${MOA_TMDB_TOKEN:-}
       MOA_TMDB_API_KEY: ${MOA_TMDB_API_KEY:-}
       MOA_YOUTUBE_API_KEY: ${MOA_YOUTUBE_API_KEY:-}
+      MOA_KOBIS_API_KEY: ${MOA_KOBIS_API_KEY:-}
       MOA_SHORTS_EXTRACTOR: ${MOA_SHORTS_EXTRACTOR:-}
     depends_on:
       moa-apk: {condition: service_healthy}

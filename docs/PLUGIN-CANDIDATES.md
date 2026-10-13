@@ -71,7 +71,7 @@
 목표: 관심 목록에 있는 작품의 방영 예정 정보를 모아서 표시.
 
 - 작품의 외부 ID, 관심 목록의 읽기 전용 권한이 필요하다.
-- 현재는 권한/API 미구현이므로 일정표와 관심 목록 연결 기반 이후로 미룬다.
+- 개발 브랜치에서 `watchlist.read` + `schedule.read`, `moa.watchlist.news()`를 구현했다. 연결된 최신 찜 최대 12개에서 향후 30일 한국 극장 개봉과 시리즈의 다음 회차를 조회하며, 별도의 새 시즌 탐지·푸시 알림은 포함하지 않는다. 아직 통합·운영 배포 전이다.
 - 날짜 변경/미정 처리, 중복 시즌, 프로필 격리를 확인한다. 알림은 사용자가 요청하기 전까지 추가하지 않는다.
 
 ## 실행 순서와 인계
@@ -96,3 +96,7 @@
 - [TVmaze API](https://www.tvmaze.com/api)
 - [KOBIS 제공 서비스](https://www.kobis.or.kr/kobisopenapi/homepg/apiservice/searchServiceInfo.do)
 - [AniList Staff](https://docs.anilist.co/reference/object/staff)
+
+## 2026-10-13 개발 진행
+
+`feat/watchlist-boxoffice-plugins`에서 찜한 작품 소식과 국내 박스오피스의 호스트 API·독립 패키지를 구현했다. 합성 데이터로 서버·SDK·모바일/데스크톱 검증을 마쳤으며 공개 발행·운영 설치는 하지 않았다. KOBIS 키는 서버 환경변수로만 보관하며 실제 키를 이용한 공급자 조회는 미검증이다. 기존 리뷰·일정 UI 브랜치와 분리되어 있으므로 통합 시 최신 브랜치의 SDK·권한 목록을 모두 보존해야 한다.

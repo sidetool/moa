@@ -157,6 +157,16 @@ export class Tmdb {
     if (!row || !['movie','tv'].includes(row.kind) || !Number.isSafeInteger(row.tmdb_id) || row.tmdb_id <= 0) return null;
     return {mediaId,provider:this.providerId,kind:row.kind,id:String(row.tmdb_id),name:row.title,scope:row.kind === 'tv' ? 'series' : 'movie'};
   }
+  async reviewItems(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').ReviewItem[]> {
+    if (!this.enabled || title.provider !== 'tmdb' || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new Error('invalid-review-title');
+    let data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'ko-KR',page:'1'});
+    if (Array.isArray(data?.results) && !data.results.length) data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'en-US',page:'1'});
+    if (!Array.isArray(data?.results)) throw new Error('invalid-reviews');
+    return data.results.slice(0,8).flatMap((r:any) => {
+      if (typeof r.url !== 'string' || !/^https:\/\/(?:www\.)?themoviedb\.org\/review\/[a-zA-Z0-9]+$/.test(r.url) || typeof r.content !== 'string') return [];
+      return [{title:'사용자 리뷰',excerpt:r.content.slice(0,600),author:typeof r.author==='string'?r.author.slice(0,100):'',date:typeof r.created_at==='string'?r.created_at.slice(0,40):'',url:r.url,kind:'review' as const,language:'unknown' as const}];
+    });
+  }
   async peopleCredits(title: import('@moa/shared').LinkedPluginTitle) {
     if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
     if (title.provider !== this.providerId || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new ApiFailure(400, 'invalid-metadata-identity');
@@ -227,6 +237,41 @@ export class Tmdb {
     }
     const data=await this.get(`/${kind}/${id}`,{language:'ko-KR',append_to_response:'videos',include_video_language:'ko,en,ja,null'});
     return {trailers:trailerCandidates(data?.videos?.results),adult:data?.adult!==false};
+  }
+
+  async upcoming(kind:'movie'|'tv',id:number):Promise<Array<Omit<import('@moa/shared').WatchlistNewsEvent,'mediaId'|'title'>>>{
+    if(!this.enabled||!['movie','tv'].includes(kind)||!Number.isSafeInteger(id)||id<1)throw new Error('invalid-upcoming');
+    const data=await this.get(kind==='movie'?`/movie/${id}/release_dates`:`/tv/${id}`,{language:'ko-KR'});
+    const validDate=(d:unknown):d is string=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
+    if(kind==='movie'){
+      if(!Array.isArray(data?.results))throw new Error('invalid-upcoming');
+      const kr=data.results.find((r:any)=>r.iso_3166_1==='KR');
+      const dates=new Set<string>();for(const r of Array.isArray(kr?.release_dates)?kr.release_dates:[]){const date=typeof r.release_date==='string'?r.release_date.slice(0,10):'';if([2,3].includes(r.type)&&validDate(date))dates.add(date);}
+      return [...dates].sort().map(date=>({date,kind:'release' as const,detail:'한국 극장 개봉 · 재개봉 포함'}));
+    }
+    if(!data||data.id!==id)throw new Error('invalid-upcoming');
+    const e=data.next_episode_to_air;
+    if(!e||!validDate(e.air_date)||!Number.isSafeInteger(e.season_number)||e.season_number<0||!Number.isSafeInteger(e.episode_number)||e.episode_number<1)return [];
+    return [{date:e.air_date,kind:'episode',detail:`시즌 ${e.season_number} · ${e.episode_number}화 · 원방영일 기준`}];
+  }
+
+  async movieSchedule(date:string):Promise<{items:import('@moa/shared').ScheduleItem[];truncated:boolean}>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!this.enabled)throw new Error('invalid-schedule');
+    const data=await this.get('/discover/movie',{language:'ko-KR',region:'KR','release_date.gte':date,'release_date.lte':date,with_release_type:'2|3',include_adult:'false',sort_by:'popularity.desc',page:'1'});
+    if(!Array.isArray(data?.results))throw new Error('invalid-schedule');
+    const seen=new Set<number>();
+    const candidates=data.results.filter((x:any)=>x&&Number.isSafeInteger(x.id)&&x.id>0&&x.adult===false&&typeof x.title==='string'&&!seen.has(x.id)&&seen.add(x.id)).slice(0,12);
+    const rows=await Promise.allSettled(candidates.map(async(x:any)=>{
+      const releases=await this.get(`/movie/${x.id}/release_dates`);
+      if(!Array.isArray(releases?.results))throw new Error('invalid-release-dates');
+      const kr=releases.results.find((r:any)=>r.iso_3166_1==='KR');
+      const dates=Array.isArray(kr?.release_dates)?kr.release_dates:[];
+      if(!dates.some((r:any)=>[2,3].includes(r.type)&&typeof r.release_date==='string'&&r.release_date.slice(0,10)===date))return null;
+      return {id:String(x.id),title:x.title.slice(0,200),date,time:null,detail:'한국 극장 개봉 · 재개봉 포함'};
+    }));
+    const items:import('@moa/shared').ScheduleItem[]=rows.flatMap(r=>r.status==='fulfilled'&&r.value?[r.value]:[]);
+    if(candidates.length&&rows.every(r=>r.status==='rejected'))throw new Error('release-dates-unavailable');
+    return {items,truncated:data.total_pages>1||data.results.length>12||rows.some(r=>r.status==='rejected')};
   }
 
   /** Link titles in the background; resolves when done or after the budget, whichever is first. */

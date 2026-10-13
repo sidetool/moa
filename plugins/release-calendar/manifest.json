@@ -1,0 +1,5 @@
+{
+ "apiVersion":2,"id":"release-calendar","name":"개봉·방영 일정","version":"0.1.0",
+ "description":"앞으로 7일간 한국 극장 개봉과 국내 드라마 회차 일정을 확인하고 MOA에서 검색합니다.",
+ "minMoaVersion":"0.1.2-beta.3","placements":["home"],"permissions":["schedule.read","app.navigate","ui"],"connect":[]
+}
