@@ -32,10 +32,12 @@ async function fixture(options = {}) {
   await context.addInitScript(() => { localStorage.setItem('moa.profile', 'subtitle-test'); localStorage.setItem('moa.remoteMode', 'off'); });
   if (options.interactive) await context.addInitScript(() => { window.fullscreenRequests = 0; Element.prototype.requestFullscreen = function () { window.fullscreenRequests++; return Promise.resolve(); }; });
   const calls = { searches: [], applies: [], preferences: [], translations: 0 };
-  let device = { subtitleSize: 'medium', subtitleScale: 100, subtitleHeight: options.ass ? 30 : 0, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitlePadding: 6 };
+  let device = { subtitleSize: 'medium', subtitleScale: 100, subtitleHeight: options.ass ? 30 : 0, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitlePadding: 6, holdSpeed: options.holdSpeed ?? 2 };
   let releaseSearch;
   const searchGate = options.searchGate ? new Promise(resolve => { releaseSearch = resolve; }) : Promise.resolve();
   await context.route('**/fixture/**', route => {
+    if (route.request().url().endsWith('/master.m3u8')) return route.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' + options.qualities.map(height => `#EXT-X-STREAM-INF:BANDWIDTH=${height * 1000},RESOLUTION=${Math.round(height * 16 / 9)}x${height},CODECS="avc1.42e01e"\n${height}.m3u8\n`).join('') });
+    if (route.request().url().endsWith('.m3u8')) return new Promise(() => {});
     if (route.request().url().endsWith('.vtt')) return route.fulfill({ contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:00.000 --> 00:10:00.000\n자막 검증\n' });
     if (route.request().url().endsWith('.ass')) return route.fulfill({ contentType: 'text/plain', body: ass });
     const match = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/), start = Number(match?.[1] || 0), end = Math.min(bytes.length - 1, match?.[2] ? Number(match[2]) : bytes.length - 1);
@@ -51,7 +53,7 @@ async function fixture(options = {}) {
     if (path === '/api/translation/config') return json({ enabled: !options.ass && !options.interactive, configured: true });
     if (path === '/api/playback' && req.method() === 'POST') {
       const { episodeId } = req.postDataJSON();
-      return json({ sessionId: `session-${episodeId}`, episodeId, mediaId: 'm', mediaTitle: '자막 검증', mediaType: 'anime', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 600, startPosition: 1, streams: [{ id: '0', label: '720p' }], streamId: '0', subtitles: options.ass ? [{ ...own, id: 'ass', format: 'ass', url: '/fixture/subtitle.ass' }] : [own], audioTracks: [], next: null });
+      return json({ sessionId: `session-${episodeId}`, episodeId, mediaId: 'm', mediaTitle: '자막 검증', mediaType: 'anime', mode: 'direct', mime: options.qualities ? 'application/vnd.apple.mpegurl' : 'video/mp4', url: options.qualities ? '/fixture/master.m3u8' : '/fixture/video.mp4', duration: 600, startPosition: 1, streams: [{ id: '0', label: '720p' }], streamId: '0', subtitles: options.ass ? [{ ...own, id: 'ass', format: 'ass', url: '/fixture/subtitle.ass' }] : [own], audioTracks: [], next: null });
     }
     if (path === '/api/media/m') return json({ id: 'm', type: 'anime', title: '자막 검증', provider: { id: 'fixture', name: '테스트 소스', kind: 'extension' }, seasons: [] });
     if (path.endsWith('/markers')) return json({ status: 'unavailable' });
@@ -71,8 +73,10 @@ async function fixture(options = {}) {
   });
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(String(error)));
+  const levelsReady = options.qualities ? page.waitForRequest(request => /\/\d+\.m3u8$/.test(request.url())) : null;
   await page.goto(new URL('tests/fixtures/player.html', base).href);
-  await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
+  if (levelsReady) { await levelsReady; await page.locator('.player-video').dispatchEvent('loadedmetadata'); }
+  else await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
   return { page, calls, releaseSearch, close: async () => { releaseSearch?.(); await context.close(); } };
 }
 async function waitFor(check, message) {
@@ -84,6 +88,35 @@ async function openSubs(page) {
   await page.getByRole('dialog', { name: '자막 및 음성', exact: true }).waitFor();
 }
 try {
+  for (const width of [1280, 390, 320]) {
+    const f = await fixture({ interactive: true, width, qualities: [240, 360, 480, 720, 1080, 1440, 2160] }), page = f.page;
+    await page.getByRole('button', { name: '재생 설정', exact: true }).dispatchEvent('click');
+    for (const name of ['재생 속도', '화질']) {
+      const group = page.getByRole('group', { name, exact: true });
+      assert.equal(await group.getByRole('button').count(), name === '화질' ? 8 : 6);
+      const before = await group.evaluate(element => getComputedStyle(element, '::before').transform);
+      await group.getByRole('button').last().click();
+      await page.waitForFunction(element => element.getAnimations({ subtree: true }).some(animation => animation.transitionProperty === 'transform'), await group.elementHandle());
+      const motion = await group.evaluateHandle(element => element.getAnimations({ subtree: true }).find(animation => animation.transitionProperty === 'transform'));
+      await motion.evaluate(animation => { animation.pause(); animation.currentTime = 100; });
+      const during = await group.evaluate(element => getComputedStyle(element, '::before').transform);
+      await motion.evaluate(animation => animation.finish());
+      const after = await group.evaluate(element => getComputedStyle(element, '::before').transform);
+      assert.notEqual(before, after); assert.notEqual(during, before); assert.notEqual(during, after);
+      const geometry = await group.evaluate(element => {
+        const box = element.getBoundingClientRect(), active = element.querySelector('.is-active').getBoundingClientRect(), pill = getComputedStyle(element, '::before');
+        const labels = [...element.querySelectorAll('button')].map(button => { const range = document.createRange(); range.selectNodeContents(button); const text = range.getBoundingClientRect(), rect = button.getBoundingClientRect(); return { text: text.toJSON(), button: rect.toJSON() }; });
+        return { left: box.left + parseFloat(pill.left) + new DOMMatrix(pill.transform).m41, width: parseFloat(pill.width), active: active.toJSON(), labels };
+      });
+      assert.ok(Math.abs(geometry.left - geometry.active.left) < 1 && Math.abs(geometry.width - geometry.active.width) < 1, `${name}: background alignment at ${width}px`);
+      for (const { text, button } of geometry.labels) assert.ok(text.left >= button.left - 1 && text.right <= button.right + 1, `${name}: label fits its button at ${width}px: ${JSON.stringify({ text, button })}`);
+      const title = await group.locator('..').locator('.pf-label').boundingBox();
+      assert.ok(title.x >= 0 && title.x + title.width <= width, `${name}: section title stays visible after horizontal scrolling`);
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: verificationPath(`player-segments-${width}.png`) });
+    await f.close(); results.push(`Speed and quality backgrounds slide and labels fit at ${width}px`);
+  }
   {
     const f = await fixture({ interactive: true }), page = f.page;
     const video = page.locator('.player-video'), surface = page.locator('.player-surface');
@@ -176,6 +209,27 @@ try {
     assert.equal(await page.locator('.player-video').evaluate(video => video.paused), true);
     await cdp.detach(); await f.close(); results.push('Touch hold, pinch cancellation, control toggle and double-tap seek are preserved');
   }
+  for (const [width, holdSpeed] of [[1280, 3], [390, 1.25]]) {
+    const f = await fixture({ interactive: true, width, holdSpeed }), page = f.page;
+    await page.waitForFunction(() => !document.querySelector('.player-video').paused);
+    await page.locator('.player-video').evaluate(video => { video.playbackRate = 1.5; });
+    await page.mouse.move(120, 180); await page.mouse.down();
+    await page.waitForFunction(speed => document.querySelector('.player-video').playbackRate === speed, holdSpeed);
+    assert.equal(await page.locator('.player-boost').textContent(), `${holdSpeed}배속`);
+    assert.notEqual(await page.locator('.player-boost').evaluate(element => getComputedStyle(element).backdropFilter), 'none');
+    await page.screenshot({ path: verificationPath(`player-hold-${width}.png`) });
+    await page.mouse.up();
+    assert.equal(await page.locator('.player-video').evaluate(video => video.playbackRate), 1.5);
+    await page.evaluate(async () => { const { saveDevicePrefs } = await import('/src/lib/device-prefs.ts'); await saveDevicePrefs({ holdSpeed: 2.5 }); });
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2 && !document.querySelector('.player-video').paused);
+    await page.locator('.player-video').evaluate(video => { video.playbackRate = 1.5; });
+    await page.mouse.move(120, 180); await page.mouse.down();
+    await page.waitForFunction(() => document.querySelector('.player-video').playbackRate === 2.5);
+    await page.mouse.up();
+    assert.equal(await page.locator('.player-video').evaluate(video => video.playbackRate), 1.5);
+    await f.close(); results.push(`Configured hold speed and blurred notice persist at ${width}px and release restores playback speed`);
+  }
   for (const source of ['site', 'online', 'upload']) {
     const f = await fixture({ choice: { ...own, id: 'missing', label: '사라진 자막', source, episodeId: 'e1' } });
     await waitFor(() => f.calls.applies.length === 1, `${source}: missing remembered track blocked automatic search`);
@@ -211,7 +265,7 @@ try {
     assert.ok(f.calls.searches[1].includes('/e2/'));
     await f.close(); results.push('Fresh episode independently searches');
   }
-  for (const width of [1280, 390]) {
+  for (const width of [1280, 390, 320]) {
     const f = await fixture({ ass: true, width });
     await f.page.waitForFunction(width => document.querySelector('canvas.JASSUB')?.getBoundingClientRect().width === width, width);
     const canvas = f.page.locator('canvas.JASSUB');
@@ -231,10 +285,15 @@ try {
     await openSubs(f.page);
     await f.page.getByRole('button', { name: /^자막 설정/ }).click();
     const style = f.page.locator('.sub-style');
+    const preserve = style.getByRole('switch', { name: 'ASS 원본 효과 유지' });
+    assert.equal(await preserve.getAttribute('aria-checked'), 'true');
+    assert.equal(await style.getByRole('slider', { name: '자막 크기', exact: true }).isDisabled(), true);
+    await preserve.click();
+    await f.page.waitForFunction(() => !document.querySelector('.sub-style-custom')?.disabled);
+    assert.equal(await preserve.getAttribute('aria-checked'), 'false');
     assert.equal(await style.locator('input[type=range]:visible').count(), 1);
     await f.page.screenshot({ path: verificationPath(`verification-subtitle-controls-compact-${width}.png`) });
-    await style.getByRole('combobox', { name: '슬라이더 간격' }).click();
-    await f.page.getByRole('option', { name: '5% · 0.5px', exact: true }).click();
+    assert.equal(await style.getByRole('combobox', { name: '슬라이더 간격' }).innerText(), '5% · 0.5px');
     await style.getByRole('slider', { name: '자막 크기', exact: true }).press('ArrowRight');
     await f.page.waitForFunction(() => document.querySelector('input[type=number][aria-label="자막 크기"]')?.value === '105');
     assert.equal(await style.getByRole('spinbutton', { name: '자막 크기', exact: true }).inputValue(), '105');
@@ -252,7 +311,33 @@ try {
     const box = await style.boundingBox();
     assert.ok(box.x >= 0 && box.x + box.width <= width);
     await f.page.screenshot({ path: verificationPath(`verification-subtitle-controls-${width}.png`) });
-    await f.close(); results.push(`${width}px: original ASS position, source label, compact controls and numeric step`);
+    await preserve.click();
+    await f.page.waitForFunction(() => document.querySelector('.sub-style-custom')?.disabled);
+    assert.equal(await style.getByRole('slider', { name: '자막 크기', exact: true }).isDisabled(), true);
+    await f.close(); results.push(`${width}px: original ASS toggle, source label, compact controls and numeric step`);
+  }
+  for (const width of [1280, 390]) {
+    const f = await fixture({ interactive: true, width }), page = f.page;
+    const showStyle = async () => { await openSubs(page); await page.getByRole('button', { name: /^자막 설정/ }).click(); };
+    await showStyle();
+    const step = page.getByRole('combobox', { name: '슬라이더 간격' });
+    assert.equal(await step.innerText(), '5% · 0.5px');
+    await step.click();
+    const saved = page.waitForResponse(response => response.url().endsWith('/api/settings/device') && response.request().method() === 'PATCH');
+    await page.getByRole('option', { name: '10% · 1px', exact: true }).click();
+    assert.equal((await (await saved).json()).settings.subtitleStep, 10);
+    await page.getByRole('dialog', { name: '자막 및 음성', exact: true }).getByRole('button', { name: '닫기', exact: true }).click();
+    await showStyle();
+    assert.equal(await step.innerText(), '10% · 1px');
+    await page.getByRole('slider', { name: '자막 크기', exact: true }).press('ArrowRight');
+    await page.waitForFunction(() => document.querySelector('input[type=number][aria-label="자막 크기"]')?.value === '110');
+    await page.evaluate(() => { for (const key of Object.keys(localStorage)) if (key.startsWith('moa.deviceSettings:')) localStorage.removeItem(key); });
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
+    await showStyle();
+    assert.equal(await step.innerText(), '10% · 1px');
+    await page.screenshot({ path: verificationPath(`subtitle-step-saved-${width}.png`) });
+    await f.close(); results.push(`${width}px: default 5% subtitle step, panel reopen and server restore preserve 10%`);
   }
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ results, errors }, null, 2));

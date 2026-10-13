@@ -87,7 +87,7 @@ const router = createBrowserRouter([
       { path: "/accounts", element: <RequireAdmin><Navigate to="/settings#accounts" replace /></RequireAdmin> },
       { path: "/about", element: <Navigate to="/settings#about" replace /> },
       { path: "/settings", element: <SettingsPage /> },
-      { path: "/settings/tabs", element: <Navigate to="/settings#tabs" replace /> },
+      { path: "/settings/tabs", element: <SettingsPage /> },
       { path: "/me", element: <MePage /> },
       { path: "*", element: <Navigate to="/" replace /> }
     ]

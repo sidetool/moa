@@ -1,8 +1,8 @@
 import { TabSourceFilters } from './SourceFilters';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, Check, ChevronDown, FolderOpen, House, UserPlus, Pencil, Plus, Radio, RotateCcw, Trash2, Tv, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronDown, FolderOpen, GripVertical, House, UserPlus, Pencil, Plus, Radio, RotateCcw, Trash2, Tv, X } from 'lucide-react';
 import type { BrowseSelection, DefaultNavigation, NavigationTab, Settings, VideoSource } from '@moa/shared';
 import { useMe } from '../api/queries';
 import { api } from '../lib/api';
@@ -19,11 +19,18 @@ export function NavigationSettings() {
   const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState<NavigationTab | null>(null);
   const [confirmation, setConfirmation] = useState<NavigationTab | 'reset' | null>(null);
+  const [order, setOrder] = useState<NavigationTab[] | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const list = useRef<HTMLOListElement>(null);
+  const positions = useRef(new Map<string, number>());
+  const drag = useRef<{ id: string; pointer: number; x: number; y: number; startY: number; offset: number; timer: ReturnType<typeof setTimeout>; frame: number; active: boolean; tabs: NavigationTab[]; original: string } | null>(null);
+  const ordered = order ?? tabs;
   const save = useMutation({
     mutationFn: (navigation: NavigationTab[]) => api<Settings>('/settings', { method: 'PATCH', body: { navigation } }),
     onMutate: navigation => { client.setQueryData<Settings>(['settings'], old => old ? { ...old, navigation } : old); },
     onSuccess: data => client.setQueryData(['settings'], data),
-    onError: () => void client.invalidateQueries({ queryKey: ['settings'] })
+    onError: () => void client.invalidateQueries({ queryKey: ['settings'] }),
+    onSettled: () => setOrder(null)
   });
 
   // Deep link from an empty tab: /settings/tabs?edit=<id>
@@ -35,7 +42,76 @@ export function NavigationSettings() {
     const next = new URLSearchParams(params); next.delete('edit'); setParams(next, { replace: true });
   }, [pending, editId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const move = (i: number, step: number) => { const next = [...tabs]; [next[i], next[i + step]] = [next[i + step], next[i]]; save.mutate(next); };
+  const rememberPositions = () => {
+    positions.current = new Map(Array.from(list.current?.children ?? [], node => [(node as HTMLElement).dataset.id!, node.getBoundingClientRect().top]));
+  };
+  const orderKey = ordered.map(tab => tab.id).join(',');
+  useLayoutEffect(() => {
+    for (const node of Array.from(list.current?.children ?? []) as HTMLElement[]) {
+      if (node.dataset.id === dragging) continue;
+      node.getAnimations().forEach(animation => animation.cancel());
+      const before = positions.current.get(node.dataset.id!);
+      const delta = before === undefined ? 0 : before - node.getBoundingClientRect().top;
+      if (delta && !matchMedia('(prefers-reduced-motion: reduce)').matches) node.animate([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0)' }], { duration: 240, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    }
+    positions.current.clear();
+  }, [orderKey, dragging]);
+  const finishDrag = (commit = false) => {
+    const current = drag.current;
+    if (!current) return;
+    clearTimeout(current.timer);
+    cancelAnimationFrame(current.frame);
+    rememberPositions();
+    drag.current = null;
+    for (const node of Array.from(list.current?.children ?? []) as HTMLElement[]) node.style.transform = '';
+    if (list.current?.hasPointerCapture(current.pointer)) list.current.releasePointerCapture(current.pointer);
+    setDragging(null);
+    if (commit && current.active && current.tabs.map(tab => tab.id).join(',') !== current.original) save.mutate(current.tabs);
+    else setOrder(null);
+  };
+  useEffect(() => {
+    const cancel = () => finishDrag();
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel(); };
+    window.addEventListener('blur', cancel);
+    window.addEventListener('keydown', key);
+    return () => { cancel(); window.removeEventListener('blur', cancel); window.removeEventListener('keydown', key); };
+  }, []);
+  const startDrag = (event: React.PointerEvent, id: string) => {
+    if (event.button !== 0 || !event.isPrimary || save.isPending || drag.current) return;
+    const row = event.currentTarget.parentElement!;
+    const current = { id, pointer: event.pointerId, x: event.clientX, y: event.clientY, startY: event.clientY, offset: event.clientY - row.getBoundingClientRect().top, timer: 0 as unknown as ReturnType<typeof setTimeout>, frame: 0, active: false, tabs: [...tabs], original: tabs.map(tab => tab.id).join(',') };
+    drag.current = current;
+    list.current?.setPointerCapture(event.pointerId);
+    const tick = () => {
+      if (drag.current !== current || !list.current) return;
+      const rows = Array.from(list.current.children) as HTMLElement[];
+      const from = current.tabs.findIndex(tab => tab.id === id);
+      let to = from;
+      rows.forEach((item, index) => {
+        if (!index || index === from) return;
+        const center = list.current!.getBoundingClientRect().top + item.offsetTop + item.offsetHeight / 2;
+        if (index < from && current.y < center) to = Math.min(to, index);
+        if (index > from && current.y > center) to = Math.max(to, index);
+      });
+      if (to !== from) {
+        rememberPositions();
+        const next = [...current.tabs];
+        next.splice(to, 0, next.splice(from, 1)[0]);
+        current.tabs = next;
+        setOrder(next);
+      }
+      row.style.transform = `translateY(${current.y - list.current.getBoundingClientRect().top - row.offsetTop - current.offset}px)`;
+      const scroll = current.y < 80 ? -Math.min(12, (80 - current.y) / 4) : current.y > innerHeight - 80 ? Math.min(12, (current.y - innerHeight + 80) / 4) : 0;
+      if (scroll) window.scrollBy(0, scroll);
+      current.frame = requestAnimationFrame(tick);
+    };
+    current.timer = setTimeout(() => { current.active = true; row.getAnimations().forEach(animation => animation.cancel()); setDragging(id); setOrder(current.tabs); current.frame = requestAnimationFrame(tick); }, 350);
+  };
+  const move = (i: number, step: number) => {
+    if (i + step < 1 || i + step >= tabs.length || save.isPending || drag.current) return;
+    rememberPositions();
+    const next = [...tabs]; [next[i], next[i + step]] = [next[i + step], next[i]]; save.mutate(next);
+  };
   const commit = (tab: NavigationTab) => {
     const clean = { ...tab, name: tab.name.trim() };
     save.mutate(tabs.some(t => t.id === tab.id) ? tabs.map(t => t.id === tab.id ? clean : t) : [...tabs, clean]);
@@ -54,27 +130,32 @@ export function NavigationSettings() {
   return <section className="settings-group" id="tabs" aria-labelledby="tabs-title">
     <div className="settings-group-head">
       <h2 id="tabs-title">홈 화면 탭</h2>
-      <button className="text-btn" disabled={pending || save.isPending} onClick={() => setConfirmation('reset')}><RotateCcw size={14} />기본값</button>
+      <button className="text-btn" disabled={pending || save.isPending || dragging !== null} onClick={() => setConfirmation('reset')}><RotateCcw size={14} />기본값</button>
     </div>
     {pending ? <Skeleton className="folder-sk" /> : error ? <p className="settings-error" role="alert">구성 정보를 불러오지 못했어요.</p> : <>
-      <ol className="tab-list">
-        {tabs.map((tab, i) => <li key={tab.id} className="tab-item">
-          <span className="tab-item-icon">{i === 0 ? <House size={18} /> : i}</span>
-          <button className="tab-item-body" onClick={() => setEditing(tab)}>
+      <ol className="tab-list" ref={list} onPointerMove={event => {
+        const current = drag.current;
+        if (!current || current.pointer !== event.pointerId) return;
+        if (!current.active && Math.hypot(event.clientX - current.x, event.clientY - current.startY) > 8) finishDrag();
+        else current.y = event.clientY;
+      }} onPointerUp={event => { if (event.pointerId === drag.current?.pointer) finishDrag(true); }} onPointerCancel={event => { if (event.pointerId === drag.current?.pointer) finishDrag(); }} onLostPointerCapture={event => { if (event.pointerId === drag.current?.pointer) finishDrag(); }}>
+        {ordered.map((tab, i) => <li key={tab.id} data-id={tab.id} className={cx('tab-item', dragging === tab.id && 'is-dragging')}>
+          {i === 0 ? <span className="tab-item-icon"><House size={18} /></span> : <button type="button" className="tab-item-icon tab-drag" aria-label={`${tab.name} 순서 변경`} title="길게 눌러 이동" disabled={save.isPending} onPointerDown={event => startDrag(event, tab.id)} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); move(i, event.key === 'ArrowUp' ? -1 : 1); } }}><GripVertical size={18} /></button>}
+          <button className="tab-item-body" disabled={save.isPending || dragging !== null} onClick={() => setEditing(tab)}>
             <b>{tab.name}</b>
             <small className={cx(!tab.sourceIds.length && !tab.includeLocal && 'is-warn')}>{summary(tab)}</small>
           </button>
           <div className="tab-item-actions">
             {i > 0 && <>
-              <IconButton label={`${tab.name} 위로`} disabled={i === 1 || save.isPending} onClick={() => move(i, -1)}><ArrowUp size={18} /></IconButton>
-              <IconButton label={`${tab.name} 아래로`} disabled={i === tabs.length - 1 || save.isPending} onClick={() => move(i, 1)}><ArrowDown size={18} /></IconButton>
+              <IconButton label={`${tab.name} 위로`} disabled={i === 1 || save.isPending || dragging !== null} onClick={() => move(i, -1)}><ArrowUp size={18} /></IconButton>
+              <IconButton label={`${tab.name} 아래로`} disabled={i === tabs.length - 1 || save.isPending || dragging !== null} onClick={() => move(i, 1)}><ArrowDown size={18} /></IconButton>
             </>}
-            <IconButton label={`${tab.name} 편집`} onClick={() => setEditing(tab)}><Pencil size={17} /></IconButton>
+            <IconButton label={`${tab.name} 편집`} disabled={save.isPending || dragging !== null} onClick={() => setEditing(tab)}><Pencil size={17} /></IconButton>
           </div>
         </li>)}
       </ol>
       <div className="tab-list-foot">
-        <Button icon={<Plus size={18} />} disabled={tabs.length >= 12} onClick={() => setEditing({ id: crypto.randomUUID(), name: '', sourceIds: [], includeLocal: false })}>탭 추가</Button>
+        <Button icon={<Plus size={18} />} disabled={save.isPending || dragging !== null || tabs.length >= 12} onClick={() => setEditing({ id: crypto.randomUUID(), name: '', sourceIds: [], includeLocal: false })}>탭 추가</Button>
         <span>{save.isPending ? '저장 중…' : save.isError ? '저장하지 못했어요. 다시 시도해 주세요.' : '같은 프로필의 모든 기기에 적용돼요.'}</span>
       </div>
       <DefaultTabs tabs={tabs} sources={sources} />
@@ -87,7 +168,8 @@ export function NavigationSettings() {
 function TabEditor({ tab, isNew, isHome, sources, onSave, onDelete, onClose }: { tab: NavigationTab; isNew: boolean; isHome: boolean; sources: VideoSource[]; onSave: (tab: NavigationTab) => void; onDelete: (tab: NavigationTab) => void; onClose: () => void }) {
   const admin = useMe().data?.role === 'admin';
   const [draft, setDraft] = useState(tab);
-  const [advanced, setAdvanced] = useState<string | null>(null);
+  const [loadedFilters, setLoadedFilters] = useState<string[]>([]);
+  const filterGroup = useId();
   const name = useRef<HTMLInputElement>(null);
   useEffect(() => { if (isNew) name.current?.focus(); }, [isNew]);
   useEffect(() => {
@@ -120,8 +202,10 @@ function TabEditor({ tab, isNew, isHome, sources, onSave, onDelete, onClose }: {
                   <span className="pick-body"><b>{source.name}</b><small>{typeLabel(source)}{!source.enabled && ' · 꺼짐'}{draft.sourceFilters?.[source.id]?.filters.length ? ' · 조건 적용' : ''}</small></span>
                   <span className="pick-check">{on && <Check size={16} />}</span>
                 </button>
-                {on && !source.live && <button type="button" className={cx('pick-more', advanced === source.id && 'is-open')} aria-expanded={advanced === source.id} onClick={() => setAdvanced(advanced === source.id ? null : source.id)}>표시 조건<ChevronDown size={15} /></button>}
-                {on && advanced === source.id && <div className="pick-filters"><TabSourceFilters id={source.id} value={draft.sourceFilters?.[source.id]} onChange={v => setFilter(source.id, v)} /></div>}
+                {on && !source.live && <details className="pick-conditions" name={filterGroup} onToggle={event => { if (event.currentTarget.open) setLoadedFilters(ids => ids.includes(source.id) ? ids : [...ids, source.id]); }}>
+                  <summary className="pick-more">표시 조건<ChevronDown size={15} /></summary>
+                  <div className="pick-filters">{loadedFilters.includes(source.id) && <TabSourceFilters id={source.id} value={draft.sourceFilters?.[source.id]} onChange={v => setFilter(source.id, v)} />}</div>
+                </details>}
               </li>;
             })}
             <li className={cx(draft.includeLocal && 'is-on')}>

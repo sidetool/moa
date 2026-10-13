@@ -12,6 +12,7 @@ import { Button, ConfirmDialog, IconButton, Select, Skeleton } from './ui';
 
 const apiMessage = (error: unknown, fallback: string) => error instanceof ApiError && error.code.startsWith('translation-') ? translationErrorMessage(error.code) : fallback;
 const clampBatch = (value: number) => Math.min(BATCH_SIZE.max, Math.max(BATCH_SIZE.min, Math.round(value) || BATCH_SIZE.default));
+const ENDPOINTS = { gemini: 'https://generativelanguage.googleapis.com/v1beta', openai: 'https://api.openai.com/v1' };
 
 export function TranslationSettings() {
   const client = useQueryClient();
@@ -20,7 +21,9 @@ export function TranslationSettings() {
   const section = useRef<HTMLElement>(null);
   const [draft, setDraft] = useState('');
   const [endpoint, setEndpoint] = useState<string | null>(null);
-  const [customModel, setCustomModel] = useState('');
+  const [directEndpoint, setDirectEndpoint] = useState(false);
+  const [provider, setProvider] = useState<TranslationConfig['provider'] | null>(null);
+  const [customModel, setCustomModel] = useState<string | null>(null);
   const [batch, setBatch] = useState<string | null>(null);
   const [models, setModels] = useState<string[] | null>(null);
   const [testing, setTesting] = useState<string[]>([]);
@@ -40,8 +43,8 @@ export function TranslationSettings() {
     mutationFn: (patch: TranslationConfigPatch) => patchTranslationConfig(patch),
     onSuccess: (data, patch) => {
       client.setQueryData<TranslationConfig>(translationKeys.config, data);
-      if (patch.provider !== undefined || patch.baseUrl !== undefined) { setEndpoint(null); setModels(null); setCustomModel(''); setMessage({ text: 'API 설정을 저장했어요. 사용할 API 키를 등록해 주세요.' }); }
-      else if (patch.model !== undefined) { setCustomModel(''); setMessage(null); }
+      if (patch.provider !== undefined || patch.baseUrl !== undefined) { setEndpoint(null); setDirectEndpoint(false); setProvider(null); setModels(null); setCustomModel(null); setMessage({ text: 'API 설정을 저장했어요. 사용할 API 키를 등록해 주세요.' }); }
+      else if (patch.model !== undefined) { setCustomModel(null); setMessage(null); }
       else if (patch.addKeys) { setDraft(value => [...new Set(value.split(/\r?\n/).map(line => line.trim()).filter(Boolean))].join('\n') === patch.addKeys!.join('\n') ? '' : value); setMessage({ text: `키 ${patch.addKeys.length}개를 저장했어요. 모델 목록을 불러오는 중…` }); loadModels.mutate(); }
       else if (patch.removeKeyIds || patch.clearKey) { setRemoveKeys(null); setMessage({ text: data.keys.length ? '키를 지웠어요.' : '키를 모두 지웠어요. 번역을 사용할 수 없어요.' }); if (!data.keys.length) setModels(null); }
       else if (patch.batchSize !== undefined) { setBatch(null); setMessage({ text: `묶음당 ${data.batchSize}줄로 저장했어요.` }); }
@@ -88,6 +91,8 @@ export function TranslationSettings() {
   const room = TRANSLATION_MAX_KEYS - keys.length;
   const tooMany = lines.length > room;
   const options = [...new Set([...(c ? [c.model] : []), ...(models ?? [])])];
+  const customEndpoint = directEndpoint || Boolean(c && c.baseUrl !== ENDPOINTS[c.provider]);
+  const endpointChanged = Boolean(c && ((endpoint ?? c.baseUrl).trim() !== c.baseUrl || (provider ?? c.provider) !== c.provider));
   const commitBatch = () => {
     if (batch === null || !c) return;
     const value = clampBatch(Number(batch));
@@ -104,23 +109,31 @@ export function TranslationSettings() {
         </div>
 
         <div className="setting">
-          <div><b>API 방식</b><small>서비스나 주소를 바꾸면 저장된 키가 삭제되고 번역이 꺼져요.</small></div>
-          <Select className="setting-select" aria-label="번역 API 방식" value={c.provider} disabled={busy}
-            options={[{ value: 'gemini', label: 'Gemini 호환' }, { value: 'openai', label: 'OpenAI 호환' }]}
-            onChange={value => { setDraft(''); save.mutate({ provider: value as TranslationConfig['provider'] }); }} />
+          <div><b>번역 서비스</b><small>서비스나 주소를 바꾸면 저장된 키가 삭제되고 번역이 꺼져요.</small></div>
+          <Select className="setting-select" aria-label="번역 서비스" value={customEndpoint ? 'custom' : c.provider} disabled={busy}
+            options={[{ value: 'gemini', label: 'Gemini' }, { value: 'openai', label: 'OpenAI' }, { value: 'custom', label: '직접 입력' }]}
+            onChange={value => {
+              if (value === 'custom') { setDirectEndpoint(true); return; }
+              setEndpoint(null); setProvider(null); setDirectEndpoint(false);
+              const next = value as TranslationConfig['provider'];
+              if (next !== c.provider || c.baseUrl !== ENDPOINTS[next]) { setDraft(''); save.mutate({ provider: next, baseUrl: ENDPOINTS[next] }); }
+            }} />
         </div>
-        <div className="setting setting-field">
-          <div><b>API 주소</b><small>API 기본 경로까지 입력하세요. 예: http://host.docker.internal:8317/v1. Docker 안의 localhost는 컨테이너를 가리켜요.</small></div>
-          <form className="translation-model" onSubmit={event => { event.preventDefault(); if (endpoint !== null && endpoint.trim() !== c.baseUrl) { setDraft(''); save.mutate({ baseUrl: endpoint.trim() }); } }}>
+        {customEndpoint && <div className="setting setting-field">
+          <div><b>API 주소</b></div>
+          <form className="translation-model translation-endpoint" onSubmit={event => { event.preventDefault(); if (endpointChanged) { setDraft(''); save.mutate({ provider: provider ?? c.provider, baseUrl: (endpoint ?? c.baseUrl).trim() }); } }}>
+            <Select aria-label="직접 입력 API 방식" value={provider ?? c.provider} disabled={busy}
+              options={[{ value: 'gemini', label: 'Gemini 호환' }, { value: 'openai', label: 'OpenAI 호환' }]}
+              onChange={value => setProvider(value as TranslationConfig['provider'])} />
             <input aria-label="번역 API 주소" type="url" value={endpoint ?? c.baseUrl} disabled={busy} required
               onChange={event => setEndpoint(event.target.value)} />
-            <Button type="submit" disabled={busy || endpoint === null || endpoint.trim() === c.baseUrl}>주소 저장</Button>
+            <Button type="submit" disabled={busy || !endpointChanged}>주소 저장</Button>
           </form>
-        </div>
+        </div>}
 
         <div className="translation-keys">
           <div className="translation-keys-head">
-            <div><b>API 키</b><small>등록한 순서대로 쓰고, 한도나 오류로 막히면 다음 키로 넘어가요. 전체 테스트는 최대 3개씩 검사하고 일시적인 오류는 다시 시도해요. 키마다 현재 모델로 한 줄씩 번역하므로 API 사용료가 발생할 수 있어요.</small></div>
+            <div><b>API 키</b><small>오류가 나면 다음 키를 사용해요. 테스트는 키마다 한 줄씩 번역하며 API 사용료가 발생할 수 있어요.</small></div>
             <span className={cx('status-pill', c.configured && 'is-ok')}>{keys.length ? `${keys.length}개` : '없음'}</span>
           </div>
           {keys.length > 0 && <div className="network-actions">
@@ -152,21 +165,22 @@ export function TranslationSettings() {
         </div>
 
         <div className="setting">
-          <div><b>번역 모델</b><small>{c.configured ? '모델 목록에서 고르거나 모델 ID를 직접 입력할 수 있어요.' : '키를 저장하면 모델을 고를 수 있어요.'}</small></div>
+          <div><b>번역 모델</b></div>
           <div className="translation-model">
-            <Select className="setting-select" aria-label="번역 모델" value={c.model} disabled={busy}
-              options={options.map(model => ({ value: model, label: model }))} onChange={model => save.mutate({ model })} />
+            <Select className="setting-select" aria-label="번역 모델" value={customModel === null ? c.model : '__custom__'} disabled={busy}
+              options={[...options.map(model => ({ value: model, label: model })), { value: '__custom__', label: '직접 입력' }]}
+              onChange={model => { if (model === '__custom__') setCustomModel(c.model); else if (model === c.model) setCustomModel(null); else save.mutate({ model }); }} />
             <Button type="button" disabled={!c.configured || busy} onClick={() => { setMessage(null); loadModels.mutate(); }}>{loadModels.isPending ? '확인 중…' : models ? '새로고침' : '모델 불러오기'}</Button>
           </div>
         </div>
-        <div className="setting setting-field">
-          <div><b>모델 직접 입력</b><small>모델 목록을 제공하지 않는 호환 API에서도 설정할 수 있어요.</small></div>
+        {customModel !== null && <div className="setting setting-field">
+          <div><b>모델 ID</b></div>
           <form className="translation-model" onSubmit={event => { event.preventDefault(); if (customModel.trim()) save.mutate({ model: customModel.trim() }); }}>
             <input aria-label="번역 모델 ID" value={customModel} placeholder={c.model} maxLength={200} disabled={busy}
               onChange={event => setCustomModel(event.target.value)} />
             <Button type="submit" disabled={busy || !customModel.trim() || customModel.trim() === c.model}>모델 저장</Button>
           </form>
-        </div>
+        </div>}
         <div className="setting">
           <div><b>묶음당 자막 수</b><small>한 번에 보내는 자막 줄 수 ({BATCH_SIZE.min}–{BATCH_SIZE.max}). 크게 하면 요청 수가 줄고, 작게 하면 실패해도 다시 보내는 양이 적어요.</small></div>
           <label className="translation-batch">

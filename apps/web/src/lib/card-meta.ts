@@ -41,7 +41,7 @@ export function resumeTarget(card: MediaCard): ResumeAction | null {
   const target = card.resume ?? (card.progress && { episodeId: card.progress.episodeId, label: card.progress.label, kind: "resume" as const, position: undefined });
   if (!target) return null;
   // The server's position is authoritative: 0 for an unseen next episode, the saved spot otherwise.
-  const path = `/watch/${encodeURIComponent(target.episodeId)}${target.position !== undefined ? `?t=${Math.floor(target.position)}` : ""}`;
+  const path = `/watch/${encodeURIComponent(target.episodeId)}${target.position !== undefined ? `?t=${Math.floor(target.position)}${target.kind === "resume" ? "&resume=1" : ""}` : ""}`;
   // Unfinished viewing keeps the richer "S2:E3 · 12분 남음" summary.
   const label = target.kind === "resume" && card.progress?.episodeId === target.episodeId ? card.progress.label : target.label;
   return { episodeId: target.episodeId, label, kind: target.kind, path };

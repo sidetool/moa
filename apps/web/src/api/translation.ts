@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Settings, SubtitleTrack } from "@moa/shared";
+import { TRANSLATION_MAX_KEYS } from "@moa/shared";
 import { api } from "../lib/api";
 
 export type { TranslationConfig, TranslationJob, JimakuCandidate, JimakuSearch } from "@moa/shared";
@@ -46,7 +47,7 @@ export type JimakuQuery = JimakuSearch["query"];
 
 /** Server limit for the original subtitle text. */
 export const TRANSLATION_MAX_BYTES = 1024 * 1024;
-export const TRANSLATION_MAX_KEYS = 8;
+export { TRANSLATION_MAX_KEYS };
 export const BATCH_SIZE = { min: 10, max: 300, default: 120 };
 export const REQUEST_INTERVAL_MS = { min: 0, max: 60_000, default: 1000 };
 export const RETRY_COUNT = { min: 0, max: 5, default: 2 };
@@ -119,7 +120,7 @@ export function translationErrorMessage(code?: string): string {
     "translation-job-not-found": "번역 작업을 찾지 못했어요. 다시 시도해 주세요.",
     "translation-failed": "번역하지 못했어요. 다시 시도해 주세요.",
     "translation-batch-invalid": "묶음당 자막 수는 10–300 사이로 정해 주세요.",
-    "translation-too-many-keys": "키는 최대 8개까지 등록할 수 있어요.",
+    "translation-too-many-keys": `키는 최대 ${TRANSLATION_MAX_KEYS}개까지 등록할 수 있어요.`,
     "jimaku-unavailable": "Jimaku에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.",
     "jimaku-invalid-response": "Jimaku 응답을 읽지 못했어요. 잠시 후 다시 시도해 주세요.",
     "jimaku-search-expired": "검색 결과가 만료됐어요. 다시 찾아 주세요.",

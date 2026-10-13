@@ -2,7 +2,7 @@ import type { Settings } from '@moa/shared';
 import { ChevronDown, RotateCcw } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '../lib/format';
-import { Select } from './ui';
+import { Select, Toggle } from './ui';
 
 type Background = NonNullable<Settings['subtitleBackground']>;
 type Size = Settings['subtitleSize'];
@@ -115,12 +115,11 @@ function Range({ label, value, min, max, step, unit, empty, disabled, onChange }
 }
 
 export function SubtitleStyleControls({ settings, save, variant = 'page', format }: { settings: Settings; save: (patch: Partial<Settings>) => void; variant?: 'page' | 'player'; format?: 'ass' | 'vtt' }) {
-  const [interval, setInterval] = useState('1');
   const look = lookOf(settings);
   const change = (next: Partial<SubtitleLook>) => save(patchOf(next));
   const changed = (key: keyof SubtitleLook) => look[key] !== DEFAULT[key];
   const anyChanged = (Object.keys(DEFAULT) as Array<keyof SubtitleLook>).some(changed);
-  const step = Number(interval);
+  const step = settings.subtitleStep ?? 5;
   const boxed = look.background === 'soft' || look.background === 'solid';
 
   // The reset sits beside the label so the controls keep the full width.
@@ -142,12 +141,14 @@ export function SubtitleStyleControls({ settings, save, variant = 'page', format
         <SubtitlePreview look={look} size={settings.subtitleScale == null ? settings.subtitleSize : undefined} />
         {anyChanged && <button type="button" className="sub-style-reset-all" onClick={() => change(DEFAULT)}>모두 기본값</button>}
       </div>}
-      <div className="sub-style-toolbar"><span>조절 간격</span><Select aria-label="슬라이더 간격" value={interval} onChange={setInterval} options={[{ value: '1', label: '1% · 0.1px' }, { value: '5', label: '5% · 0.5px' }, { value: '10', label: '10% · 1px' }]} /></div>
+      <div className="sub-style-toolbar"><span>ASS 원본 효과 유지</span><Toggle label="ASS 원본 효과 유지" checked={settings.subtitlePreserveAss !== false} onChange={subtitlePreserveAss => save({ subtitlePreserveAss })} /></div>
+      <fieldset className="sub-style-custom" disabled={format === 'ass' && settings.subtitlePreserveAss !== false}>
+      <div className="sub-style-toolbar"><span>조절 간격</span><Select aria-label="슬라이더 간격" value={String(step)} onChange={value => save({ subtitleStep: Number(value) as Settings['subtitleStep'] })} options={[{ value: '1', label: '1% · 0.1px' }, { value: '5', label: '5% · 0.5px' }, { value: '10', label: '10% · 1px' }]} /></div>
       <div className="sub-style-rows">
-        {row('scale', '크기', <Range label="자막 크기" value={look.scale} min={50} max={250} step={step} unit="%" onChange={scale => change({ scale })} />)}
-        {row('background', '배경', <div className="seg" role="radiogroup" aria-label="자막 배경">
+        {row('background', '배경', <div className="seg" role="radiogroup" aria-label="자막 배경" style={{ '--segments': BACKGROUNDS.length, '--selected': BACKGROUNDS.findIndex(([value]) => value === look.background) } as React.CSSProperties}>
           {BACKGROUNDS.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={look.background === value} className={cx(look.background === value && 'is-active')} onClick={() => change({ background: value })}>{label}</button>)}
         </div>)}
+        {row('scale', '크기', <Range label="자막 크기" value={look.scale} min={50} max={250} step={step} unit="%" onChange={scale => change({ scale })} />)}
       </div>
       <details className="sub-style-details"><summary>상세 조절<ChevronDown size={16} /></summary><div className="sub-style-rows">
         {row('padding', '배경 여백', <Range label="자막 배경 여백" value={look.padding} min={0} max={20} step={step / 10} unit="px" disabled={!boxed} onChange={padding => change({ padding })} />)}
@@ -156,7 +157,8 @@ export function SubtitleStyleControls({ settings, save, variant = 'page', format
         {row('height', '위치', <Range label="자막 높이" value={look.height} min={0} max={40} step={step} unit="%" disabled={format === 'ass'} onChange={height => change({ height })} />)}
       </div></details>
       {variant === 'player' && anyChanged && <button type="button" className="sub-style-reset-all is-inline" onClick={() => change(DEFAULT)}>모양 모두 기본값</button>}
-      <small className="sub-style-note">ASS 자막의 위치는 원본을 따릅니다.</small>
+      </fieldset>
+      <small className="sub-style-note">ASS 원본 효과 유지 시 크기와 효과는 원본을 따릅니다.</small>
     </div>
   );
 }

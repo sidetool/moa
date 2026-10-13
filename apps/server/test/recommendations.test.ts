@@ -59,6 +59,45 @@ test('seen exclusions and dismiss/undo/reset apply immediately and stay profile 
   assert.deepEqual(service.get('viewer'), { items: [], status: 'insufficient-history' });
 });
 
+test('recommendation reasons and candidates reuse Korean TMDB titles without changing history or fetching', async t => {
+  const { db, service, tmdb, title, detail } = await fixture(t);
+  title('English history title', 1); title('English saved title', 2, 'viewer', -1);
+  detail(1, [candidate(10, 'English candidate'), candidate(11, 'Original fallback')]); detail(2, [candidate(20)]); detail(10);
+  for (const [id, title] of [[1, '시청 작품'], [2, '저장 작품'], [10, '한국어 추천 작품']] as const)
+    db.run('UPDATE tmdb_titles SET card=? WHERE tmdb_id=?', JSON.stringify({ title }), id);
+  db.run('INSERT INTO watchlist VALUES(?,?,?)', 'viewer', 'English saved title', '2026-10-10');
+  const progress = db.all('SELECT * FROM progress'), media = db.all('SELECT * FROM media');
+  let calls = 0; tmdb.ensureDetail = async () => { calls++; };
+  const items = service.get('viewer').items;
+  assert.equal(items[0].title, '한국어 추천 작품');
+  assert.equal(items[0].href, `/search?q=${encodeURIComponent('한국어 추천 작품')}`);
+  assert.equal(items[0].reason, '시청 작품 시청 기록을 바탕으로 추천');
+  assert.equal(items.find(item => item.id === 11)?.title, 'Original fallback');
+  assert.equal(items.find(item => item.id === 20)?.reason, '내 목록의 저장 작품 기반 추천');
+  db.run('INSERT INTO watchlist VALUES(?,?,?)', 'viewer', 'English history title', '2026-10-10');
+  assert.equal(service.get('viewer').items[0].reason, '시청 작품 시청 기록과 내 목록을 바탕으로 추천');
+  assert.equal(service.get('other').status, 'insufficient-history');
+  assert.equal(calls, 0);
+  assert.deepEqual(db.all('SELECT * FROM progress'), progress);
+  assert.deepEqual(db.all('SELECT * FROM media'), media);
+});
+
+test('existing metadata warmup supplies Korean titles when a watched work has no cached detail', async t => {
+  const { db, service, tmdb, title, detail } = await fixture(t);
+  title('Uncached original', 1);
+  let calls = 0;
+  tmdb.ensureDetail = async () => {
+    calls++;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    detail(1, [candidate(10, '한국어 추천')]);
+    db.run('UPDATE tmdb_titles SET card=? WHERE tmdb_id=1', JSON.stringify({ title: '새 한국어 제목' }));
+  };
+  assert.deepEqual(service.get('viewer'), { items: [], status: 'ready', refreshAfterMs: 3000 });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(service.get('viewer').items[0].reason, '새 한국어 제목 시청 기록을 바탕으로 추천');
+  assert.equal(calls, 1);
+});
+
 test('kids recommendations filter both seed reasons and external candidates using cached ratings', async t => {
   const { service, title, detail } = await fixture(t);
   title('safe-seed', 1, 'kids'); title('adult-seed', 2, 'kids');
@@ -145,12 +184,12 @@ test('uncached lower-ranked seeds are warmed without bypassing the two-request c
 
 test('AniList is opt-in supplementation, preserves TMDB order/IDs and obeys per-profile exclusions',async t=>{
   const {db,tmdb,title,detail}=await fixture(t);title('seed',1);detail(1,[candidate(10)]);
-  db.run('UPDATE tmdb_titles SET card=? WHERE tmdb_id=1',JSON.stringify({genreIds:[16],title:'Localized',originalTitle:'Synthetic Anime',year:2024,certification:'ALL'}));
+  db.run('UPDATE tmdb_titles SET card=? WHERE tmdb_id=1',JSON.stringify({genreIds:[16],title:'한국어 애니 제목',originalTitle:'Synthetic Anime',year:2024,certification:'ALL'}));
   let calls=0;const supplemental={busy:false,close(){},lookup(){calls++;return [candidate(10),{...candidate(20),genreIds:[16]},candidate(30)];}};
   const service=new Recommendations(db,tmdb,()=>clock,supplemental);
   assert.deepEqual(keys(service),['movie:10']);assert.equal(calls,0);
   db.run('INSERT INTO settings VALUES(?,?)','viewer',JSON.stringify({anilistRecommendationsEnabled:true}));
-  assert.deepEqual(keys(service),['movie:10','movie:20','movie:30']);assert.match(service.get('viewer').items[1].reason,/AniList/);
+  assert.deepEqual(keys(service),['movie:10','movie:20','movie:30']);assert.equal(service.get('viewer').items[1].reason,'한국어 애니 제목 기반 애니 추천 · AniList');
   service.dismiss('viewer','movie:20');assert.deepEqual(keys(service),['movie:10','movie:30']);
   title('saved',30,'viewer',-1);db.run("INSERT INTO watchlist VALUES('viewer','saved','2026-10-10')");
   assert.deepEqual(keys(service),['movie:10']);

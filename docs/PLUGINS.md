@@ -64,6 +64,7 @@ MOA supplies `window.moa` before plugin code runs. SDK methods return promises a
 | `moa.ui.close()` | `ui` | Hides the inline panel or closes the dialog; a JavaScript instance and its DOM stay alive in its scope |
 | `moa.ui.resize(height)` | `ui` | Sets an inline panel's height in CSS pixels, rounded up and clamped to 120–1200; rejects non-finite values and calls outside inline panels |
 | `moa.context()` | `player.context` | `{ episodeId, title, currentTime }`, or `null` outside the player |
+| `moa.metadata.details()` | `metadata.read` | Public TMDB metadata for the current linked title, using MOA's configured credentials and cache |
 | `moa.player.play()` | `player.control` | Starts playback; browser autoplay restrictions may still reject it |
 | `moa.player.pause()` | `player.control` | Pauses playback |
 | `moa.player.seek(seconds)` | `player.control` | Seeks within the video's duration; unavailable for live playback |
@@ -76,6 +77,21 @@ MOA supplies `window.moa` before plugin code runs. SDK methods return promises a
 | `moa.on(event, handler)` | Depends on event | Registers a handler and returns an unsubscribe function |
 
 Register event handlers synchronously at the top level of `plugin.js` so they receive the first `ready` event.
+
+`moa.metadata.details()` takes no parameters and is available on a title detail page. It returns
+`{ provider, status, title, details }`. `title` is the confirmed MOA/provider identity; `details`
+contains `title`, `genres`, and optional `originalTitle`, `overview`, `year`, `runtime` (minutes),
+`rating` (0–10), `certification`, `poster`, and `backdrop`. Non-ready responses have null title
+and details, with status `unconfigured`, `unlinked`, `restricted`, or `unavailable`.
+Children's profiles cannot use this capability. No automatic title matching, arbitrary TMDB
+IDs, URLs, query parameters, or API credentials are exposed. MOA reuses its existing TMDB
+title cache and coalesces plugin requests; permissions, profile policy, and title linkage
+are checked again after the request. Image display requires `https://image.tmdb.org` in `connect`.
+Credit the TMDB data source in the plugin UI.
+
+The existing `moa.metadata.credits()` / `person()`, `moa.discovery.trending()` / `schedule()`,
+`moa.watchlist.news()`, and `moa.reviews.list('tmdb')` provide the other bounded TMDB capabilities
+described below. They use the administrator's TMDB configuration without sharing the credential.
 
 | Event | Payload | Delivery |
 | --- | --- | --- |

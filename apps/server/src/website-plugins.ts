@@ -234,7 +234,7 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
       return reply.header('Cache-Control','private, no-store').send(result);
     });
 
-    for (const action of ['credits','person'] as const) app.post(`${base}/:id/metadata/${action}`, {
+    for (const action of ['credits','person','details'] as const) app.post(`${base}/:id/metadata/${action}`, {
       bodyLimit:4096,
       preValidation: async req => {
         // The app's general validator coerces scalar types; opaque identities must not be coerced.
@@ -254,7 +254,7 @@ export function registerWebsitePlugins(app: FastifyInstance, db: Store, discover
       };
       check();
       if (!people) throw new ApiFailure(503,'plugin-metadata-unavailable');
-      const result = action === 'credits' ? await people.credits(req.moaProfile!,body.mediaId) : await people.person(req.moaProfile!,body.mediaId,body.person);
+      const result = action === 'credits' ? await people.credits(req.moaProfile!,body.mediaId) : action === 'details' ? await people.details(req.moaProfile!,body.mediaId) : await people.person(req.moaProfile!,body.mediaId,body.person);
       check();
       return reply.header('Cache-Control','private, no-store').send(result);
     });

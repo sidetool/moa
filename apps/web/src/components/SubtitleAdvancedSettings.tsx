@@ -26,7 +26,7 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
   const { hash } = useLocation();
   const [open, setOpen] = useState(hash === '#subtitle-advanced');
   const region = useId();
-  const anchor = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (hash !== '#subtitle-advanced') return;
     setOpen(true);
@@ -46,13 +46,12 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
   ].filter(Boolean).join(' · ');
 
   return (
-    <div className="subtitle-advanced" id="subtitle-advanced" ref={anchor}>
-      <button type="button" className="setting setting-disclosure" aria-expanded={open} aria-controls={region} onClick={() => setOpen(value => !value)}>
+    <details className="subtitle-advanced" id="subtitle-advanced" ref={anchor} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary className="setting setting-disclosure" aria-controls={region}>
         <span className="setting-icon"><SlidersHorizontal size={20} /></span>
         <div><b>자막 고급설정</b><small>{summary}</small></div>
         <ChevronDown size={18} className={cx('disclosure-chevron', open && 'is-open')} aria-hidden="true" />
-      </button>
-      {open && (
+      </summary>
         <div id={region} className="settings-advanced" role="region" aria-label="자막 고급설정">
           <div className="setting setting-stack">
             <div>
@@ -60,7 +59,7 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
               <small>{PRIORITY.find(([value]) => value === s.translationSourcePriority)?.[2]}</small>
               {translating && mode === 'manual' && <small className="is-muted">‘한국어 자막이 없을 때’가 번역할지 묻기·자동 번역일 때 쓰여요.</small>}
             </div>
-            <div className="segmented" role="radiogroup" aria-label="번역할 원문 순서">
+            <div className="segmented" role="radiogroup" aria-label="번역할 원문 순서" style={{ '--segments': PRIORITY.length, '--selected': PRIORITY.findIndex(([value]) => value === s.translationSourcePriority) } as React.CSSProperties}>
               {PRIORITY.map(([value, label]) => (
                 <button key={value} type="button" role="radio" aria-checked={s.translationSourcePriority === value} className={cx(s.translationSourcePriority === value && 'is-active')}
                   onClick={() => { if (s.translationSourcePriority !== value) save({ translationSourcePriority: value }); }}>{label}</button>
@@ -94,8 +93,7 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
           </div>
           {admin && <RequestControls />}
         </div>
-      )}
-    </div>
+    </details>
   );
 }
 

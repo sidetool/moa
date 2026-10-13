@@ -173,6 +173,23 @@ export class Tmdb {
     const data = await this.get(`/${title.kind}/${title.id}/${title.kind === 'tv' ? 'aggregate_credits' : 'credits'}`, {language:'ko-KR'});
     return tmdbPeople(data, title.kind);
   }
+  async titleDetails(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').TitleMetadata> {
+    if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
+    if (title.provider !== this.providerId || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new ApiFailure(400, 'invalid-metadata-identity');
+    const cached = this.db.get('SELECT card,fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?', title.kind, Number(title.id));
+    const card = cached && cached.fetched_at > Date.now() - TITLE_TTL ? JSON.parse(cached.card) : await this.title(title.kind, Number(title.id));
+    if (!card || typeof card.title !== 'string' || !card.title.trim()) throw new Error('invalid-metadata-details');
+    const text = (value: unknown, limit: number) => typeof value === 'string' ? value.slice(0, limit) : undefined;
+    const image = (value: unknown) => typeof value === 'string' && /^https:\/\/image\.tmdb\.org\/t\/p\/(?:w\d+|original)\/[a-zA-Z0-9_-]+\.(?:jpg|png|webp)$/.test(value) ? value : undefined;
+    return {
+      title: card.title.slice(0, 300), originalTitle: text(card.originalTitle, 300), overview: text(card.overview, 4000),
+      genres: Array.isArray(card.genres) ? card.genres.filter((value: unknown) => typeof value === 'string').slice(0,16).map((value: string) => value.slice(0,80)) : [],
+      year: Number.isInteger(card.year) && card.year > 0 && card.year < 10000 ? card.year : undefined,
+      runtime: Number.isFinite(card.runtime) && card.runtime > 0 && card.runtime <= 1440 ? card.runtime : undefined,
+      rating: Number.isFinite(card.rating) && card.rating >= 0 && card.rating <= 10 ? card.rating : undefined,
+      certification: text(card.certification, 40), poster: image(card.poster), backdrop: image(card.backdrop),
+    };
+  }
   async personWorks(id: string) {
     if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
     if (!/^[1-9][0-9]{0,14}$/.test(id)) throw new ApiFailure(400, 'invalid-metadata-identity');

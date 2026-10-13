@@ -93,7 +93,7 @@ test('release feed selects published stable/beta versions using SemVer and reuse
     return new Response(JSON.stringify(entries), { headers: { etag: '"fixture-etag"' } });
   } });
   assert.deepEqual((await feed.releases('stable')).map(r => r.tag_name), ['v1.10.0', 'v1.9.0']);
-  assert.deepEqual((await feed.releases('beta')).map(r => r.tag_name), ['v1.10.0', 'v1.10.0-beta.10', 'v1.10.0-beta.2', 'v1.9.0']);
+  assert.deepEqual((await feed.releases('beta')).map(r => r.tag_name), ['v1.10.0-beta.10', 'v1.10.0-beta.2']);
   assert.equal(requests.length, 2);
   assert.equal(requests[1].options.headers['If-None-Match'], '"fixture-etag"');
   assert.ok(requests.every(r => r.url.includes('/releases?per_page=100&page=1')));

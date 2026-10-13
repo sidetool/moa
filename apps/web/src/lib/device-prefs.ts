@@ -21,6 +21,8 @@ const record = (key: string) => {
       if (key === 'shortsScreenFit') return value === null || typeof value === 'boolean';
       if (key === 'subtitleSize') return typeof value === 'string' && ['small', 'medium', 'large', 'xlarge'].includes(value);
       if (key === 'subtitleBackground') return typeof value === 'string' && ['original', 'none', 'soft', 'solid'].includes(value);
+      if (key === 'subtitleStep') return [1, 5, 10].includes(value as number);
+      if (key === 'holdSpeed') return [1.25, 1.5, 2, 2.5, 3].includes(value as number);
       return key === 'seekStep' ? [5, 10, 15, 30].includes(value as number) : typeof value === 'boolean';
     }));
     return { value: { ...DEFAULT_DEVICE_SETTINGS, ...value } as DeviceSettings, dirty: saved.dirty && typeof saved.dirty === 'object' ? Object.fromEntries(Object.keys(saved.dirty).filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])) : null };

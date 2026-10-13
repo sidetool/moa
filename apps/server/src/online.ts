@@ -6,6 +6,7 @@ import { createSubtitleClient, parseSeason, type SubtitleClient, type SubtitleCa
 import type { OnlineSubtitleSearch, OnlineSubtitleQuery, SubtitleTrack, OnlineSubtitleIssue } from '@moa/shared';
 import { Store } from './db.js';
 import { ApiFailure, hash } from './util.js';
+import type { TitleGroups } from './title-groups.js';
 
 export function sqliteCache(db: Store) {
   return {
@@ -20,7 +21,7 @@ export function sqliteCache(db: Store) {
   };
 }
 export type OnlineClient = Pick<SubtitleClient, 'searchSubtitles' | 'resolveKoreanTitle'> & Partial<Pick<SubtitleClient, 'animeAliases'>>;
-interface Search { episodeId: string; profileId: string; expiresAt: number; candidates: SubtitleCandidate[] }
+interface Search { episodeId: string; profileId: string; expiresAt: number; candidates: SubtitleCandidate[]; saved?: boolean }
 export class OnlineSubtitles {
   readonly client: OnlineClient;
   searches = new Map<string, Search>();
@@ -28,7 +29,7 @@ export class OnlineSubtitles {
   private janitor: NodeJS.Timeout;
   private diagnostics = new AsyncLocalStorage<{ partial: boolean; issues: OnlineSubtitleIssue[] }>();
   private controller = new AbortController();
-  constructor(private db: Store, private log: (value: Record<string, unknown>) => void, client?: OnlineClient) {
+  constructor(private db: Store, private log: (value: Record<string, unknown>) => void, client?: OnlineClient, private groups?: TitleGroups) {
     this.client = client ?? createSubtitleClient({ cache: sqliteCache(db), onDiagnostic: d => {
       if (['timeout', 'error', 'aborted'].includes(d.code)) { const state = this.diagnostics.getStore(); if (state) state.partial = true; }
       const current = this.diagnostics.getStore();
@@ -65,7 +66,7 @@ export class OnlineSubtitles {
     }
     return title;
   }
-  async search(episodeId: string, profileId: string, signal?: AbortSignal, override: Partial<OnlineSubtitleQuery> = {}): Promise<OnlineSubtitleSearch> {
+  async search(episodeId: string, profileId: string, signal?: AbortSignal, override: Partial<OnlineSubtitleQuery> = {}, refresh = false): Promise<OnlineSubtitleSearch> {
     const episode = this.episode(episodeId), state = { partial: false, issues: [] as OnlineSubtitleIssue[] };
     for (const [id, search] of this.searches) if (search.expiresAt <= Date.now()) this.searches.delete(id);
     if (this.searches.size >= 100) this.searches.delete(this.searches.keys().next().value!);
@@ -73,18 +74,19 @@ export class OnlineSubtitles {
     return this.diagnostics.run(state, async () => {
       const query = subtitleQuery(this.db, episode, override);
       const identity = subtitleIdentity(this.db, episode.media_id);
+      const saved = refresh || Object.keys(override).length ? [] : this.relatedSaved(episodeId, profileId);
       // Title lookup and collection share the budget, but neither waits for
       // the other to finish before starting its own network requests.
-      const titleTask = identity || Object.keys(override).length > 0 ? Promise.resolve(query.season > 1 ? `${query.title} ${query.season}기` : query.title) : this.resolveTitle(episode.media_id, query.title, query.season, requestSignal);
-      let candidates: SubtitleCandidate[] = [];
-      try { candidates = await this.client.searchSubtitles({ title: query.title, aliases: query.aliases, season: query.season, episode: query.episode, episodeOffset: query.episodeOffset, timeoutMs: 12_000, signal: requestSignal }); }
+      const titleTask = saved.length || identity || Object.keys(override).length > 0 ? Promise.resolve(query.season > 1 ? `${query.title} ${query.season}기` : query.title) : this.resolveTitle(episode.media_id, query.title, query.season, requestSignal);
+      let candidates: SubtitleCandidate[] = saved.map(row => ({ id: row.id, creatorId: row.creator_name, creatorName: row.creator_name, sourceUrl: row.source_url, format: row.format, content: row.content, filename: `저장된 자막.${row.format}`, title: query.title, season: query.season, episode: query.episode, matchedEpisode: query.episode, confidence: 1 }));
+      try { if (!candidates.length) candidates = await this.client.searchSubtitles({ title: query.title, aliases: query.aliases, season: query.season, episode: query.episode, episodeOffset: query.episodeOffset, timeoutMs: 12_000, signal: requestSignal }); }
       catch (error) { state.partial = true; this.log({ event: 'online-subtitle-error', error: String(error) }); }
       const resolvedTitle = await titleTask;
       if (requestSignal.aborted) state.partial = true;
       // Metadata is public; subtitle bodies stay on the server, scoped to this profile and episode.
       const searchId = randomUUID(), expiresAt = Date.now() + 300_000;
       this.episode(episodeId);
-      this.searches.set(searchId, { episodeId, profileId, candidates, expiresAt });
+      this.searches.set(searchId, { episodeId, profileId, candidates, expiresAt, saved: saved.length > 0 });
       return { searchId, resolvedTitle, query, autoApply: query.warnings.length === 0, candidates: candidates.map(c => ({ id: c.id, creatorName: c.creatorName, sourceUrl: c.sourceUrl, filename: c.filename, format: c.format, matchedEpisode: c.matchedEpisode, confidence: c.confidence })), partial: state.partial, issues: state.issues, expiresAt };
     });
   }
@@ -100,6 +102,9 @@ export class OnlineSubtitles {
     const c = search.candidates.find(c => c.id === candidateId);
     if (!c) throw new ApiFailure(404, 'subtitle-candidate-not-found');
     const digest = hash(c.content);
+    const existing = this.relatedSaved(episodeId, profileId).find(row => search.saved ? row.id === c.id : row.creator_name === c.creatorName && row.content_hash === digest && row.format === c.format);
+    if (search.saved && !existing) throw new ApiFailure(404, 'subtitle-candidate-not-found');
+    if (existing) return this.savedTrack(existing, profileId);
     this.db.run('INSERT OR IGNORE INTO online_subtitles VALUES(?,?,?,?,?,?,?,?,?)', randomUUID(), episodeId, c.creatorName, c.sourceUrl, c.format, c.content, digest, randomUUID(), Date.now());
     const row = this.db.get('SELECT * FROM online_subtitles WHERE episode_id=? AND creator_name=? AND content_hash=?', episodeId, c.creatorName, digest)!;
     // Applying a subtitle may precede video playback. Give it an asset-only
@@ -107,6 +112,10 @@ export class OnlineSubtitles {
     return this.savedTrack(row, profileId);
   }
   saved(episodeId: string) { return this.db.all('SELECT * FROM online_subtitles WHERE episode_id=? ORDER BY created_at DESC,id', episodeId); }
+  private relatedSaved(episodeId: string, profileId: string) {
+    const ids = this.groups?.relatedEpisodes(episodeId, profileId).episodeIds ?? [episodeId];
+    return this.db.all(`SELECT * FROM online_subtitles WHERE episode_id IN (${ids.map(() => '?').join(',')}) ORDER BY created_at DESC,id`, ...ids);
+  }
   tracks(episodeId: string, profileId: string) { return this.saved(episodeId).map(row => this.savedTrack(row, profileId)); }
   private savedTrack(row: Record<string, any>, profileId: string) {
     const token = randomUUID();

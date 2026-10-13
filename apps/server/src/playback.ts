@@ -49,7 +49,7 @@ export class Playback {
   subtitleCache: SubtitleCache;
   private janitor: NodeJS.Timeout;
   private previewing = 0;
-  private previews = new WeakMap<Session, { at: number; image: Promise<Buffer> }>();
+  private previews = new WeakMap<Session, Map<number, Promise<Buffer>>>();
   constructor(private db: Store, private catalog: Catalog, public config: Config, private log: (value: Record<string, unknown>) => void, private online?: OnlineSubtitles, private enrichment?: Enrichment) {
     this.subtitleCache = new SubtitleCache(config);
     this.janitor = setInterval(() => {
@@ -131,18 +131,21 @@ export class Playback {
   }
   async preview(s: Session, at: number): Promise<Buffer> {
     if (!Number.isFinite(at) || at < 0 || at >= s.probe.duration) throw new ApiFailure(400, 'invalid-preview-time');
-    const time = Math.floor(at / 2) * 2, cached = this.previews.get(s);
-    if (cached?.at === time) return cached.image;
+    const time = Math.floor(at / 2) * 2, frames = this.previews.get(s) ?? new Map<number, Promise<Buffer>>();
+    const cached = frames.get(time);
+    if (cached) return cached;
     if (this.previewing >= 2) throw new ApiFailure(429, 'preview-busy');
     this.previewing++;
     const image = (async () => {
       const file = await safePath(s.root, s.file);
       if (s.deleted) throw new ApiFailure(404, 'session-expired');
-      const result = await promisify(execFile)(this.config.ffmpeg, ['-v', 'error', '-nostdin', '-ss', String(time), '-i', file, '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=240:-2', '-threads', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer', timeout: 8000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
+      const result = await promisify(execFile)(this.config.ffmpeg, ['-v', 'error', '-nostdin', '-ss', String(time), '-i', file, '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=240:-2', '-pix_fmt', 'yuvj420p', '-threads', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer', timeout: 8000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
       if (!result.stdout.length) throw new ApiFailure(502, 'preview-unavailable');
       return result.stdout;
-    })().catch(error => { if (this.previews.get(s)?.image === image) this.previews.delete(s); throw error instanceof ApiFailure ? error : new ApiFailure(502, 'preview-unavailable'); }).finally(() => { this.previewing--; });
-    this.previews.set(s, { at: time, image });
+    })().catch(error => { if (frames.get(time) === image) frames.delete(time); throw error instanceof ApiFailure ? error : new ApiFailure(502, 'preview-unavailable'); }).finally(() => { this.previewing--; });
+    frames.set(time, image);
+    if (frames.size > 8) frames.delete(frames.keys().next().value!);
+    this.previews.set(s, frames);
     return image;
   }
   playlist(s: Session) {

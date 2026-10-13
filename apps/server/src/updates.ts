@@ -107,7 +107,7 @@ export class Updates {
           if (items.length < 100) break;
           if (page === 5) throw new Error('update-feed-truncated');
         }
-        const published = releases.filter(item => item && !item.draft && (policy.channel === 'beta' || !item.prerelease && versionParts(item.tag_name || '')?.[3] === Infinity) && typeof item.tag_name === 'string' && versionParts(item.tag_name) && (item.prerelease ? versionParts(item.tag_name)![3] !== Infinity : true) && typeof item.published_at === 'string' && Number.isFinite(Date.parse(item.published_at)))
+        const published = releases.filter(item => item && !item.draft && item.prerelease === (policy.channel === 'beta') && typeof item.tag_name === 'string' && versionParts(item.tag_name) && (versionParts(item.tag_name)![3] !== Infinity) === item.prerelease && typeof item.published_at === 'string' && Number.isFinite(Date.parse(item.published_at)))
           .sort((a, b) => compareVersions(b.tag_name, a.tag_name));
         const latest = published[0];
         result.latestVersion = latest?.tag_name ?? null;

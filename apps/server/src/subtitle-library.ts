@@ -7,7 +7,6 @@ import type { OnlineSubtitles } from './online.js';
 import { importSubtitles } from './subtitle-upload.js';
 import { ApiFailure } from './util.js';
 import type { TitleGroups } from './title-groups.js';
-import { subtitleQuery } from './subtitle-query.js';
 
 interface Upload { id: string; episode_id: string; profile_id: string; filename: string; format: 'ass' | 'vtt'; content: string }
 
@@ -42,20 +41,8 @@ export class SubtitleLibrary {
   }
 
   private related(episodeId: string, profileId: string) {
-    const episode = this.episode(episodeId, profileId), mapping = this.groups.mapping(profileId), group = mapping.get(episode.media_id);
-    const mediaIds = group ? [...mapping].filter(([, key]) => key === group).map(([id]) => id) : [episode.media_id as string];
-    if (mediaIds.length === 1) return { episodeIds: [episodeId], mediaIds };
-    const rows = this.db.all(`SELECT e.*,m.title AS original_title FROM episodes e JOIN media m ON m.id=e.media_id
-      WHERE e.media_id IN (${mediaIds.map(() => '?').join(',')})`, ...mediaIds);
-    const identity = (row: Record<string, any>) => { try { return subtitleQuery(this.db, row); } catch { return undefined; } };
-    const current = identity(rows.find(row => row.id === episodeId)!);
-    const episodeIds = rows.filter(row => {
-      if (row.id === episodeId) return true;
-      if (row.media_id === episode.media_id) return false;
-      const query = identity(row);
-      return current && query && !current.warnings.length && !query.warnings.length && query.season === current.season && query.episode === current.episode;
-    }).map(row => row.id as string);
-    return { episodeIds, mediaIds };
+    this.episode(episodeId, profileId);
+    return this.groups.relatedEpisodes(episodeId, profileId);
   }
 
   preference(episodeId: string, profileId: string): SubtitleSelection {

@@ -118,6 +118,26 @@ test('ASS defaults preserve authored styles and background overrides restore inl
   assert.equal(styleWrites.length, writes);
 });
 
+test('ASS original toggle overrides custom styles and restores authored effects without losing preferences', async () => {
+  const style = { FontSize: 32, BorderStyle: 1, Outline: 2, Shadow: 1, Alignment: 8 };
+  const event = { Text: '{\\pos(60,40)\\bord0\\t(0,500,\\shad4)}Text' };
+  const { controller, styleWrites, eventWrites } = await harness({ styles: [style], events: [event] });
+  const custom = { size: 'large', background: 'solid', scale: 150, outline: 3, shadow: 2 };
+  await controller.setAppearance({ ...custom, preserveAss: true });
+  await controller.show(ass);
+  assert.equal(styleWrites.length, 0);
+  assert.equal(eventWrites.length, 0);
+  await controller.setAppearance({ ...custom, preserveAss: false });
+  assert.equal(styleWrites.at(-1).style.FontSize, 48);
+  assert.notEqual(eventWrites.at(-1).event.Text, event.Text);
+  await controller.setAppearance({ ...custom, preserveAss: true });
+  assert.equal(JSON.stringify(styleWrites.at(-1).style), JSON.stringify(style));
+  assert.equal(eventWrites.at(-1).event.Text, event.Text);
+  await controller.setAppearance({ ...custom, preserveAss: false });
+  assert.equal(styleWrites.at(-1).style.FontSize, 48);
+  assert.equal(styleWrites.at(-1).style.BorderStyle, 4);
+});
+
 test('VTT positive/negative offsets are absolute, survive switches, and apply after load', async () => {
   const { controller, tracks } = await harness();
   controller.setOffset(1);

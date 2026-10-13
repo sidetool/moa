@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import { buildApp } from '../../server/dist/app.js';
+
+const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
+const directory = await mkdtemp(join(tmpdir(), 'moa-metadata-browser-'));
+let requests = 0;
+const server = await buildApp({ dataDir: directory, mediaRoot: directory }, false, { tmdb: { token: 'fixture', fetch: async () => { requests++; throw new Error('Unexpected external request'); } } });
+await server.app.listen({ host: '127.0.0.1', port: 0 });
+process.env.MOA_API = `http://127.0.0.1:${server.app.server.address().port}`;
+process.env.VITE_MOCK = '0';
+const web = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), logLevel: 'error', server: { port: 0, open: false, hmr: false } });
+await web.listen();
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
+const errors = [];
+try {
+  const profile = (await server.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Metadata test' } })).json();
+  server.db.run("INSERT INTO media VALUES('m',NULL,'Metadata fixture','movie','{}','2026')");
+  server.db.run("INSERT INTO tmdb_links VALUES('m','movie',1,NULL,'manual',100,0)");
+  server.db.run("INSERT INTO tmdb_titles VALUES('movie',1,?,?,?)", JSON.stringify({ title: '캐시 작품', genres: ['드라마'], overview: '공개 작품 정보', animation: false }), JSON.stringify({ people: [], similar: [], trailers: [] }), Date.now());
+  const plugin = { apiVersion: 2, id: 'metadata-browser', name: 'TMDB metadata', version: '1.0.0', description: 'Metadata verification', placements: ['detail'], permissions: ['metadata.read'], connect: [], html: '<!doctype html><title>Metadata</title><script>moa.on("ready", async () => { try { window.result = await moa.metadata.details(); document.body.textContent = window.result.details.title; } catch (error) { window.failure = error.message; } });</script>' };
+  assert.equal((await server.app.inject({ method: 'POST', url: '/api/admin/plugins', payload: plugin })).statusCode, 200);
+  const context = await browser.newContext();
+  await context.addInitScript(id => { if (window === top) localStorage.setItem('moa.profile', id); }, profile.id);
+  const page = await context.newPage();
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(web.resolvedUrls.local[0] + 'title/m');
+  const frame = await (await page.locator('iframe[title="TMDB metadata"]').elementHandle()).contentFrame();
+  await frame.waitForFunction(() => window.result?.status === 'ready');
+  assert.deepEqual((await frame.evaluate(() => moa.metadata.details())).details, { title: '캐시 작품', overview: '공개 작품 정보', genres: ['드라마'] });
+  assert.equal(requests, 0);
+  assert.equal((await server.app.inject({ method: 'POST', url: '/api/admin/plugins', payload: { ...plugin, permissions: [] } })).statusCode, 200);
+  await page.reload();
+  const denied = await (await page.locator('iframe[title="TMDB metadata"]').elementHandle()).contentFrame();
+  await denied.waitForFunction(() => typeof window.failure === 'string');
+  assert.equal(await denied.evaluate(() => window.failure), '허용되지 않은 플러그인 기능이에요.');
+  assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ passed: true, externalRequests: requests, errors }));
+} finally { await browser.close(); await web.close(); await server.app.close(); await rm(directory, { recursive: true, force: true }); }

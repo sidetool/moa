@@ -2,6 +2,7 @@
 // as apps/server so screens can be built before the server lands.
 import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, ShortsItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
+import { TRANSLATION_MAX_KEYS } from "@moa/shared";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
 const ext: ProviderRef = { id: "ext-demo", name: "데모 확장", kind: "mangayomi-js" };
@@ -206,7 +207,7 @@ let translationSecrets: Array<{ id: string; secret: string }> = [];
 const activeKey = () => translationSecrets.find(item => !item.secret.includes("bad"))?.secret ?? "";
 const mask = (secret: string) => `${secret.slice(0, 4)}…${secret.slice(-4)}`;
 function setSecrets(next: typeof translationSecrets) {
-  translationSecrets = next.slice(0, 8);
+  translationSecrets = next.slice(0, TRANSLATION_MAX_KEYS);
   const keys = translationSecrets.map(item => ({ id: item.id, label: mask(item.secret), test: translationConfig.keys.find(key => key.id === item.id)?.test }));
   translationConfig = { ...translationConfig, keys, configured: keys.length > 0, enabled: translationConfig.enabled && keys.length > 0 };
 }
@@ -571,7 +572,7 @@ export function installMockApi() {
         translationConfig = { ...translationConfig, provider, baseUrl, model: provider === "openai" ? "gpt-4.1-mini" : "gemini-flash-latest" };
       }
       const added = [...(typeof body.apiKey === "string" ? [body.apiKey] : []), ...(Array.isArray(body.addKeys) ? body.addKeys : [])].map((key: string) => key.trim()).filter(Boolean);
-      if (translationSecrets.length + added.length > 8) return json({ error: "translation-too-many-keys" }, 400);
+      if (translationSecrets.length + added.length > TRANSLATION_MAX_KEYS) return json({ error: "translation-too-many-keys" }, 400);
       if (body.clearKey) setSecrets([]);
       if (Array.isArray(body.removeKeyIds)) setSecrets(translationSecrets.filter(item => !body.removeKeyIds.includes(item.id)));
       if (added.length) setSecrets([...translationSecrets, ...added.filter((secret: string) => !translationSecrets.some(item => item.secret === secret)).map((secret: string, i: number) => ({ id: `k${Date.now().toString(36)}${i}`, secret }))]);

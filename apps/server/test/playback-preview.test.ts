@@ -19,6 +19,10 @@ test('hover preview bounds work, coalesces frames and never moves playback curso
   const [first, second] = await Promise.all([playback.preview(session, 4.1), playback.preview(session, 5.9)]);
   assert.deepEqual(first, Buffer.from([255, 216, 255, 217])); assert.equal(first, second);
   assert.equal(session.cursor, 3);
+  await playback.preview(session, 8);
+  assert.equal(await playback.preview(session, 4), first);
+  for (const at of [0, 2, 6, 10, 12, 14, 16]) await playback.preview(session, at);
+  assert.notEqual(await playback.preview(session, 4), first);
   const args = JSON.parse(await readFile(calls, 'utf8'));
   assert.equal(args[args.indexOf('-ss') + 1], '4'); assert.equal(args[args.indexOf('-i') + 1], file);
   for (const at of [-1, NaN, Infinity, 20, 100]) await assert.rejects(playback.preview(session, at), /invalid-preview-time/);

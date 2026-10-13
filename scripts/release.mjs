@@ -81,7 +81,7 @@ export class ReleaseFeed {
       if (page === 5) fail('update-feed-truncated');
     }
     return all.filter(r => {
-      try { return !r.draft && r.published_at && (channel === 'beta' || !r.prerelease) && (version(r.tag_name)[3] !== Infinity) === r.prerelease && (channel === 'beta' || !r.tag_name.includes('-')); } catch { return false; }
+      try { return !r.draft && r.published_at && r.prerelease === (channel === 'beta') && (version(r.tag_name)[3] !== Infinity) === r.prerelease; } catch { return false; }
     }).sort((a, b) => compare(b.tag_name, a.tag_name));
   }
   asset(version, name) { return `https://github.com/${this.repository}/releases/download/${version}/${name}`; }

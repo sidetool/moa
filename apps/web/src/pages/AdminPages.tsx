@@ -55,7 +55,7 @@ function FolderPicker({ onPick, onClose }: { onPick: (path: string, type: MediaT
         </ul>
         <div className="field-row">
           <label className="field"><span>종류</span>
-            <div className="segmented" role="radiogroup">
+            <div className="segmented" role="radiogroup" style={{ '--segments': 3, '--selected': ['anime', 'series', 'movie'].indexOf(type) } as React.CSSProperties}>
               {(["anime", "series", "movie"] as MediaType[]).map(item => (
                 <button key={item} type="button" role="radio" aria-checked={type === item} className={cx(type === item && "is-active")} onClick={() => setType(item)}>{TYPE_LABEL[item]}</button>
               ))}
@@ -262,6 +262,7 @@ export function SettingsPage() {
       {category === "controls" && <section className="settings-group"><div className="settings-card">
         {row("TV 리모컨 모드", "방향키로 이동하고 확인 버튼으로 선택합니다. 자동 모드는 TV 감지 또는 탐색 화면의 방향키 입력으로 켜집니다.", <Select className="setting-select" aria-label="TV 리모컨 모드" value={remote} onChange={value => { setRemote(value as RemotePreference); setRemotePreference(value as RemotePreference); }} options={[{ value: "auto", label: "자동" }, { value: "on", label: "항상 켜기" }, { value: "off", label: "끄기" }]} />)}
         {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 J·L 키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />)}
+        {row("길게 누르기 배속", "영상을 누르고 있는 동안 적용할 속도", <Select className="setting-select" aria-label="길게 누르기 배속" value={String(device.holdSpeed)} onChange={value => setPref("holdSpeed", Number(value) as DevicePrefs["holdSpeed"])} options={[1.25, 1.5, 2, 2.5, 3].map(value => ({ value: String(value), label: `${value}배속` }))} />)}
       </div></section>}
       {category === "subtitles" && <section className="settings-group">
         <h2>언어와 자동 찾기</h2>
