@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MonitorPlay } from 'lucide-react';
+import { Lock, MonitorPlay } from 'lucide-react';
 import { api } from '../lib/api';
 import { cx } from '../lib/format';
 import { Button, ConfirmDialog } from './ui';
@@ -45,13 +45,12 @@ export function YouTubeSettings() {
   return <div className="tmdb-setting youtube-setting">
     <div className="setting">
       <span className="setting-icon"><MonitorPlay size={20} /></span>
-      <div><b>예고편 확인 (YouTube)</b><small>재생 가능한 예고편을 먼저 확인해요.</small></div>
-      <span className={cx('status-pill', c?.configured && 'is-ok')}>{status}</span>
+      <div><span className="metadata-title"><b>예고편 확인 (YouTube)</b><span className={cx('status-pill', c?.configured && 'is-ok')}>{status}</span></span><small>재생 가능한 예고편을 먼저 확인해요.</small></div>
     </div>
     {config.isError && <p className="settings-error" role="alert">YouTube 설정을 불러오지 못했어요. <button className="text-btn" onClick={() => void config.refetch()}>다시 시도</button></p>}
     {c && <div className="tmdb-key">
       {fromEnv
-        ? <p className="settings-hint">서버 설정에서 관리하는 키예요.</p>
+        ? <p className="settings-hint metadata-locked"><Lock size={14} aria-hidden="true" /><span>서버 설정에서 관리하는 키예요.</span></p>
         : <form className="tmdb-key-form" onSubmit={e => { e.preventDefault(); if (value) save.mutate({ apiKey: value }); }}>
           <label htmlFor="youtube-key">{c.hasSavedCredential ? '새 키로 바꾸기' : 'YouTube Data API 키'}</label>
           <div className="tmdb-key-row">

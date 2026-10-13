@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Clapperboard } from 'lucide-react';
+import { Clapperboard, Lock } from 'lucide-react';
 import { api } from '../lib/api';
 import { cx } from '../lib/format';
 import { Button, ConfirmDialog } from './ui';
@@ -39,13 +39,12 @@ export function TmdbSettings() {
   return <div className="tmdb-setting">
     <div className="setting">
       <span className="setting-icon"><Clapperboard size={20} /></span>
-      <div><b>작품 정보 (TMDB)</b><small>포스터·로고·줄거리·출연진·회차 정보를 TMDB에서 가져와요. 잘못 연결된 작품은 상세 화면 아래에서 고칠 수 있어요.</small></div>
-      <span className={cx('status-pill', c?.configured && 'is-ok')}>{status}</span>
+      <div><span className="metadata-title"><b>작품 정보 (TMDB)</b><span className={cx('status-pill', c?.configured && 'is-ok')}>{status}</span></span><small>포스터·줄거리·출연진·회차 정보를 가져와요. 잘못 연결된 작품은 상세 화면에서 고칠 수 있어요.</small></div>
     </div>
     {config.isError && <p className="settings-error" role="alert">TMDB 설정을 불러오지 못했어요. <button className="text-btn" onClick={() => void config.refetch()}>다시 시도</button></p>}
     {c && <div className="tmdb-key">
       {fromEnv
-        ? <p className="settings-hint">서버의 환경 변수(<code>.env</code>)에 있는 키를 쓰고 있어요. 바꾸려면 서버 설정에서 고쳐 주세요.</p>
+        ? <p className="settings-hint metadata-locked"><Lock size={14} aria-hidden="true" /><span>서버 환경 변수(<code>.env</code>)의 키를 쓰고 있어요. 바꾸려면 서버 설정에서 고쳐 주세요.</span></p>
         : <form className="tmdb-key-form" onSubmit={e => { e.preventDefault(); if (value) save.mutate(patchFor(value)); }}>
           <label htmlFor="tmdb-key">{c.hasSavedCredential ? '새 키로 바꾸기' : 'TMDB 키'}</label>
           <div className="tmdb-key-row">

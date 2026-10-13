@@ -816,7 +816,15 @@
 .tmdb-key-row .btn { flex: none; }
 .tmdb-key code { font-size: .85em; }
 .tmdb-clear { justify-self: start; }
-@media (max-width: 640px) { .tmdb-key { padding: 0 14px 14px; } }
+.metadata-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.metadata-title .status-pill { padding: 2px 8px; font-size: .74rem; }
+.metadata-locked { display: flex; align-items: flex-start; gap: 6px; }
+.metadata-locked svg { flex: none; margin-top: .2em; }
+@media (max-width: 640px) {
+  .tmdb-key { padding: 0 14px 16px; }
+  .tmdb-setting .setting-icon { display: none; }
+  .tmdb-setting .setting { min-height: 0; padding-bottom: 10px; }
+}
 /* Remote access */
 .remote-page .page-head { margin-bottom: 8px; }
 .remote-lead { margin: 0 0 26px; color: var(--text-2); line-height: 1.6; max-width: 56ch; }
