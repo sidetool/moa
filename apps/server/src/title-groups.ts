@@ -119,7 +119,10 @@ export class TitleGroups {
     return { id:key, manual:key.startsWith('manual:'), members:[...map].filter(([,g]) => g === key).map(([mid]) => this.catalog.card(this.catalog.db.get('SELECT * FROM media WHERE id=?',mid)!,profile)) };
   }
   resolve(ids: string[], profile: string, query?: string): MediaCard[] {
-    const map = this.mapping(profile), groups = new Map<string,MediaCard[]>();
+    return this.resolveMapped(ids,profile,this.mapping(profile),query);
+  }
+  private resolveMapped(ids:string[],profile:string,map:Map<string,string>,query?:string):MediaCard[]{
+    const groups = new Map<string,MediaCard[]>();
     for (const id of new Set(ids)) {
       const k = map.get(id); if (!k) continue;
       const cards = groups.get(k) || [];
@@ -133,6 +136,27 @@ export class TitleGroups {
         ...(query?.trim() ? { relevance: Math.max(...cards.map(c => searchRelevance(c,query))) } : {}),
         sourceCount: new Set(cards.map(c => c.provider.id)).size };
     });
+  }
+  /** Equal first-page contribution: 20 points for rank 1 down to 1 for rank 20.
+   * Existing identity/season/edition rules and profile overrides decide equivalence. */
+  popular(lists:{sourceId:string;ids:string[]}[],profile:string):MediaCard[]{
+    const map=this.mapping(profile), scores=new Map<string,{points:number;sources:number;best:number;ids:Set<string>}>();
+    const providers=new Set<string>();
+    for(const list of [...lists].sort((a,b)=>a.sourceId.localeCompare(b.sourceId))){
+      if(providers.has(list.sourceId))continue;providers.add(list.sourceId);
+      const seen=new Set<string>();
+      for(const [i,id] of list.ids.slice(0,20).entries()){
+        const key=map.get(id);if(!key||seen.has(key))continue;
+        const row=this.catalog.db.get('SELECT metadata FROM media WHERE id=?',id);
+        const meta=JSON.parse(row!.metadata);
+        if(meta.live||meta.provider?.id!==list.sourceId)continue;
+        seen.add(key);
+        const score=scores.get(key)??{points:0,sources:0,best:Infinity,ids:new Set<string>()};
+        score.points+=20-i;score.sources++;score.best=Math.min(score.best,i+1);score.ids.add(id);scores.set(key,score);
+      }
+    }
+    const ranked=[...scores].sort(([ka,a],[kb,b])=>b.points-a.points||b.sources-a.sources||a.best-b.best||ka.localeCompare(kb));
+    return ranked.slice(0,10).flatMap(([,score])=>this.resolveMapped([...score.ids],profile,map));
   }
   change(id: string, profile: string, action: string, otherId?: string) {
     const group = this.group(id,profile), db = this.catalog.db;

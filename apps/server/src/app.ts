@@ -387,6 +387,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     if (q.sort === 'year') cards.sort((a, b) => (b.year || 0) - (a.year || 0) || a.title.localeCompare(b.title));
     return catalog.page(cards, q.page);
   });
+  app.post('/api/media/popular', {schema:{body:object({lists:{type:'array',maxItems:32,items:object({sourceId:{type:'string',minLength:1,maxLength:128},ids:{type:'array',maxItems:20,items:{type:'string',minLength:1,maxLength:512}}},['sourceId','ids'])}},['lists'])}}, async req=>groups.popular((req.body as {lists:{sourceId:string;ids:string[]}[]}).lists,profile(req)));
   app.post('/api/media/groups/resolve', { schema: { body: object({ids:{type:'array',maxItems:1000,items:string},query:{type:'string',maxLength:500}},['ids']) } }, async req => groups.resolve((req.body as {ids:string[]}).ids,profile(req),(req.body as {query?:string}).query));
   app.get('/api/media/groups/candidates', { schema: {querystring:object({q:{type:'string',maxLength:200,default:''}})} }, async req => groups.candidates(query(req).q,profile(req)));
   app.get('/api/media/:id/group', {schema:{params:idParams()}}, async req => groups.group(params(req).id,profile(req)));

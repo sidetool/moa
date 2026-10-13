@@ -288,3 +288,30 @@ test('audio labels do not merge separate editions; plain movie labels stay absen
   assert.equal(groups.resolve(['movie','tv'],'p1').length,2);
   assert.equal(groups.resolve(['movie'],'p1')[0].seasonInfo,undefined);
 }));
+
+
+test('popular merges source ranks once per provider, independent of arrival/source order',()=>withTmdbGroups(({groups,add})=>{
+  add('solo','Solo','a');add('shared-a','Shared','a');add('b-first','B First','b');add('b-second','B Second','b');add('shared-b','Shared','b');
+  const lists=[{sourceId:'a',ids:['solo','shared-a','shared-a']},{sourceId:'b',ids:['b-first','b-second','shared-b']}];
+  const result=groups.popular(lists,'p1');assert.equal(result[0].title,'Shared');assert.equal(result[0].sourceCount,2);
+  assert.deepEqual(groups.popular([...lists].reverse(),'p1'),result);
+  assert.deepEqual(groups.popular([...lists,lists[0]],'p1'),result);
+  assert.equal(result.filter(c=>c.title==='Shared').length,1);
+  // A single provider retains its own order; duplicate IDs never add points.
+  assert.deepEqual(groups.popular([lists[0]],'p1').map(c=>c.title),['Solo','Shared']);
+}));
+test('popular keeps seasons separate, honors profile overrides and excludes wrong/disabled/live sources',()=>withTmdbGroups(({db,groups,add})=>{
+  add('a1','Show season 1','a');add('b2','Show season 2','b');add('live','Channel','c','anime',{live:true});
+  const lists=[{sourceId:'a',ids:['a1']},{sourceId:'b',ids:['b2']},{sourceId:'c',ids:['live']}];
+  assert.equal(groups.popular(lists,'p1').length,2);
+  groups.change('a1','p1','merge','b2');assert.equal(groups.popular(lists,'p1').length,1);
+  assert.equal(groups.popular(lists,'p2').length,2);
+  assert.equal(groups.popular([{sourceId:'b',ids:['a1']}],'p2').length,0);
+  db.run("UPDATE source_entries SET enabled=0 WHERE id='a'");assert.deepEqual(groups.popular(lists,'p2').map(c=>c.id),['b2']);
+  db.run("UPDATE profiles SET kids=1 WHERE id='p2'");assert.equal(groups.popular(lists,'p2').length,0);
+}));
+test('popular limits each source to twenty candidates and returns at most ten',()=>withTmdbGroups(({groups,add})=>{
+  for(let i=0;i<22;i++)add(`a${i}`,`Title ${i}`,'a','movie');add('b','Title 21','b','movie');
+  const cards=groups.popular([{sourceId:'a',ids:Array.from({length:22},(_,i)=>`a${i}`)},{sourceId:'b',ids:['b']}],'p1');
+  assert.equal(cards.length,10);assert.equal(cards.find(c=>c.title==='Title 21')?.sourceCount,1);
+}));
