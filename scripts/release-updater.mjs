@@ -22,6 +22,22 @@ export function componentItems(current, config, platform) {
   });
 }
 
+// Configuration only: enabling downloads and selecting a quota remain admin actions.
+export function prepareDownloadStorage(config) {
+  const app = config.services.moa;
+  if (app.environment?.MOA_DOWNLOAD_ROOT) return false;
+  app.volumes ??= [];
+  if (!app.volumes.some(v => mountTarget(v) === '/downloads')) {
+    config.volumes ??= {};
+    let name = 'moa-downloads';
+    for (let n = 1; Object.hasOwn(config.volumes, name); n++) name = `moa-downloads-${n}`;
+    config.volumes[name] = {};
+    app.volumes.push({ type: 'volume', source: name, target: '/downloads' });
+  }
+  app.environment = { ...app.environment, MOA_DOWNLOAD_ROOT: '/downloads' };
+  return true;
+}
+
 /** Only the two release-owned runtime connections may change. Data mounts are retained. */
 export function componentCompose(current, existing, template, id, enabled, image) {
   const spec = COMPONENTS[id]; if (!spec || typeof enabled !== 'boolean') fail('update-request-invalid');
@@ -188,12 +204,12 @@ export class ReleaseUpdater {
       const added = transaction.target.services.filter(name => !transaction.previous.services.includes(name));
       if (added.length) await this.compose(transaction.target.compose, ['stop', '--timeout', '30', ...added]);
     }
-    await this.compose(transaction.previous.compose, ['up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '180', ...transaction.previous.services], 300000);
+    await this.compose(transaction.previous.compose, ['up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '180', ...(transaction.kind === 'storage' ? ['moa'] : transaction.previous.services)], 300000);
     await this.verify(transaction.previous.compose, transaction.previous.services);
     if (transaction.gateway) await this.compose(transaction.previous.compose, ['restart', 'moa-gateway']);
     await atomic(path.join(this.root, 'current.json'), transaction.previous); this.current = transaction.previous;
     if (transaction.kind === 'component') this.host.state.componentOperation = { ...transaction.component, state: 'rolled-back', error: 'update-rolled-back' };
-    else await this.record('rolled-back', transaction.target.version, transaction.previous.version);
+    else if (transaction.kind !== 'storage') await this.record('rolled-back', transaction.target.version, transaction.previous.version);
     await this.refreshComponents();
     await this.journal({ ...transaction, phase: 'rolled-back' });
     await this.phase('rolled-back', { current: this.current.version, error: 'update-rolled-back' });
@@ -205,7 +221,7 @@ export class ReleaseUpdater {
       if (transaction.kind === 'component' && transaction.phase !== 'cancelled') this.host.state.componentOperation = { ...transaction.component, state: transaction.phase, error: transaction.phase === 'rolled-back' ? 'update-rolled-back' : null };
       return;
     }
-    if (transaction.kind !== 'component') this.failedVersion = transaction.target.version;
+    if (!transaction.kind) this.failedVersion = transaction.target.version;
     // Never replay an interrupted installation automatically. A backward-compatible
     // deployment may restore images; database snapshots are never restored over writes.
     try {
@@ -254,21 +270,7 @@ export class ReleaseUpdater {
         existing.services[name].image = image; delete existing.services[name].build;
         existing.services[name].pull_policy = 'never';
       }
-      // Add an empty dedicated volume only; the app stays disabled until an admin sets a quota.
-      // Preserve an explicitly configured root/mount. Never put video blobs in /data backups.
-      const app = existing.services.moa;
-      if (!app.environment?.MOA_DOWNLOAD_ROOT) {
-        const mounts = app.volumes ?? [];
-        const mounted = mounts.some(v => typeof v === 'string' ? v.split(':').slice(1).includes('/downloads') : v.target === '/downloads');
-        if (!mounted) {
-          existing.volumes ??= {};
-          let name = 'moa-downloads';
-          for (let n = 1; Object.hasOwn(existing.volumes, name); n++) name = `moa-downloads-${n}`;
-          existing.volumes[name] = {};
-          app.volumes = [...mounts, { type: 'volume', source: name, target: '/downloads' }];
-        }
-        app.environment = { ...app.environment, MOA_DOWNLOAD_ROOT: '/downloads' };
-      }
+      prepareDownloadStorage(existing);
       existing.services.moa.environment = { ...existing.services.moa.environment, MOA_VERSION: m.version, MOA_DEPLOYMENT: 'release' };
       const target = { version: m.version, manifestDigest: this.candidate.digest, schemaEpoch: m.schemaEpoch, services: this.current.services, componentConnections: this.current.componentConnections, compose: path.join(targetDir, 'compose.json'), runtime: targetDir, previousRuntime: this.current.runtime };
       // existing is already interpolation-escaped on disk, preserve it as-is.
@@ -404,10 +406,61 @@ export class ReleaseUpdater {
       if (templates) await rm(templates, { recursive: true, force: true }).catch(() => {});
     }
   }
+  // v0.1.1 applies images with its old updater, then launches this runtime. Finish
+  // only that completed upgrade; never rewrite a fresh/custom install on startup.
+  async finishStorageUpgrade() {
+    if (Date.now() < (this.storageRetryAt || 0) || this.storageChecked) return;
+    const completed = await optionalJson(path.join(this.root, 'journal.json'), null);
+    if (!completed || completed.kind || completed.phase !== 'complete' ||
+        completed.target.version !== this.current.version || completed.target.compose !== this.current.compose ||
+        compare(completed.previous.version, 'v0.1.2-beta.1') >= 0 ||
+        compare(this.current.version, 'v0.1.2-beta.1') < 0) { this.storageChecked = true; return; }
+    const config = await readJson(this.current.compose);
+    if (!prepareDownloadStorage(config)) { this.storageChecked = true; return; }
+    // A new runtime starts before the application's first activity heartbeat.
+    const activity = await this.activity();
+    if (!activity || activity.busy) { this.storageRetryAt = Date.now() + 30000; return; }
+    let transaction;
+    try {
+      await this.verify(this.current.compose, this.current.services);
+      await this.phase('preflight', { error: null });
+      await this.lease(); if (this.leaseLost) fail('update-lease-lost');
+      const directory = path.join(this.root, 'configurations', randomUUID());
+      await privateDirectory(directory);
+      const target = { ...this.current, compose: path.join(directory, 'compose.json') };
+      await atomic(target.compose, config); await this.compose(target.compose, ['config', '--quiet']);
+      transaction = { kind: 'storage', phase: 'prepared', previous: this.current, target, gateway: Boolean(config.services['moa-gateway']) };
+      await this.journal(transaction);
+      await this.phase('applying');
+      await this.compose(target.compose, ['up', '-d', '--no-deps', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '180', 'moa'], 300000);
+      await this.phase('verifying'); await this.journal({ ...transaction, phase: 'verifying' });
+      await this.verify(target.compose, target.services);
+      if (transaction.gateway) await this.compose(target.compose, ['restart', 'moa-gateway']);
+      if (this.leaseLost) fail('update-lease-lost');
+      await atomic(path.join(this.root, 'current.json'), target); this.current = target;
+      await this.journal({ ...transaction, phase: 'complete' });
+      await this.phase(this.candidate ? 'available' : 'current', { error: null });
+      this.storageChecked = true;
+    } catch (error) {
+      if (transaction) {
+        this.storageChecked = true;
+        try { await this.rollback(transaction); }
+        catch { await this.phase('recovery-required', { error: 'update-recovery-required' }); }
+      } else if (error.message === 'update-app-busy') {
+        this.storageRetryAt = Date.now() + 30000;
+        await this.phase(this.candidate ? 'available' : 'current', { error: null });
+      } else {
+        this.storageChecked = true;
+        await this.phase('failed', { error: /^update-[a-z-]+$/.test(error.message) ? error.message : 'update-failed' });
+      }
+    } finally { await this.releaseLease(); }
+  }
   async tick() {
     await this.init();
     if (this.host.state.state === 'recovery-required') return;
-    // Background work only discovers releases. Applying always requires an explicit request.
+    await this.finishStorageUpgrade();
+    if (this.host.state.state === 'recovery-required') return;
+    // Apart from finishing the accepted upgrade above, background work only discovers releases. Applying always requires an explicit request.
     if (Date.now() >= this.nextCheckAt) await this.host.perform('check');
   }
 }

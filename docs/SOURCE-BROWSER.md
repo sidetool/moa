@@ -5,6 +5,8 @@ MOA's JS sources. The existing source **Connection** settings remain unchanged:
 per-source proxy (blank inherits the server proxy), and **Use browser authentication** (default off). APK requests and sources without this option keep
 their existing behavior. No browser port is published and no media relay is replaced.
 
+Release-managed installations can install this service in Settings → About → Additional features. For manual Compose configuration, use the override below.
+
 ## Session HTTP and lifecycle
 
 MOA keeps authentication cookies and the actual browser User-Agent in host memory,

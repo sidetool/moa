@@ -53,6 +53,12 @@ createServer((_req,res)=>{res.statusCode=process.env.MOA_VERSION==='v1.2.0'?503:
   await atomic(path.join(root,'current.json'),{version:'v1.0.0',schemaEpoch:1,services:['moa','moa-auth'],compose:previousCompose,runtime:path.join(root,'initial-runtime')});
   await atomic(path.join(root,'policy.json'),DEFAULT_POLICY);
   const updater=new Updater({cwd,dir,mode:'release',run}); manager=updater.release; await manager.init();
+  // Completed legacy upgrade: image is current, but the old tool left storage absent.
+  await atomic(path.join(root,'journal.json'), {phase:'complete',previous:{...manager.current,version:'v0.1.1'},target:manager.current});
+  for(let n=0;n<20 && !await manager.activity();n++) await new Promise(resolve=>setTimeout(resolve,200));
+  await manager.finishStorageUpgrade();
+  assert.equal(updater.state.state,'current',JSON.stringify(updater.state));
+  await manager.compose(manager.current.compose,['exec','-T','moa','node','-e',"if(process.env.MOA_DOWNLOAD_ROOT!=='/downloads')process.exit(1);require('node:fs').writeFileSync('/downloads/retained.txt','synthetic saved video')"]);
   const files={}; for(const file of BUNDLE_FILES) files[file]=file==='trusted-key.pem'?key:await readFile(new URL('../'+file,import.meta.url),'utf8');
   let version='v1.1.0';
   manager.feed={async releases(){return[{tag_name:version}];},async manifest(){return{manifest:{version,minimumVersion:'v1.0.0',minimumUpdaterVersion:'1.0.0',minimumComposeVersion:'2.24.0',schemaEpoch:1,rollbackSafe:true,services:Object.fromEntries(['moa','moa-auth'].map(n=>[n,{image:imageName,digest:imageDigest,platforms:[platform]}]))}};},async bundle(){return{format:1,files};}};
@@ -64,9 +70,11 @@ createServer((_req,res)=>{res.statusCode=process.env.MOA_VERSION==='v1.2.0'?503:
   assert.equal(state.current,'v1.1.0');
   assert.equal(await readFile(path.join(cwd,'data/retained.txt'),'utf8'),'synthetic persistent data');
   assert.equal(await readFile(path.join(cwd,'auth/retained.txt'),'utf8'),'synthetic authentication data');
-  console.log('PASS: isolated Docker upgrade, health failure, rollback, application/auth data preservation, maintenance acknowledgement and backup.');
+  assert.equal(await manager.compose(manager.current.compose,['exec','-T','moa','node','-e',"process.stdout.write(require('node:fs').readFileSync('/downloads/retained.txt','utf8'))"]),'synthetic saved video');
+  console.log('PASS: legacy storage handoff, isolated Docker upgrade, health failure, rollback, application/auth data preservation, maintenance acknowledgement and backup.');
 } finally {
   await manager?.releaseLease();
   await compose(['down','--remove-orphans']).catch(()=>{});
+  await run('docker',['volume','rm',`${project}_moa-downloads`]).catch(()=>{});
   await rm(cwd,{recursive:true,force:true});
 }

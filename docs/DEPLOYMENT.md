@@ -1,15 +1,15 @@
 # Docker 셀프호스팅
 
-최신 정식 **v0.1.1** 기준이다.
+최신 정식 **v0.1.2** 기준이다.
 
 Linux는 Docker Engine과 Compose 플러그인, macOS·Windows는 Docker Desktop을 설치한다. Windows는 WSL2와 Linux 컨테이너를 사용한다.
 
 ## 새 설치
 
 ```sh
-git clone --branch v0.1.1 --depth 1 https://github.com/sidetool/moa.git
+git clone --branch v0.1.2 --depth 1 https://github.com/sidetool/moa.git
 cd moa
-echo MOA_VERSION=v0.1.1 > .env
+echo MOA_VERSION=v0.1.2 > .env
 docker compose up -d
 docker compose logs moa-auth
 ```
@@ -77,31 +77,19 @@ Linux에서 `.env`의 `COMPOSE_FILE`에 콜론으로 override를 추가한다. �
 | APK 실행 환경 끄기 | `compose.no-apk.yaml` | 선택 사항, `apk` profile을 활성화하지 않음 |
 | Linux VAAPI | `compose.vaapi.yaml` | render 장치의 GID와 GPU 드라이버 |
 | Cloudflare tunnel | `compose.tunnel.yaml` | 배포자 소유 tunnel config와 credentials |
-| 웹에서 서버 업데이트 | `compose.updates.yaml` | 호스트 업데이트 도구와 상태 디렉터리 연결, [설정 안내](UPDATES.md) |
+| 기존 호스트 업데이터 연결 | `compose.updates.yaml` | 기존 호스트 도구와 상태 디렉터리 유지, [설정 안내](UPDATES.md) |
 
-### APK 기본 구성과 기존 설치
+### APK와 브라우저 인증
 
-APK worker는 기본 compose에 포함된다. 새 설치에는 `.env` 수정이나 token 파일 생성이 필요 없다. worker가 `moa-apk-secret` volume의 token을 원자적으로 생성하고 건강 상태가 확인된 뒤 앱이 시작한다. token은 UID 10001 / GID 1000, mode 0640이며 앱에는 읽기 전용이다. JVM과 Chromium은 요청이 있을 때만 시작하며, 비활성 JVM은 기본 10분 뒤 종료된다(재생 중인 worker 제외). 컨테이너는 기존 메모리 1 GiB, CPU 2개, PID 192개 제한과 읽기 전용 루트·capability 제거를 유지한다. 호스트 포트는 없다. 격리된 새 설치에서 측정한 유휴 RSS는 컨테이너 내 프로세스 합계 약 67.8 MiB(Node 약 64.5 MiB)였으며 JVM·Chromium은 실행되지 않았다. 설치된 확장이 없는 상태의 측정이고, 사용 중 메모리·공유 페이지·호스트에 따라 달라진다.
+새 설치에는 JS 확장·로컬 재생과 웹 업데이터가 기본 포함된다. APK 확장과 브라우저 인증은 설정 → 정보 → 추가 기능에서 설치한다. 사용 중지는 접힌 관리 메뉴에 있으며 데이터는 남는다. 브라우저 인증은 AMD64만 지원한다.
 
-`moa-apk-data`는 기존과 같은 named volume이다. Compose 프로젝트가 `moa`이면 **`moa_moa-apk-data`를 그대로 사용**한다. 설치된 패키지, 변환 캐시와 worker 상태를 다른 volume으로 옮기지 않는다. 이번 변경은 Java 도구·fingerprint 계산·변환기를 바꾸지 않으므로 재설치나 reprepare가 필요 없다.
+기존 APK 연결·volume·token은 유지한다. `compose.aniyomi.yaml`을 쓰던 설치도 기존 overlay와 token 경로를 그대로 사용한다. 웹 업데이터를 사용하지 않으면 APK는 `compose.apk.yaml`, 브라우저 인증은 `compose.source-browser.yaml`을 추가한다.
 
-**기존 production 설정은 변경하지 않아도 된다.** `COMPOSE_FILE=compose.yaml:compose.aniyomi.yaml:compose.vaapi.yaml:compose.tunnel.yaml`과 `MOA_APK_TOKEN_FILE=./data/apk-config/token`을 그대로 유지한다. 호환 overlay는 앱과 worker가 기존 `/run/secrets/apk-token`을 사용하게 하고 자동 생성을 끈다. 기존 token의 UID/ACL·프로젝트 이름·APK volume·`MOA_DATA_PATH`, `MOA_AUTH_DATA_PATH`, `MOA_AUTH_CONFIG_PATH` 등 기존 bind 설정을 보존한다. 새 기본 secret volume이 추가되지만 이 호환 모드에서는 token을 생성하거나 교체하지 않는다. 기존 overlay를 제거할 필요가 없다. 정상 업그레이드에서 `down -v`를 사용하지 않는다.
+### 다운로드·쇼츠·우회
 
-새 token 저장소를 bind로 관리할 때만 `MOA_APK_SECRET_PATH=./data/apk-secret`를 추가하고 새 경로를 준비한다:
-
-```sh
-sudo install -d -o 10001 -g 1000 -m 2750 data/apk-secret
-```
-
-setgid 디렉터리가 새 token에 앱의 그룹 1000을 상속한다. 기존 token 파일을 이 경로로 옮기거나 token 값을 출력하지 않는다. 기본 named volume에는 수동 권한 작업이 없다. 자동 token은 재시작·이미지 교체 시 유지되므로 이 volume도 비공개 백업에 포함한다.
-
-저메모리 호스트에서 APK를 끄려면:
-
-```sh
-docker compose -f compose.yaml -f compose.no-apk.yaml up -d
-```
-
-또는 `.env`에 `COMPOSE_FILE=compose.yaml:compose.no-apk.yaml`을 설정한다. `apk` profile은 활성화하지 않는다. 앱의 APK 설정을 비우고 worker를 비활성 profile로 제외한다. 기존에 worker가 실행 중이었다면 같은 프로젝트에서 `docker compose -f compose.yaml stop moa-apk`로 먼저 중지한다. 의존성이 비활성이라는 Compose 경고는 정상이며 앱은 시작한다. APK 데이터와 설치 목록은 삭제되지 않는다. JS 확장과 로컬 미디어는 계속 사용할 수 있다. 다시 사용하려면 override를 빼고 `up -d`한다.
+- **서버 다운로드**: 기본 `/downloads` volume이 연결된다. 설정 → 서버 관리 → 서버 다운로드에서 한도를 지정하고 켠다. 호스트 폴더를 쓰려면 최초 설치 전에 `MOA_DOWNLOAD_PATH`를 지정하고 UID 1000의 쓰기를 허용한다. 기기 오프라인 저장은 지원하지 않는다.
+- **쇼츠**: TMDB 연결 후 실험 기능에서 켠다. 직접 재생 도구는 앱 이미지에 포함된다. YouTube API 키는 선택 사항이며 영상·지역에 따라 재생이 제한될 수 있다.
+- **ByeDPI**: 소스 연결에서 켜면 기본 프록시로 유지된다. 끄면 이전 수동 프록시 또는 직접 연결로 돌아간다. 확장별 프록시가 우선한다.
 
 VAAPI는 `COMPOSE_FILE`에 `:compose.vaapi.yaml`을 추가하고 `stat -c %g /dev/dri/renderD128`로 확인한 GID를 `MOA_RENDER_GID`에 넣는다. `MOA_VAAPI_DEVICE`, `MOA_DRI_PATH`, 필요하면 `LIBVA_DRIVER_NAME`을 설정한다. GPU가 없으면 기본 구성의 소프트웨어 처리를 사용한다.
 
@@ -113,28 +101,14 @@ TMDB 키는 관리자 API `PATCH /api/admin/tmdb/config`로 DB에 저장할 수 
 
 기본 outbound proxy는 앱의 설정 → 소스 연결에서 관리한다. 빈 값은 직접 연결이고 HTTP(S) CONNECT와 SOCKS5를 지원한다. 기존 proxy 설정은 앱 SQLite에 저장되므로 데이터 디렉터리를 보존한다. Gemini·OpenAI 및 호환 API의 키도 관리자 화면에서 관리하며 관련 비밀 파일은 `/data`에 저장한다. 번역은 자막과 문맥을 설정한 API로 보내며 제공자에 따라 비용이 발생할 수 있다.
 
-업그레이드 전 앱·인증 DB, `.env`, `deploy/local`, APK named volume과 token을 비공개로 백업한다. SQLite 파일은 일관된 backup API를 쓰거나 서비스를 멈춘 상태에서 복사하고 WAL/SHM도 고려한다. 미디어는 별도로 보존한다. 기존 설치의 `MEDIA_CONTAINER_PATH`를 바꾸면 DB에 저장된 로컬 경로가 달라질 수 있다. 개발 이미지는 main의 `edge`, 정식 릴리스는 `stable`/`latest`와 버전 태그(예: `v1.0.0`)로 배포한다. 정식/베타 채널과 자동 업데이트 설치는 [업데이트 안내](UPDATES.md#정식베타-릴리스-설치)를 참고한다. `.env`의 `MOA_VERSION`으로 네 이미지의 버전을 함께 고정할 수 있다. 최초 GHCR 발행 후 각 패키지의 공개 접근 권한을 확인해야 한다. 공개 이미지가 없는 브랜치는 다음 명령으로 직접 빌드해 실행한다.
+업그레이드 전 앱·인증 DB, `.env`, `deploy/local`, APK named volume과 token을 비공개로 백업한다. SQLite 파일은 일관된 backup API를 쓰거나 서비스를 멈춘 상태에서 복사하고 WAL/SHM도 고려한다. 미디어는 별도로 보존한다. 기존 설치의 `MEDIA_CONTAINER_PATH`를 바꾸면 DB에 저장된 로컬 경로가 달라질 수 있다. 개발 이미지는 main의 `edge`, 정식 릴리스는 `stable`/`latest`와 버전 태그(예: `v1.0.0`)로 배포한다. 정식/베타 채널과 웹 수동 업데이트는 [업데이트 안내](UPDATES.md)를 참고한다. `.env`의 `MOA_VERSION`으로 관련 이미지의 버전을 함께 고정할 수 있다. 최초 GHCR 발행 후 각 패키지의 공개 접근 권한을 확인해야 한다. 공개 이미지가 없는 브랜치는 다음 명령으로 직접 빌드해 실행한다.
 
 ```sh
 MOA_REVISION=$(git rev-parse HEAD) docker compose build
 docker compose up -d --pull never
 ```
 
-설치 후 호스트에 Node.js 22 이상을 준비하면 업데이트 도구를 사용할 수 있다.
-
-```sh
-node scripts/update.mjs check
-node scripts/update.mjs apply
-```
-
-업데이트 도구는 현재 Git 추적 브랜치와 Docker 실행 여부를 확인한다. 웹에서 실행하려면 [업데이트 안내](UPDATES.md)에 따라 호스트 도구를 연결한다. 기본 이미지 소유자는 `sidetool`이며 `MOA_IMAGE_OWNER`로 변경할 수 있다. workflow는 main push와 `v*` 태그에서 해당 저장소 소유자의 앱·인증·APK·connector 이미지를 amd64/arm64로 빌드한다. 로컬 빌드 검증과 ARM 실제 기기 검증은 별개다. 백업·운영 측정 결과를 공개 저장소에 추가하지 않는다.
-
-
-## APK 기본 포함 변경의 검증
-
-서버 160, extensions 17, subtitles 88, skip-markers 18, 인증·gateway·connector·worker Node 54개로 총 337개 테스트가 통과했다. workspace typecheck와 웹 build, 앱·인증·APK·connector 이미지의 로컬 build가 통과했다. `.env` 없는 기본 구성, 기존 네 overlay와 token 파일을 유지한 합성 production 구성, APK 비활성 override의 compose 검증도 통과했다.
-
-별도 프로젝트의 기본 compose와 새 volume으로 setup → 로그인 → gateway `/api/me` → `/api/admin/apk/status`의 `available=true`를 확인했다. 앱 bridge에서 worker에 전달한 작은 로컬 fixture index의 파싱, token UID/GID/mode, worker 재시작 후 기존 token 재사용도 확인했다. 외부 저장소·APK를 다운로드하지 않았고 JVM을 시작하지 않았다. 테스트 stack은 `down -v`로 제거했다. production 설정·데이터·배포는 변경하지 않았다.
+새 설치는 설정 → 정보에서 업데이트를 확인하고 설치한다. 확인은 주기적으로 하지만 설치는 사용자가 요청할 때만 진행한다. 업데이터 컨테이너에만 Docker socket이 연결되며 앱에는 연결하지 않는다. 기존 호스트 업데이터는 그대로 사용한다([업데이트 안내](UPDATES.md)).
 
 ## 다중 아키텍처 이미지 빌드
 
