@@ -464,3 +464,10 @@ ID, 현재 작품, 지원 공급자, 목록 수와 이미지 URL을 검증해 �
 릴리스 설치는 생성된 Compose 설정을 보존하므로 `.env`만 고쳐서는 실행 중 컨테이너의 환경변수가 바뀌지 않을 수 있습니다. 관리 중인 실제 배포 설정에 변수를 전달한 뒤 컨테이너를 갱신해야 합니다. 이 개발 작업은 운영 설정을 변경하지 않았습니다. 키가 없으면 뉴스 기능은 기존 TMDB 설정으로 동작하고 박스오피스만 미설정으로 표시됩니다.
 
 공식 계약: [KOBIS 일별](https://www.kobis.or.kr/kobisopenapi/homepg/apiservice/searchServiceDesc.do?apiSvcId=searchDailyBoxOffice) · [주간](https://www.kobis.or.kr/kobisopenapi/homepg/apiservice/searchServiceDesc.do?apiSvcId=searchWeeklyBoxOffice) · [TMDB TV 상세](https://developer.themoviedb.org/reference/tv-series-details).
+### 개발 중: 작품 리뷰 (`title.reviews`)
+
+현재 리뷰 작업 브랜치에서만 지원하며 배포 버전은 미확정이다. `reviews.read` 권한과 `title.reviews` hook을 선언한 API 2 플러그인은 `moa.reviews.list(provider, selection?)`를 호출한다. 현재 provider는 `tmdb`, `anilist`이며 API 이름은 특정 공급자에 묶이지 않는다. 호스트가 현재 상세 페이지에서 작품을 결정하며 임의 쿼리/URL/키는 받지 않는다.
+
+Hook 입력은 `{mediaId, provider, selection?}`, 응답은 shared의 `ReviewResponse`다. `selection`은 AniList 후보 ID 문자열이며 서버가 해당 작품에 대해 반환한 후보에 있어야 한다. 선택하지 않았거나 후보에 없는 ID면 `select` 상태와 후보 목록이 반환된다. 임의 첫 항목을 자동 선택하지 않는다.
+
+호스트가 네이티브 리뷰 UI와 외부 링크를 렌더링하고 응답을 검증한다. 기존 플러그인은 새 기능을 선언하지 않으면 영향이 없다. 상태는 ready/select/unconfigured/unlinked/restricted/unavailable이며, ready+빈 목록은 리뷰 없음, select+빈 후보는 작품 검색 결과 없음이다. 평점 통합/국적 판별/원문 전체 저장은 제공하지 않는다. 설정·실측·한도·번역의 한계는 `plugins/title-reviews/README.md` 참조.

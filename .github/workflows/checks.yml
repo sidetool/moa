@@ -33,7 +33,7 @@ jobs:
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Plugin history, discovery and people contracts
         run: |
-          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/website-plugins.test.ts
+          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/website-plugins.test.ts
           node --test plugins/title-people/test/plugin.test.mjs
       - run: pnpm --filter @moa/web build
       - name: Isolated Docker update and rollback

@@ -1,3 +1,4 @@
+import { registerReviewHook } from '../lib/review-hooks';
 import { registerPeopleHook } from '../lib/people-hooks';
 import { Puzzle, Upload, X } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState, type CSSProperties } from 'react';
@@ -16,7 +17,7 @@ const usePlugins = () => {
 const catalogQueries = ['home', 'media', 'media-list', 'search', 'watchlist', 'source-page', 'source-browse', 'tab-source', 'tab-source-latest', 'grouped-cards'];
 const path = (id: string) => `/plugins/${encodeURIComponent(id)}`;
 const runtimePath = (id: string) => `/plugin-runtime/${encodeURIComponent(id)}`;
-const permissionLabels = { 'boxoffice.read':'국내 극장 박스오피스 읽기', 'schedule.read':'한국 개봉·방영 일정 읽기', 'watchlist.read': '현재 프로필의 내 목록 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
+const permissionLabels = { 'reviews.read':'현재 작품의 공개 리뷰·애니 후보 읽기', 'boxoffice.read':'국내 극장 박스오피스 읽기', 'schedule.read':'한국 개봉·방영 일정 읽기', 'watchlist.read': '현재 프로필의 내 목록 읽기', 'history.read': '현재 프로필의 시청 기록 읽기', 'metadata.read': '작품의 출연진·제작진과 참여 작품 읽기', 'discovery.read': '인기 영화·TV 목록 읽기', 'app.context': '현재 페이지 읽기·변경 감지', 'app.navigate': 'MOA 내 페이지 이동', ui: '플러그인 도구 화면 표시', 'player.context': '현재 작품·회차·재생 위치 읽기', 'player.control': '재생·일시정지·탐색', 'subtitles.import': '자막 가져오기·서버 저장', storage: '프로필별 데이터 저장', notifications: '알림 표시', 'catalog.modify': '작품 제목·소개·장르·배지 표시 변경' };
 type Player = { episodeId: string; title: string; getTime: () => number; onImport: (files: File[]) => Promise<boolean>; control: (action: string, seconds?: number) => Promise<void> };
 const act = (pluginId: string, actionId?: string) => window.dispatchEvent(new CustomEvent('moa:plugin-action', { detail: { pluginId, actionId } }));
 const sdk = `
@@ -55,7 +56,7 @@ const sdk = `
   };
   window.moa = Object.freeze({
     hooks: Object.freeze({ register: (name, handler) => {
-      if (!['catalog.transform','title.people'].includes(name) || typeof handler !== 'function') throw new Error('Unknown hook or invalid handler');
+      if (!['catalog.transform','title.people','title.reviews'].includes(name) || typeof handler !== 'function') throw new Error('Unknown hook or invalid handler');
       hooks.set(name, handler); return call('hooks.register', name);
     } }),
     on: (event, listener) => {
@@ -70,6 +71,7 @@ const sdk = `
     player: Object.freeze({ play: () => call('player.control', { action: 'play' }), pause: () => call('player.control', { action: 'pause' }), seek: seconds => call('player.control', { action: 'seek', seconds }) }),
     watchlist: Object.freeze({ news: () => call('watchlist.news', {}), list: query => call('watchlist.read', query || {}) }),
     history: Object.freeze({ list: query => call('history.read', query || {}) }),
+    reviews: Object.freeze({ list: (provider, selection) => call('reviews.list', {provider: provider || 'tmdb', ...(selection === undefined ? {} : {selection})}) }),
     metadata: Object.freeze({ credits: () => call('metadata.credits'), person: identity => call('metadata.person', identity) }),
     discovery: Object.freeze({ boxOffice: query => call('discovery.boxoffice',query), trending: query => call('discovery.trending', query), schedule: query => call('discovery.schedule',query) }),
     storage: Object.freeze({ get: () => call('storage'), set: value => call('storage', value) }),
@@ -94,9 +96,10 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
   const available = installedPlugins.data?.some(item => item.id === plugin.id && item.enabled && item.revision === plugin.revision) ?? false;
   const granted = useRef(available); granted.current = available;
   const dialog = useRef<HTMLDialogElement>(null), port = useRef<MessagePort | null>(null);
+  const unregisterReviews = useRef<(() => void) | null>(null);
   const unregisterPeople = useRef<(() => void) | null>(null);
   const unregister = useRef<(() => void) | null>(null);
-  const clearHook = () => { unregisterPeople.current?.(); unregisterPeople.current = null; if (!unregister.current) return; unregister.current(); unregister.current = null; void client.invalidateQueries({ predicate: query => catalogQueries.includes(String(query.queryKey[0])) }); };
+  const clearHook = () => { unregisterReviews.current?.(); unregisterReviews.current = null; unregisterPeople.current?.(); unregisterPeople.current = null; if (!unregister.current) return; unregister.current(); unregister.current = null; void client.invalidateQueries({ predicate: query => catalogQueries.includes(String(query.queryKey[0])) }); };
   const hookCalls = useRef(new Map<string, (data: { result?: unknown; error?: string }) => void>());
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [dismissed, setDismissed] = useState(false);
   const [uiOpen, setUiOpen] = useState(inline || plugin.kind === 'html');
@@ -184,6 +187,30 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
               return answer;
             }
           });
+        } else if (data.method === 'hooks.register' && data.value === 'title.reviews' && installed.hooks?.includes('title.reviews') && installed.permissions.includes('reviews.read')) {
+          if (!unregisterReviews.current) unregisterReviews.current = registerReviewHook(plugin.id, {
+            profile: session.current!, name: plugin.name,
+            run: async (value, signal) => {
+              const pathname = page.current.pathname, match = /^\/title\/([^/]+)\/?$/.exec(pathname);
+              if (!match || decodeURIComponent(match[1]) !== value.mediaId) throw new Error('Title changed');
+              const enabled = (await api<WebsitePluginRuntime[]>('/plugin-runtime', {signal})).find(item => item.id === plugin.id && item.revision === plugin.revision && item.permissions.includes('reviews.read') && item.hooks?.includes('title.reviews'));
+              if (!canSend() || !enabled || signal.aborted) throw new Error('Plugin unavailable');
+              const answer = await new Promise((resolve, reject) => {
+                const id = crypto.randomUUID();
+                const cancel = () => finish({error:'Request cancelled'});
+                const finish = (response: {result?:unknown;error?:string}) => {
+                  hookCalls.current.delete(id); signal.removeEventListener('abort',cancel);
+                  if (response.error || !canSend() || page.current.pathname !== pathname) reject(new Error(response.error || 'Plugin unavailable'));
+                  else resolve(response.result);
+                };
+                signal.addEventListener('abort',cancel,{once:true}); hookCalls.current.set(id,finish);
+                channel.port1.postMessage({id,hook:'title.reviews',value});
+              });
+              const stillEnabled = (await api<WebsitePluginRuntime[]>('/plugin-runtime', {signal})).some(item => item.id === plugin.id && item.revision === plugin.revision && item.permissions.includes('reviews.read') && item.hooks?.includes('title.reviews'));
+              if (!stillEnabled || !canSend() || signal.aborted || page.current.pathname !== pathname) throw new Error('Plugin unavailable');
+              return answer;
+            }
+          });
         } else if (data.method === 'fetch') {
           if (typeof data.value?.url !== 'string' || data.value.url.length > 2048) throw new Error('주소를 확인해 주세요.');
           result = await api(`${runtimePath(plugin.id)}/request`, { method: 'POST', body: { url: data.value.url, revision: plugin.revision } });
@@ -194,6 +221,11 @@ function PluginWindow({ plugin, player, inline = false, onClose }: { plugin: Web
           const action = data.method === 'metadata.credits' ? 'credits' : 'person';
           result = await api(`${runtimePath(plugin.id)}/metadata/${action}`, {method:'POST',body:{revision:plugin.revision,mediaId,...(action === 'person' ? {person:data.value} : {})}});
           if (page.current.pathname !== pathname) throw new Error('작품이 변경되었어요. 다시 열어 주세요.');
+        } else if (data.method === 'reviews.list' && installed.permissions.includes('reviews.read')) {
+          const pathname=page.current.pathname,match=/^\/title\/([^/]+)\/?$/.exec(pathname);
+          if(!match||!['tmdb','anilist'].includes(data.value?.provider))throw new Error('리뷰 요청을 확인해 주세요.');
+          result=await api(`${runtimePath(plugin.id)}/reviews`,{method:'POST',body:{revision:plugin.revision,mediaId:decodeURIComponent(match[1]),provider:data.value.provider,...(data.value.selection===undefined?{}:{selection:data.value.selection})}});
+          if(page.current.pathname!==pathname)throw new Error('작품이 변경되었어요.');
         } else if (data.method === 'discovery.trending' && installed.permissions.includes('discovery.read')) {
           result = await api(`${runtimePath(plugin.id)}/discovery/trending`, { method: 'POST', body: { revision: plugin.revision, query: data.value } });
         } else if (data.method === 'watchlist.news' && installed.permissions.includes('watchlist.read') && installed.permissions.includes('schedule.read')) {

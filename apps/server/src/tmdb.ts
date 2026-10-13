@@ -157,6 +157,16 @@ export class Tmdb {
     if (!row || !['movie','tv'].includes(row.kind) || !Number.isSafeInteger(row.tmdb_id) || row.tmdb_id <= 0) return null;
     return {mediaId,provider:this.providerId,kind:row.kind,id:String(row.tmdb_id),name:row.title,scope:row.kind === 'tv' ? 'series' : 'movie'};
   }
+  async reviewItems(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').ReviewItem[]> {
+    if (!this.enabled || title.provider !== 'tmdb' || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new Error('invalid-review-title');
+    let data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'ko-KR',page:'1'});
+    if (Array.isArray(data?.results) && !data.results.length) data = await this.get(`/${title.kind}/${title.id}/reviews`, {language:'en-US',page:'1'});
+    if (!Array.isArray(data?.results)) throw new Error('invalid-reviews');
+    return data.results.slice(0,8).flatMap((r:any) => {
+      if (typeof r.url !== 'string' || !/^https:\/\/(?:www\.)?themoviedb\.org\/review\/[a-zA-Z0-9]+$/.test(r.url) || typeof r.content !== 'string') return [];
+      return [{title:'사용자 리뷰',excerpt:r.content.slice(0,600),author:typeof r.author==='string'?r.author.slice(0,100):'',date:typeof r.created_at==='string'?r.created_at.slice(0,40):'',url:r.url,kind:'review' as const,language:'unknown' as const}];
+    });
+  }
   async peopleCredits(title: import('@moa/shared').LinkedPluginTitle) {
     if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
     if (title.provider !== this.providerId || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new ApiFailure(400, 'invalid-metadata-identity');
