@@ -70,14 +70,14 @@ try {
         if (lifecycle === 'pause') await page.locator('video').evaluate(v => v.pause());
         if (lifecycle === 'buffer') {
           // Exercise the media event sequence that used to cancel/restart the dismissal timer.
-          for (let i = 0; i < 7; i++) {
+          for (let i = 0; i < 5; i++) {
             await page.locator('video').evaluate(v => v.dispatchEvent(new Event('waiting')));
             await page.waitForTimeout(450);
             await page.locator('video').evaluate(v => v.dispatchEvent(new Event('playing')));
             await page.waitForTimeout(450);
           }
-        } else await page.waitForTimeout(6300);
-        assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, `${mode}: ${lifecycle} must not keep resetting the seven-second deadline`);
+        } else await page.waitForTimeout(4500);
+        assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, `${mode}: ${lifecycle} must not keep resetting the five-second deadline`);
         await page.locator('video').evaluate(async v => { await v.play(); v.dispatchEvent(new Event('playing')); });
         await page.waitForTimeout(300);
         assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0, 'a later playing event must not reopen the prompt');

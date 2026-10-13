@@ -668,7 +668,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     // must not cancel or extend a prompt that is already counting down.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const dismissAfterPlaybackStarts = () => {
-      timer ??= setTimeout(() => setResumeChip(false), 7000);
+      timer ??= setTimeout(() => setResumeChip(false), 5000);
     };
     v.addEventListener("playing", dismissAfterPlaybackStarts);
     if (!v.paused && v.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) dismissAfterPlaybackStarts();
