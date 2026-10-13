@@ -76,7 +76,8 @@ COPY LICENSES ./LICENSES
 COPY docs/THIRD-PARTY-SOURCES.md ./docs/THIRD-PARTY-SOURCES.md
 ENV NODE_ENV=production MOA_DEPLOYMENT=docker MOA_DATA_DIR=/data MOA_MEDIA_ROOT=/media MOA_WEB_DIR=/app/web \
     MOA_FFMPEG=/usr/lib/jellyfin-ffmpeg/ffmpeg MOA_FFPROBE=/usr/lib/jellyfin-ffmpeg/ffprobe \
-    MOA_7ZIP=/usr/bin/7zz MOA_SHORTS_EXTRACTOR=/usr/local/bin/yt-dlp MOA_BYEDPI_BINARY=/usr/local/bin/ciadpi LIBVA_DRIVERS_PATH=/usr/lib/jellyfin-ffmpeg/lib/dri
+    MOA_7ZIP=/usr/bin/7zz MOA_SHORTS_EXTRACTOR=/usr/local/bin/yt-dlp MOA_BYEDPI_BINARY=/usr/local/bin/ciadpi \
+    MOA_BYEDPI_BIND=0.0.0.0 MOA_BYEDPI_PROXY=socks5://moa:1080 LIBVA_DRIVERS_PATH=/usr/lib/jellyfin-ffmpeg/lib/dri
 EXPOSE 8795
 # Seed ownership for a fresh anonymous/named download volume.
 RUN mkdir -p /downloads && chown node:node /downloads
