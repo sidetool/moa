@@ -6,7 +6,7 @@ Compose mounts a dedicated `/downloads` volume, separate from `/data` (updater b
 
 Fresh release installations inherit this mount. The new updater preserves existing mounts and adds an empty dedicated volume when missing, without setting a quota. An older updater applying this release may preserve its old compose instead: in that case add the `/downloads` mount and `MOA_DOWNLOAD_ROOT=/downloads` once to the installation's active compose file, then recreate MOA with the same image. The next updater preserves that mount. No implicit relocation of existing media/data occurs.
 
-Administrators click a movie or episode download button once; the server immediately queues it and selects quality during extraction. The global download-quality setting defaults to 1080p and offers best/1080p/720p/480p. It chooses the highest known resolution at or below the preference, or the lowest available resolution if none fit. If no resolution is known, it uses the source default. Equal resolutions retain source order. HLS master variants follow the same preference. The preference is captured for each new job; changing it does not alter already queued jobs. The older token/choice API remains available for compatible clients. One transfer runs at a time, up to eight queue entries. One-click jobs acquire/renew an APK lease only while the job runs and release it on completion or interruption. Legacy explicit choices still release their initial lease and reacquire it for transfer. Jobs never persist signed URLs or cookies. Cancel, failure, and server shutdown release workers.
+Administrators click a movie or episode download button once; the server immediately queues it and selects quality during extraction. The global download-quality setting defaults to 1080p and offers best/1080p/720p/480p. It chooses the highest known resolution at or below the preference, or the lowest available resolution if none fit. If no resolution is known, it uses the source default. Equal resolutions retain source order. HLS master variants follow the same preference. The preference is captured for each new job; changing it does not alter already queued jobs. The older token/choice API remains available for compatible clients. One transfer runs at a time, up to 500 persistent queue entries. One-click jobs acquire/renew an APK lease only while the job runs and release it on completion or interruption. Legacy explicit choices still release their initial lease and reacquire it for transfer. Jobs never persist signed URLs or cookies. Cancel, failure, and server shutdown release workers.
 
 Supported: finite HTTPS MP4, finite ordinary HLS, master variants with default audio, AES-128 HLS. Downloaded HLS is remuxed with codec copy. Source policies and per-source proxy apply to every upstream request; ffmpeg only sees local files. DRM/SAMPLE-AES, live, DASH, EDL, inline playlists, separate extension audio arrays and ambiguous legacy explicit-choice matches are not supported for saving in this version. Playback support is unchanged. Some unusual HLS directives are rejected explicitly. External VTT/SRT/ASS sidecars are best-effort (up to eight); unavailable sidecars produce a warning without failing an otherwise valid video. HLS segmented subtitles are not included in the initial implementation.
 
@@ -14,9 +14,9 @@ The capacity includes staging/remux overhead. A job is limited to 20 GiB and six
 
 Saved playback uses the same episode and history. Auto playback resolves the saved file first, without requesting the source site. Original-source playback remains selectable. Saved copies and in-progress requests prevent destructive source removal. Deleting an idle copy preserves the title, history and watchlist; playing copies cannot be deleted.
 
-An update request stops the queue and interrupts the active job before handing control to the host updater. Interrupted jobs require manual retry after restart. Video blobs stay out of the data backup. Keep a separate backup if needed. Startup removes known abandoned partial directories but retains unknown completed files after metadata rollback; an administrator must inspect orphaned `job-*` directories rather than silently losing saved videos. Missing mounted storage retains asset metadata and reports an unavailable state.
+An update request stops the queue and interrupts the active job before handing control to the host updater. Interrupted active jobs require manual retry after restart; untouched queued jobs resume after the maintenance lease ends. Video blobs stay out of the data backup. Keep a separate backup if needed. Startup removes known abandoned partial directories but retains unknown completed files after metadata rollback; an administrator must inspect orphaned `job-*` directories rather than silently losing saved videos. Missing mounted storage retains asset metadata and reports an unavailable state.
 
-To block new saves while keeping stored playback, set `MOA_DOWNLOADS_ENABLED=0` in the application environment and restart. Keep the storage mount. Existing saved videos and history are retained; restarting interrupts queued/active work without automatic retry.
+To block new saves while keeping stored playback, set `MOA_DOWNLOADS_ENABLED=0` in the application environment and restart. Keep the storage mount. Existing saved videos and history are retained; the environment prohibition keeps queued work dormant, and active work is interrupted without automatic retry. Turning the feature off in the web settings interrupts both active and queued jobs.
 
 
 The management list groups by the stored title ID rather than its name; identically named titles from different sources are not implicitly merged. List pages use a stable creation-time/ID cursor, so progress updates and deletion of a page boundary do not hide older jobs. The API supports filtering by `mediaId` for title-detail status. A selection acts on loaded entries, not unseen pages. Each deletion uses the same server-side active-playback and opening-session checks; a mixed result must retain and identify failed entries. Removing a saved copy never removes watch history or the title.
@@ -32,3 +32,25 @@ The persistent `downloadEnabled` setting requires a separate administrator opt-i
 Turning it off interrupts active and queued transfers without deleting completed files or viewing history. Re-enabling does not silently restart interrupted jobs. Existing saved playback and deletion remain available; title-page download controls are hidden while disabled. The settings entry remains visible so an administrator can configure the feature and manage existing copies.
 
 The UI distinguishes initial request/queue/extraction/transfer/finalization/completion/failure. MP4 Content-Length supplies the known transfer total; HLS without a trustworthy total uses indeterminate progress and received bytes rather than an invented percentage. The normal per-item deletion and playback guards are unchanged.
+
+## Whole-season download
+
+The episode header provides a whole-season button for administrators when saving is enabled.
+There is no episode selection mode. The confirmation previews currently eligible episodes;
+one POST queues the currently selected season, or the title when it has no season split.
+It never follows franchise links into another title or source. Saved and active episodes are skipped.
+The server rechecks scope and eligibility in a transaction after checking storage. Concurrent or repeated
+requests cannot duplicate live jobs. An all-skipped request succeeds with `added: 0`.
+The global queue limit is 500 waiting episodes; a request exceeding it is rejected as a whole.
+Episodes run in season/episode order, with insertion order breaking creation-time ties.
+The selected global quality is captured once for the batch, and source URLs are resolved only on execution.
+
+Queued work survives application restarts; an in-progress job is interrupted and requires manual retry.
+Startup waits for the update-maintenance lease before starting the queue. Low disk space, quota exhaustion
+or unavailable storage interrupts the remaining queue so hundreds of doomed extractions are not attempted.
+Disabling downloads also interrupts the queue; saved playback remains available.
+
+API (administrator plus current owned/unlocked profile):
+- `GET /api/admin/downloads/batch?mediaId=...&season=1` → `{total, eligible, skipped}`.
+- `POST /api/admin/downloads/batch` with `{mediaId, season?}` → `{total, added, skipped}`.
+The POST recomputes its counts; the GET is a preview, not a reservation.

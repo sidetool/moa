@@ -203,7 +203,7 @@ test('saved deletion guards opening sessions, escaped assets, symlinks and overl
   cfg.downloadRoot = cfg.dataDir; assert.equal((await downloads.status()).reason, 'download-storage-overlap');
 });
 
-test('startup interrupts queued work, cleans known partials, preserves unknown files and reconciles missing assets', async t => {
+test('startup preserves queued work, cleans known partials, preserves unknown files and reconciles missing assets', async t => {
   const { db, cfg, downloads } = await fixture(t, async url => ({ url, response: incoming('bytes') }));
   const id = await saved(db, cfg.downloadRoot!);
   await rm(path.join(cfg.downloadRoot!, `job-${id}`, 'video.mp4'));
@@ -216,7 +216,7 @@ test('startup interrupts queued work, cleans known partials, preserves unknown f
   await writeFile(path.join(cfg.downloadRoot!, untracked, 'video.mp4'), 'preserve after metadata restore');
   await mkdir(path.join(cfg.downloadRoot!, 'keep-this-folder'));
   await downloads.initialize();
-  assert.equal(db.get('SELECT state FROM download_jobs WHERE id=?', queued)!.state, 'interrupted');
+  assert.equal(db.get('SELECT state FROM download_jobs WHERE id=?', queued)!.state, 'queued');
   assert.equal(db.get('SELECT error FROM download_jobs WHERE id=?', id)!.error, 'download-file-missing');
   assert.equal(db.get('SELECT 1 FROM download_assets'), undefined);
   assert.ok(!(await readdir(cfg.downloadRoot!)).includes(partial)); assert.ok((await readdir(cfg.downloadRoot!)).includes('keep-this-folder'));
@@ -445,4 +445,47 @@ test('parallel HLS cancellation settles all three transfers before returning',as
     await new Promise(r=>setTimeout(r,30));active--;return {url,response:incoming('fragment')};
   },abort.signal,async()=>{},()=>assert.fail('must not finalize')),{name:'AbortError'});
   assert.equal(active,0);assert.equal(calls,3);
+});
+
+test('season batch skips live/saved jobs, preserves episode order and is idempotent across concurrent submissions',async t=>{
+  const f=await fixture(t,async url=>({url,response:incoming('bytes')}));
+  // Hold the real pump at its boundary, without changing enqueue/transaction behavior.
+  f.downloads.start(()=>false);
+  await saved(f.db,f.cfg.downloadRoot!);
+  for(let n=2;n<=14;n++){
+    const id=`ep-${n}`;f.db.run("INSERT INTO episodes VALUES(?,'m',?,?,?,1200,NULL)",id,n===14?2:1,n,`Episode ${n}`);
+    f.db.run('INSERT INTO source_episodes VALUES(?,?)',id,`/episode-${n}`);
+  }
+  await f.downloads.configureSettings({quality:'480p'});
+  assert.deepEqual(f.downloads.previewBatch('m','viewer',1),{total:13,eligible:12,skipped:1});
+  const results=await Promise.all([f.downloads.createBatch('m','viewer',1),f.downloads.createBatch('m','viewer',1)]);
+  assert.deepEqual(results.map(r=>r.added).sort((a,b)=>a-b),[0,12]);
+  const queued=f.db.all("SELECT episode_id,selection FROM download_jobs WHERE state='queued' ORDER BY created_at,rowid");
+  assert.deepEqual(queued.map(r=>r.episode_id),Array.from({length:12},(_,i)=>`ep-${i+2}`));
+  assert.ok(queued.every(r=>r.selection==='auto:480p'));
+  assert.equal(f.downloads.previewBatch('m','viewer',2).eligible,1);
+  await f.downloads.initialize();assert.equal(f.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n,12);
+  assert.throws(()=>f.downloads.previewBatch('m','viewer',-1),{error:'download-query-invalid'});
+});
+
+test('batch queue bound is atomic and stopping downloads interrupts the queued season',async t=>{
+  const f=await fixture(t,async url=>({url,response:incoming('bytes')}));f.downloads.start(()=>false);
+  f.db.transaction(()=>{for(let n=2;n<=501;n++){const id=`ep-${n}`;f.db.run("INSERT INTO episodes VALUES(?,'m',1,?,'Episode',1200,NULL)",id,n);f.db.run('INSERT INTO source_episodes VALUES(?,?)',id,`/episode-${n}`);}});
+  await assert.rejects(f.downloads.createBatch('m','viewer',1),{error:'download-queue-full'});
+  assert.equal(f.db.get('SELECT COUNT(*) AS n FROM download_jobs')!.n,0);
+  f.db.run("DELETE FROM source_episodes WHERE episode_id='ep-501'");f.db.run("DELETE FROM episodes WHERE id='ep-501'");
+  assert.equal((await f.downloads.createBatch('m','viewer',1)).added,500);
+  await f.downloads.configureSettings({enabled:false});
+  assert.equal(f.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='interrupted' AND error='download-disabled'")!.n,500);
+});
+
+test('batch API checks current profile and validates season before adding work',async t=>{
+  const {dir,cfg}=await layout();const {app,db,downloads}=await buildApp(cfg,false);
+  t.after(async()=>{await app.close();await rm(dir,{recursive:true,force:true});});seed(db);
+  await app.ready();downloads.start(()=>false);await downloads.configureSettings({quotaBytes:1024**3,enabled:true});
+  const headers={'x-moa-profile':'viewer'};
+  const preview=await app.inject({url:'/api/admin/downloads/batch?mediaId=m&season=1',headers});assert.equal(preview.statusCode,200,preview.body);assert.equal(preview.json().eligible,1);
+  assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads/batch',headers,payload:{mediaId:'m',season:-1}})).statusCode,400);
+  const created=await app.inject({method:'POST',url:'/api/admin/downloads/batch',headers,payload:{mediaId:'m',season:1}});assert.equal(created.statusCode,200,created.body);assert.equal(created.json().added,1);
+  assert.equal((await app.inject({method:'POST',url:'/api/admin/downloads/batch',headers,payload:{mediaId:'m',season:1}})).json().added,0);
 });

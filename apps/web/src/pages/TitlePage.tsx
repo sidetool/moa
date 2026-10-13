@@ -3,11 +3,11 @@ import { InlinePlugins } from '../components/WebsitePlugins';
 import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import type { Episode, MediaDetail } from "@moa/shared";
+import type { DownloadBatchResult, DownloadQuality, Episode, MediaDetail } from "@moa/shared";
 import { useMe, useMedia, useWatchlistToggle } from "../api/queries";
 import { jobsByEpisode, useDownloadStatus } from "../api/downloads";
 import { useOneTapDownload } from "../components/ServerSave";
-import { DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../components/ServerSave";
+import { BatchDownload, BatchDownloadResultLine, DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../components/ServerSave";
 import { Artwork, TitleLogo } from "../components/Artwork";
 import { MetaLine } from "../components/Hero";
 import { MetadataCredit, PeopleRow, SimilarRow } from "../components/TitleExtras";
@@ -21,7 +21,7 @@ import { devicePrefs } from "../lib/device-prefs";
 import { SeasonPicker, type SeasonChoice } from "../components/SeasonPicker";
 import { TYPE_LABEL, cx, fileSize, humanDuration, episodeTitle } from "../lib/format";
 
-type ServerSaves = { entry: (episodeId: string) => DownloadEntry; start: (episodeId: string) => void };
+type ServerSaves = { entry: (episodeId: string) => DownloadEntry; start: (episodeId: string) => void; quality?: DownloadQuality };
 
 const watchPath = (episodeId: string, position?: number) =>
   `/watch/${encodeURIComponent(episodeId)}${position !== undefined ? `?t=${Math.floor(position)}` : ""}`;
@@ -73,14 +73,15 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   const [range, setRange] = useState(Math.floor(targetIndex / RANGE));
   const [jump, setJump] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<DownloadBatchResult | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const section = useRef<HTMLElement>(null);
   const franchise = useFranchise(media.id, devicePrefs().seasonSwitcher);
 
   // Switching seasons opens another title; land on its episode list, not the top of the page.
-  useEffect(() => { if (switched?.episodes) section.current?.scrollIntoView({ block: "start" }); }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setBatchResult(null); if (switched?.episodes) section.current?.scrollIntoView({ block: "start" }); }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { setRange(Math.floor(Math.max(0, episodes.findIndex(episode => episode.id === target)) / RANGE)); }, [seasonNumber]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setRange(Math.floor(Math.max(0, episodes.findIndex(episode => episode.id === target)) / RANGE)); setBatchResult(null); }, [seasonNumber]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!season) return null;
   const rangeCount = long ? Math.ceil(episodes.length / RANGE) : 0;
@@ -131,9 +132,15 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
           {episodes.length > 1 && (
             <button className="icon-btn" aria-label={descending ? "1화부터 보기" : "최신화부터 보기"} title={descending ? "1화부터" : "최신화부터"} onClick={() => { const next = !descending; setDescending(next); if (long) setRange(next ? rangeCount - 1 : 0); }}><ArrowDownUp size={18} /></button>
           )}
+          {saves && episodes.length > 1 && (
+            // Only this title's shown season; without season splits the server takes the whole title.
+            <BatchDownload key={`${media.id}:${season.number}`} mediaId={media.id} season={media.seasons.length > 1 ? season.number : undefined}
+              label={media.seasons.length > 1 ? `${season.title} 전체` : "전체 회차"} quality={saves.quality} onDone={setBatchResult} />
+          )}
           <SeasonPicker choices={choices} count={episodes.length} onPick={pick} />
         </div>
       </header>
+      {batchResult && <BatchDownloadResultLine result={batchResult} />}
       {long && (
         <div className="range-tabs no-scrollbar" role="tablist" aria-label="회차 구간">
           {ranges.map(i => {
@@ -218,7 +225,7 @@ export function TitlePage() {
   // Only admins who turned downloads on (with storage and quota ready) see download controls; everyone else sees nothing new.
   const jobs = downloads.data?.configured ? jobsByEpisode(downloads.data.jobs) : undefined;
   const saves: ServerSaves | undefined = admin && m.badge !== "LIVE" && sourceMedia && jobs
-    ? { entry: episodeId => oneTap.entry(episodeId, jobs.get(episodeId)), start: episodeId => void oneTap.start(episodeId) }
+    ? { entry: episodeId => oneTap.entry(episodeId, jobs.get(episodeId)), start: episodeId => void oneTap.start(episodeId), quality: downloads.data?.quality }
     : undefined;
   const meta = [
     m.year,

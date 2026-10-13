@@ -965,6 +965,16 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
 .download-error.is-partial { color: var(--text-3) !important; }
 .download-error.is-partial::before { content: "⚠ "; color: var(--warning); }
 .download-actions { display: flex; flex: none; gap: 2px; }
+/* Season batch: one check dialog, then a single result line under the episode header */
+.batch-dialog .confirm-dialog-body p { margin: 0; }
+.batch-dialog .confirm-dialog-body b { color: var(--text); font-variant-numeric: tabular-nums; }
+.batch-facts { margin: 8px 0 0; padding: 0; list-style: none; color: var(--text-3); font-size: .88rem; }
+.batch-facts li + li { margin-top: 2px; }
+.batch-dialog .settings-error { margin-top: 10px; }
+.batch-result { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 10px; color: var(--text-2); font-size: .88rem; }
+.batch-result b { color: var(--text); font-variant-numeric: tabular-nums; }
+.batch-result a { color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; }
+.batch-result a:hover { color: var(--text); }
 .settings-hint code { color: var(--text-2); }
 .pf-location { grid-template-columns: minmax(0, 1fr) auto; }
 .pf-location b { display: block; font-size: .97rem; }

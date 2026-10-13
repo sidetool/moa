@@ -1,11 +1,11 @@
-import { AlertCircle, CircleCheck, Clock3, Download } from "lucide-react";
+import { AlertCircle, CircleCheck, Clock3, Download, HardDriveDownload } from "lucide-react";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import type { DownloadJob } from "@moa/shared";
-import { DOWNLOAD_STATE_LABEL, downloadErrorText, downloadRatio, useDownloadActions } from "../api/downloads";
+import type { DownloadBatchResult, DownloadJob, DownloadQuality } from "@moa/shared";
+import { DOWNLOAD_QUALITY_OPTIONS, DOWNLOAD_STATE_LABEL, downloadErrorText, downloadRatio, useBatchDownload, useBatchDownloadPreview, useDownloadActions } from "../api/downloads";
 import { ApiError } from "../lib/api";
 import { cx, fileSize } from "../lib/format";
-import { Button, ProgressBar } from "./ui";
+import { Button, ConfirmDialog, IconButton, ProgressBar } from "./ui";
 
 const SETTINGS_PATH = "/settings#downloads";
 
@@ -123,4 +123,49 @@ export function MovieDownloadButton({ entry, onStart }: { entry: DownloadEntry; 
   return <Button variant="secondary" size="l" className={className} icon={<StateIcon view={view} size={20} />} aria-busy={view.kind === "pending"} disabled={view.kind === "pending"} onClick={onStart}>
     {view.kind === "failed" ? "다시 다운로드" : view.kind === "pending" ? "요청 중…" : "다운로드"}
   </Button>;
+}
+
+/** Queues every episode of the shown season (or the whole title when it has no seasons) in one server request.
+ *  A short count check comes first; the parent shows the result with `BatchDownloadResultLine`. */
+export function BatchDownload({ mediaId, season, label, quality, onDone }: { mediaId: string; season?: number; label: string; quality?: DownloadQuality; onDone: (result: DownloadBatchResult | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false); // a second tap before the re-render must not send another POST
+  const preview = useBatchDownloadPreview(mediaId, season, open);
+  const queue = useBatchDownload();
+  const eligible = preview.data?.eligible ?? 0;
+  const qualityLabel = DOWNLOAD_QUALITY_OPTIONS.find(item => item.value === quality)?.label;
+  const close = () => { if (!busy) { setOpen(false); setError(null); } };
+  const confirm = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true; setBusy(true); setError(null);
+    try { onDone(await queue(mediaId, season)); setOpen(false); }
+    catch (cause) { setError(cause instanceof ApiError && cause.code.startsWith("download-") ? downloadErrorText(cause.code) : "다운로드를 추가하지 못했어요. 다시 시도해 주세요."); }
+    finally { inFlight.current = false; setBusy(false); }
+  };
+  return <>
+    <IconButton label={`${label} 다운로드`} className="batch-save" data-remote-secondary disabled={busy} onClick={() => { onDone(null); setOpen(true); }}><HardDriveDownload size={18} /></IconButton>
+    {open && <ConfirmDialog title={`${label} 다운로드`} className="batch-dialog" busy={busy} confirmDisabled={!eligible || preview.isFetching}
+      confirmLabel={eligible ? `${eligible}화 받기` : "받기"} onConfirm={() => void confirm()} onClose={close}>
+      {preview.isPending ? <p>회차를 확인하는 중…</p>
+        : preview.isError ? <p className="settings-error">회차를 확인하지 못했어요. 닫고 다시 시도해 주세요.</p>
+        : !eligible ? <p>받을 회차가 없어요. 모두 받았거나 받는 중이에요.</p>
+        : <>
+          <p><b>{eligible}화</b>를 다운로드 대기열에 넣어요.</p>
+          <ul className="batch-facts">
+            {preview.data.skipped > 0 && <li>이미 받았거나 받는 중인 {preview.data.skipped}화는 빼요</li>}
+            {qualityLabel && <li>화질 {qualityLabel} · 다운로드 설정 기준</li>}
+          </ul>
+        </>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
+    </ConfirmDialog>}
+  </>;
+}
+
+export function BatchDownloadResultLine({ result }: { result: DownloadBatchResult }) {
+  return <p className="batch-result" role="status">
+    <span>{result.added ? <><b>{result.added}화</b>를 다운로드 대기열에 넣었어요{result.skipped ? ` · ${result.skipped}화는 이미 있어요` : ""}</> : "새로 받을 회차가 없어요. 모두 받았거나 받는 중이에요."}</span>
+    <Link to={SETTINGS_PATH}>목록 보기</Link>
+  </p>;
 }

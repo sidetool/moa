@@ -394,6 +394,7 @@ export interface Settings {
   shortsHideWatched?: boolean;
   shortsRepeatDays?: 0 | 1 | 7 | 30;
   recommendationsEnabled?: boolean;
+  anilistRecommendationsEnabled?: boolean;
   generalSkipEnabled?: boolean;
   /** Per-profile navigation. Omitted uses source-based defaults. */
   navigation?: NavigationTab[];
@@ -559,6 +560,8 @@ export interface DownloadStatus {
   /** Active jobs across the entire server, independent of page/title filters. */
   activeJobs?: number; totalJobs?: number; nextCursor?: string | null;
 }
+export interface DownloadBatchPreview { total:number; eligible:number; skipped:number }
+export interface DownloadBatchResult { total:number; added:number; skipped:number }
 export interface DownloadChoice { id: string; label: string }
 export interface EpisodeDownloadStatus {
   saved: boolean; job?: DownloadJob;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
-import type { DownloadJob, DownloadQuality, DownloadState, DownloadStatus, EpisodeDownloadStatus } from "@moa/shared";
+import type { DownloadBatchPreview, DownloadBatchResult, DownloadJob, DownloadQuality, DownloadState, DownloadStatus, EpisodeDownloadStatus } from "@moa/shared";
 import { api, ApiError } from "../lib/api";
 
 export const downloadKeys = {
@@ -155,5 +155,29 @@ export function useDownloadActions() {
       client.setQueriesData<InfiniteData<DownloadStatus>>({ queryKey: downloadKeys.admin }, data => data && { ...data, pages: data.pages.map(page => ({ ...page, ...summary })) });
       return status;
     }))
+  };
+}
+
+/** Batch scope: one season when `season` is set, else the whole title. Saved or active episodes are skipped by the server. */
+const batchBody = (mediaId: string, season?: number) => season === undefined ? { mediaId } : { mediaId, season };
+
+export const useBatchDownloadPreview = (mediaId: string, season: number | undefined, enabled: boolean) => useQuery({
+  queryKey: ["admin-download-batch", mediaId, season ?? "all"],
+  queryFn: ({ signal }) => api<DownloadBatchPreview>(`/admin/downloads/batch?mediaId=${encodeURIComponent(mediaId)}${season === undefined ? "" : `&season=${season}`}`, { signal }),
+  enabled,
+  staleTime: 0,
+  gcTime: 0,
+  retry: false
+});
+
+/** One POST; the server keeps a persistent queue, so the client never loops over episodes. All-skipped is 200 with added 0. */
+export function useBatchDownload() {
+  const client = useQueryClient();
+  return async (mediaId: string, season?: number) => {
+    try { return await api<DownloadBatchResult>("/admin/downloads/batch", { method: "POST", body: batchBody(mediaId, season) }); }
+    finally {
+      void client.invalidateQueries({ queryKey: downloadKeys.admin });
+      void client.invalidateQueries({ queryKey: ["episode-download"] });
+    }
   };
 }
