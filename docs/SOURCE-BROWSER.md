@@ -59,12 +59,11 @@ process memory; peak authentication memory and file cache are separate costs.
 ## Deployment and rollback
 
 ```sh
-docker compose -f compose.yaml -f compose.source-browser.yaml build moa moa-source-browser
 docker compose -f compose.yaml -f compose.source-browser.yaml up -d
 ```
 
 Preserve any other overrides already used by the installation. The override uses
-a separate local app image and sets `MOA_SOURCE_BROWSER_URL` and the shared
+published images matching `MOA_VERSION` and sets `MOA_SOURCE_BROWSER_URL` and the shared
 `MOA_SOURCE_BROWSER_SECRET_FILE`. A dedicated volume holds the 0600 random RPC
 token; MOA mounts it read-only. For a bind mount, use a UID-1000-writable directory
 via `MOA_SOURCE_BROWSER_SECRET_PATH`. No site-specific source belongs in the image.

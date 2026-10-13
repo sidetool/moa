@@ -22,3 +22,7 @@ Lucide/Feather: ISC and MIT; full copyrights retained in LICENSES/npm.
 JASSUB, rvfc-polyfill, libass/FreeType, sharp/libvips and other native/browser
 components retain their component licenses. No user-installed extension,
 repository, video or subtitle is included by default.
+
+Optional on-demand tools bundled in the app image: yt-dlp 2026.08.19 (Unlicense),
+EJS 0.8.0 (Unlicense), ByeDPI ba532298de7b28cfe854aea83d061369d13ca290 (MIT).
+See LICENSES and docs/THIRD-PARTY-SOURCES.md.

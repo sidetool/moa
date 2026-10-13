@@ -24,10 +24,10 @@ export async function install(args = process.argv.slice(2), dependencies = {}) {
   if (action !== 'install' || flags.length % 2) fail('update-invalid-options');
   const options = {};
   for (let i = 0; i < flags.length; i += 2) {
-    if (!['--cwd', '--version', '--key', '--browser', '--project'].includes(flags[i]) || flags[i + 1] === undefined) fail('update-invalid-options');
+    if (!['--cwd', '--version', '--key', '--browser', '--apk', '--project'].includes(flags[i]) || flags[i + 1] === undefined) fail('update-invalid-options');
     options[flags[i].slice(2)] = flags[i + 1];
   }
-  if (!options.cwd || !options.version || !options.key || options.browser && !['true', 'false'].includes(options.browser)) fail('update-invalid-options');
+  if (!options.cwd || !options.version || !options.key || [options.browser, options.apk].some(v => v !== undefined && !['true', 'false'].includes(v))) fail('update-invalid-options');
   version(options.version);
   if (Number(process.versions.node.split('.')[0]) < 22 || process.platform !== 'linux') fail('update-runtime-required');
   const cwd = path.resolve(options.cwd), root = path.join(cwd, '.moa-release');
@@ -56,8 +56,15 @@ export async function install(args = process.argv.slice(2), dependencies = {}) {
     try { await copyFile(path.join(runtime, '.env.example'), path.join(cwd, '.env'), 1); } catch (e) { if (e.code !== 'EEXIST') throw e; }
     const files = ['-f', path.join(runtime, 'compose.yaml')];
     if (options.browser === 'true') files.push('-f', path.join(runtime, 'compose.source-browser.yaml'));
-    config = JSON.parse(await run('docker', ['compose', '--project-name', project, '--project-directory', cwd, ...files, 'config', '--format', 'json']));
+    config = JSON.parse(await run('docker', ['compose', '--project-name', project, '--project-directory', cwd, ...files, ...(options.apk === 'true' ? ['--profile', 'apk'] : []), 'config', '--format', 'json']));
     delete config.services['moa-updater'];
+    if (options.apk === 'true') {
+      const apk = config.services['moa-apk'];
+      if (!apk) fail('update-layout-unsupported');
+      delete apk.profiles;
+      config.services.moa.environment = { ...config.services.moa.environment, MOA_APK_URL: 'http://moa-apk:8797', MOA_APK_SECRET_FILE: '/run/moa-apk/token' };
+      config.services.moa.depends_on = { ...config.services.moa.depends_on, 'moa-apk': { condition: 'service_healthy' } };
+    }
     services = SERVICES.filter(n => config.services[n] && !config.services[n].profiles?.length);
     for (const mount of config.services['moa-gateway']?.volumes ?? []) if (mount.target === '/etc/nginx/templates/default.conf.template') mount.source = path.join(runtime, 'deploy/gateway/default.conf.template');
   }

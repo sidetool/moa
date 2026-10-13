@@ -91,6 +91,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const db = services.store ?? new Store(cfg.dataDir), catalog = new Catalog(db);
   const pins = new ProfilePins(db);
   const sources = new Sources(db, catalog);
+  await sources.startNetwork();
   const connectorSecret = process.env.MOA_CONNECTOR_SECRET_FILE || '/run/moa-connector/token';
   const remoteAccess = new RemoteAccess(cfg.dataDir, process.env.MOA_CONNECTOR_URL ? connectorRpc(process.env.MOA_CONNECTOR_URL, connectorSecret) : null, async () => {
     if (!cfg.requireAccount) return false;
@@ -344,7 +345,10 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       if (count >= 5) throw new ApiFailure(409, 'profile-limit');
       db.run('INSERT INTO profiles(id,name,color,kids,created_at,account_id,avatar,pin_hash) VALUES(?,?,?,?,?,?,?,?)', id, body.name.trim(), body.color || COLORS[count % COLORS.length], body.kids ? 1 : 0, now(), req.moaAccount.id, body.avatar ?? null, pinHash);
       const navigation = db.defaultNavigation();
-      if (navigation) db.run('INSERT INTO settings VALUES(?,?)', id, JSON.stringify({ navigation: db.availableNavigation(navigation) }));
+      if (navigation || cfg.shortsExtractor) db.run('INSERT INTO settings VALUES(?,?)', id, JSON.stringify({
+        ...(navigation ? { navigation: db.availableNavigation(navigation) } : {}),
+        ...(cfg.shortsExtractor ? { shortsPlayback: 'native' } : {}),
+      }));
     });
     if (pinHash) pins.grant(id, req, reply);
     return reply.code(201).send(toProfile(db.get('SELECT * FROM profiles WHERE id=?', id)!));
@@ -463,8 +467,8 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     return episodeProgress(db.get('SELECT * FROM progress WHERE profile_id=? AND episode_id=?', profile(req), body.episodeId)!);
   });
   app.get('/api/network', async () => sources.network());
-  app.patch('/api/network', { schema: { body: object({ defaultProxy: { type: 'string', maxLength: 2048 }, revision: { type: 'integer', minimum: 0 } }, ['defaultProxy','revision']) } }, async req => { const body = req.body as { defaultProxy: string; revision: number }; return sources.saveNetwork(body.defaultProxy,body.revision); });
-  app.post('/api/network/test', { schema: { body: object({ defaultProxy: { type: 'string', maxLength: 2048 } }, ['defaultProxy']) } }, async req => sources.testNetwork((req.body as { defaultProxy: string }).defaultProxy));
+  app.patch('/api/network', { schema: { body: object({ defaultProxy: { type: 'string', maxLength: 2048 }, byedpiEnabled: { type: 'boolean' }, revision: { type: 'integer', minimum: 0 } }, ['defaultProxy','revision']) } }, async req => { const body = req.body as { defaultProxy: string; revision: number; byedpiEnabled?: boolean }; return sources.configureNetwork(body.defaultProxy,body.revision,body.byedpiEnabled); });
+  app.post('/api/network/test', { schema: { body: object({ defaultProxy: { type: 'string', maxLength: 2048 }, byedpiEnabled: { type: 'boolean' } }, ['defaultProxy']) } }, async req => { const b = req.body as { defaultProxy: string; byedpiEnabled?: boolean }; return sources.testNetwork(b.defaultProxy, b.byedpiEnabled); });
   app.get('/api/sources', async () => sources.list());
   const removeSources = (ids: string[]) => sources.remove(ids, async (episodeIds, imageIds) => {
     online.removeEpisodes(episodeIds);

@@ -131,3 +131,7 @@ docker compose --project-name YOUR_PROJECT --project-directory /absolute/path/mo
 필수 검사·이미지 빌드 후 고정 공개 파일 목록으로 설치 묶음을 만들고 서명합니다. 모든 산출물이 준비된 draft만 공개합니다. 공개한 버전을 덮어쓰지 않습니다. stable/latest/beta 별칭을 사용하되 인앱 설치는 manifest의 digest를 사용합니다. 베타 최초 발행 전 실제 registry 빌드 결과를 확인해야 합니다.
 
 빌드 캐시는 각 이미지의 GHCR `buildcache` 태그에 저장해 릴리스 태그 사이에서도 공유합니다. 캐시가 없으면 정상 빌드하고, 캐시 저장 실패만으로 완성된 릴리스를 중단하지 않습니다. 배포 버전은 서명된 manifest의 digest를 사용하며 `buildcache` 태그를 실행하지 않습니다. 의존성·베이스 이미지의 보안 업데이트가 필요하면 관리자가 해당 빌드 입력을 갱신해 릴리스를 발행합니다.
+
+### 선택 런타임 (다음 베타)
+
+새 릴리스 설치는 APK·Camoufox를 제외한다. 서명된 설치 도구에서는 `--apk true`와 `--browser true`로 필요한 런타임만 선택한다. 기존 릴리스 설치의 서비스·볼륨·프록시·추출기 경로는 업데이트 시 유지한다. 기존의 명시적 `MOA_SHORTS_EXTRACTOR=`는 비활성 설정으로 존중하므로 직접 재생을 원하면 경로를 설정한다.

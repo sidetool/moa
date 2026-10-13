@@ -38,13 +38,13 @@ References: [YouTube required player behavior](https://developers.google.com/you
 
 ## Release boundary
 
-Available as an opt-in experiment starting in v0.1.2-beta.2. The standard image supports the YouTube embed. Native playback requires the separate setup below; the extractor is not installed in release images.
+Available as an opt-in experiment starting in v0.1.2-beta.2. Starting with the next beta after beta.3, the standard image also bundles the native extractor. Shorts remains off until enabled in profile settings. Earlier release images require the separate setup below.
 
 ## Native player experiment (opt-in, separate from the embed)
 
-`shortsPlayback` defaults to `embed`. `native` uses MOA's own video element; mobile screen fit crops **the video** with `object-fit: cover`, while disabling fit keeps the complete frame. Native playback permits the feed's controls and captions over the picture. The embed keeps its existing unobscured layout. There is no artificial artwork fill.
+New profiles default to `native` when the extractor is configured; existing profiles retain their preference (legacy default `embed`). `native` uses MOA's own video element; mobile screen fit crops **the video** with `object-fit: cover`, while disabling fit keeps the complete frame. Native playback permits the feed's controls and captions over the picture. The embed keeps its existing unobscured layout. There is no artificial artwork fill.
 
-The server must explicitly set `MOA_SHORTS_EXTRACTOR` to an installed **yt-dlp executable** with its matching EJS scripts; Node 22+ is used as the JavaScript runtime. The standard image does not install or enable this dependency. `GET /api/shorts/native` reports configuration availability, not a guarantee that YouTube will accept a request. Profile settings select the mode separately. Existing trailer dialogs and episode playback are unaffected.
+The server must explicitly set `MOA_SHORTS_EXTRACTOR` to an installed **yt-dlp executable** with its matching EJS scripts; Node 22+ is used as the JavaScript runtime. The next-beta standard image installs it at `/usr/local/bin/yt-dlp`; explicitly setting an empty `MOA_SHORTS_EXTRACTOR` disables it. `GET /api/shorts/native` reports configuration availability, not a guarantee that YouTube will accept a request. Profile settings select the mode separately. Existing trailer dialogs and episode playback are unaffected.
 
 The server resolves at most two existing TMDB/YouTube trailer candidates for the active work. It never accepts a client-provided video URL. The extractor uses a fixed YouTube watch URL, ignores user configs/plugins, has no login cookies, and performs no runtime component downloads. Only non-live, non-DRM previews up to ten minutes with H.264/AAC MP4 or HLS, at most 720p, are accepted. Split HLS uses its master playlist: compatible video variants and their matching audio groups are retained together. A video-only media playlist is never passed off as a complete movie. Split progressive MP4/WebM without a usable HLS master remains unsupported; no transcoding or full-file downloads are performed. Extraction and media relay use the same snapshot of the server default proxy, when configured.
 
@@ -57,9 +57,9 @@ YouTube extraction may require additional tokens or fail after upstream changes.
 
 Upstream installation/runtime references: [yt-dlp](https://github.com/yt-dlp/yt-dlp#installation), [EJS setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 
-### Local trial setup
+### Legacy local trial setup (beta.2 / beta.3)
 
-The tested dependency is official yt-dlp `2026.08.19` with bundled EJS `0.8.0`. The optional derivative Dockerfile pins and checks the Unix zipimport archive; it adds Python only to the trial image. It is **not** part of release image builds and is not activated by the standard Compose configuration.
+The tested dependency is official yt-dlp `2026.08.19` with bundled EJS `0.8.0`. The optional derivative Dockerfile pins and checks the Unix zipimport archive; it adds Python only to the trial image. This separate build is only needed for older images; new images bundle the same pinned dependency.
 
 ```sh
 # Run from the release source, without replacing the running app.

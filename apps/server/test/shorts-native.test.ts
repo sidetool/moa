@@ -254,3 +254,19 @@ test('warm buffers six seconds of matching quality with bounded concurrent audio
     for(const track of ['audio','480'])assert.deepEqual(calls.filter(u=>u.startsWith(track)&&u.endsWith('.ts')),Array.from({length:3},(_,i)=>`${track}.m3u8-${i}.ts`));
   }finally{native.close();}
 });
+
+test('new profiles get native mode when bundled without replacing navigation or old preferences', async t=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'moa-native-default-'));
+  const {app,db}=await buildApp({dataDir:dir,mediaRoot:dir,webDir:path.join(dir,'web'),requireAccount:true,shortsExtractor:process.execPath},false,{tmdb:{},youtube:{}});
+  t.after(async()=>{await app.close();await rm(dir,{recursive:true,force:true});});
+  const headers={'x-moa-account':'owner','x-moa-role':'admin'};
+  await app.inject({url:'/api/me',headers});
+  db.run('INSERT INTO profiles(id,name,color,kids,created_at,account_id) VALUES(?,?,?,0,?,?)','old','Old','blue','2026','owner');
+  db.saveDefaultNavigation([{id:'home',label:'홈',type:'home',sourceIds:[]}] as any);
+  const response=await app.inject({method:'POST',url:'/api/profiles',headers,payload:{name:'New'}});
+  assert.equal(response.statusCode,201,response.body);
+  assert.equal(db.settings(response.json().id).shortsPlayback,'native');
+  assert.equal(db.settings(response.json().id).shortsEnabled,false);
+  assert.equal(db.settings('old').shortsPlayback,'embed');
+  assert.deepEqual(db.settings(response.json().id).navigation,db.availableNavigation(db.defaultNavigation()!));
+});

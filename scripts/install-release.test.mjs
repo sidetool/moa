@@ -7,7 +7,7 @@ import { install, startUpdater } from './install-release.mjs';
 import { BUNDLE_FILES } from './release-bundle.mjs';
 import { SERVICES } from './release.mjs';
 
-test('fresh release installation pins components, fetches the gateway, preserves env and sets up IPC permissions', async t => {
+for (const apk of [false, true]) test(`fresh release installation pins components and selects APK=${apk}`, async t => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'moa-installer-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const key = path.join(cwd, 'fixture-key'); await writeFile(key, 'fixture');
@@ -20,14 +20,20 @@ test('fresh release installation pins components, fetches the gateway, preserves
     commands.push([command,...args]);
     if(args[0]==='ps')return '';
     if(args.join(' ')==='compose version --short')return '2.30.0';
-    if(args.includes('--format'))return JSON.stringify(config);
+    if(args.includes('--format')){
+      assert.equal(args.includes('--profile'),apk);
+      if(apk)config.services['moa-apk']={image:'old',profiles:['apk']};
+      return JSON.stringify(config);
+    }
     return '';
   };
   const feed = { async releases(){return[{tag_name:'v1.0.0'}];},async manifest(){return{manifest};},async bundle(){return{format:1,files};} };
-  assert.deepEqual(await install(['install','--cwd',cwd,'--project','moa-fixture','--version','v1.0.0','--key',key],{feed,run}), { started: true, error: null });
+  assert.deepEqual(await install(['install','--cwd',cwd,'--project','moa-fixture','--version','v1.0.0','--key',key,'--apk',String(apk)],{feed,run}), { started: true, error: null });
   const current=JSON.parse(await readFile(path.join(cwd,'.moa-release/current.json'),'utf8'));
   const resolved=JSON.parse(await readFile(current.compose,'utf8'));
-  assert.deepEqual(current.services,['moa','moa-auth']);
+  assert.deepEqual(current.services,apk?['moa','moa-auth','moa-apk']:['moa','moa-auth']);
+  if(apk){assert.equal(resolved.services['moa-apk'].profiles,undefined);assert.equal(resolved.services.moa.environment.MOA_APK_URL,'http://moa-apk:8797');}
+  else assert.ok(commands.filter(c=>c.includes('pull')).every(c=>!c.some(v=>v.includes('moa-apk'))));
   assert.equal(resolved.services['moa-updater'], undefined);
   assert.equal(resolved.services.moa.environment.LITERAL,'cost$$5');
   assert.equal(resolved.services.moa.environment.MOA_DEPLOYMENT,'release');

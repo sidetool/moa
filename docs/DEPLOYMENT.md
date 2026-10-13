@@ -2,16 +2,17 @@
 
 Linux는 Docker Engine과 Compose 플러그인, macOS·Windows는 Docker Desktop을 설치한다. Windows는 WSL2와 Linux 컨테이너를 사용한다.
 
-## 새 설치
+## 새 설치 (다음 베타)
 
 ```sh
 git clone https://github.com/sidetool/moa.git
 cd moa
+cp .env.example .env
 docker compose up -d
 docker compose logs moa-auth
 ```
 
-브라우저에서 `http://localhost:8796` 또는 `http://서버의-LAN-IP:8796`을 연다. 로그의 `Setup code`를 입력하고 첫 관리자 아이디·비밀번호를 만든다. `.env`, Python, 빌드, 수동 권한 변경은 필요 없다. 이미 계정이 있는 설치에는 설정 화면이 나타나지 않는다.
+브라우저에서 `http://localhost:8796` 또는 `http://서버의-LAN-IP:8796`을 연다. 로그의 `Setup code`를 입력하고 첫 관리자 아이디·비밀번호를 만든다. 예제 `.env`는 베타 채널을 선택한다. 호스트 Python, 로컬 빌드, 수동 권한 변경은 필요 없다. 정식 사용자는 해당 릴리스 태그의 가이드를 따른다. 이미 계정이 있는 설치에는 설정 화면이 나타나지 않는다.
 
 설정 코드는 재시작해도 유지되며 첫 계정 생성과 함께 삭제된다. 인증 DB는 0600 권한으로 보관한다. 코드는 컨테이너 로그에도 남으므로 로그를 비공개로 관리한다.
 
@@ -71,34 +72,53 @@ Linux에서 `.env`의 `COMPOSE_FILE`에 콜론으로 override를 추가한다. �
 | 구성 | override | 준비 |
 | --- | --- | --- |
 | 기존 APK token 파일 호환 | `compose.aniyomi.yaml` | 이미 사용 중인 token 파일을 그대로 유지 |
+| APK 실행 환경 추가 | `compose.apk.yaml` | APK를 사용할 때만 활성화 |
+| 브라우저 인증 추가 | `compose.source-browser.yaml` | Camoufox가 필요한 소스만 사용 |
 | APK 실행 환경 끄기 | `compose.no-apk.yaml` | 선택 사항, `apk` profile을 활성화하지 않음 |
 | Linux VAAPI | `compose.vaapi.yaml` | render 장치의 GID와 GPU 드라이버 |
 | Cloudflare tunnel | `compose.tunnel.yaml` | 배포자 소유 tunnel config와 credentials |
 | 기존 호스트 업데이터 유지 | `compose.updates.yaml` | 기본 업데이트 컨테이너 대신 기존 도구와 상태 디렉터리 연결, [설정 안내](UPDATES.md) |
 
-### APK 기본 구성과 기존 설치
+### 기본 기능과 선택 설치
 
-APK worker는 기본 compose에 포함된다. 새 설치에는 `.env` 수정이나 token 파일 생성이 필요 없다. worker가 `moa-apk-secret` volume의 token을 원자적으로 생성하고 건강 상태가 확인된 뒤 앱이 시작한다. token은 UID 10001 / GID 1000, mode 0640이며 앱에는 읽기 전용이다. JVM과 Chromium은 요청이 있을 때만 시작하며, 비활성 JVM은 기본 10분 뒤 종료된다(재생 중인 worker 제외). 컨테이너는 기존 메모리 1 GiB, CPU 2개, PID 192개 제한과 읽기 전용 루트·capability 제거를 유지한다. 호스트 포트는 없다. 격리된 새 설치에서 측정한 유휴 RSS는 컨테이너 내 프로세스 합계 약 67.8 MiB(Node 약 64.5 MiB)였으며 JVM·Chromium은 실행되지 않았다. 설치된 확장이 없는 상태의 측정이고, 사용 중 메모리·공유 페이지·호스트에 따라 달라진다.
+| 기능 | 기본 설치 | 켜는 방법 |
+|---|---|---|
+| JS 확장·로컬 재생·계정·웹 업데이트 | 포함 | 소스 저장소 또는 영상 폴더 등록 |
+| 숏츠 직접 재생 | 추출 도구 포함, 사용 전에는 프로세스 없음 | TMDB 연결 후 실험 기능에서 숏츠 켜기 |
+| 서버 다운로드 | 저장 volume 포함, 기본 꺼짐 | 설정에서 한도 지정 후 켜기 |
+| ByeDPI | 작은 실행 파일 포함, 기본 꺼짐 | 소스 연결 → ByeDPI 우회 켜기 |
+| APK 확장 | 선택 설치, 기본 이미지 다운로드·실행 제외 | 아래 APK 추가 설치 |
+| Camoufox 브라우저 인증 | 선택 설치 | `compose.source-browser.yaml` 추가 후 확장 옵션에서 켜기 |
 
-`moa-apk-data`는 기존과 같은 named volume이다. Compose 프로젝트가 `moa`이면 **`moa_moa-apk-data`를 그대로 사용**한다. 설치된 패키지, 변환 캐시와 worker 상태를 다른 volume으로 옮기지 않는다. 이번 변경은 Java 도구·fingerprint 계산·변환기를 바꾸지 않으므로 재설치나 reprepare가 필요 없다.
+YouTube Data API는 선택 사항이다. 숏츠는 API 키 없이도 후보를 사용하지만, 실제 영상 제공 여부·네트워크 상태에 따라 재생에 실패할 수 있다. 신규 프로필은 도구가 있으면 직접 재생을 기본 선택하고, 기존 프로필의 임베드/직접 재생 선택은 유지한다. `MOA_SHORTS_EXTRACTOR=`를 명시하면 직접 재생을 비활성화한다.
 
-**기존 production 설정은 변경하지 않아도 된다.** `COMPOSE_FILE=compose.yaml:compose.aniyomi.yaml:compose.vaapi.yaml:compose.tunnel.yaml`과 `MOA_APK_TOKEN_FILE=./data/apk-config/token`을 그대로 유지한다. 호환 overlay는 앱과 worker가 기존 `/run/secrets/apk-token`을 사용하게 하고 자동 생성을 끈다. 기존 token의 UID/ACL·프로젝트 이름·APK volume·`MOA_DATA_PATH`, `MOA_AUTH_DATA_PATH`, `MOA_AUTH_CONFIG_PATH` 등 기존 bind 설정을 보존한다. 새 기본 secret volume이 추가되지만 이 호환 모드에서는 token을 생성하거나 교체하지 않는다. 기존 overlay를 제거할 필요가 없다. 정상 업그레이드에서 `down -v`를 사용하지 않는다.
+APK가 필요하면 `.env`의 `COMPOSE_FILE`에 `:compose.apk.yaml`을 추가하고 실행한다:
 
-새 token 저장소를 bind로 관리할 때만 `MOA_APK_SECRET_PATH=./data/apk-secret`를 추가하고 새 경로를 준비한다:
-
-```sh
-sudo install -d -o 10001 -g 1000 -m 2750 data/apk-secret
+```dotenv
+COMPOSE_FILE=compose.yaml:compose.apk.yaml
 ```
 
-setgid 디렉터리가 새 token에 앱의 그룹 1000을 상속한다. 기존 token 파일을 이 경로로 옮기거나 token 값을 출력하지 않는다. 기본 named volume에는 수동 권한 작업이 없다. 자동 token은 재시작·이미지 교체 시 유지되므로 이 volume도 비공개 백업에 포함한다.
-
-저메모리 호스트에서 APK를 끄려면:
-
 ```sh
-docker compose -f compose.yaml -f compose.no-apk.yaml up -d
+docker compose up -d
 ```
 
-또는 `.env`에 `COMPOSE_FILE=compose.yaml:compose.no-apk.yaml`을 설정한다. `apk` profile은 활성화하지 않는다. 앱의 APK 설정을 비우고 worker를 비활성 profile로 제외한다. 기존에 worker가 실행 중이었다면 같은 프로젝트에서 `docker compose -f compose.yaml stop moa-apk`로 먼저 중지한다. 의존성이 비활성이라는 Compose 경고는 정상이며 앱은 시작한다. APK 데이터와 설치 목록은 삭제되지 않는다. JS 확장과 로컬 미디어는 계속 사용할 수 있다. 다시 사용하려면 override를 빼고 `up -d`한다.
+토큰은 worker가 자동 생성한다. JVM·Chromium은 요청 시 시작하며, idle JVM은 기본 10분 후 종료된다. APK를 쓰지 않으면 해당 이미지와 컨테이너가 필요 없다. `--profile apk`만으로는 앱 연결 설정이 켜지지 않으므로 위 파일을 사용한다.
+
+브라우저 인증도 같은 방법으로 `:compose.source-browser.yaml`을 추가한다. 둘 다 필요하면 `COMPOSE_FILE=compose.yaml:compose.apk.yaml:compose.source-browser.yaml`을 사용한다. 공개 이미지가 발행된 버전은 로컬 빌드 없이 받는다. 발행 전 개발 브랜치는 별도 테스트 환경에서 빌드해야 한다.
+
+### 기존 APK 설치 보존
+
+웹 릴리스 업데이트는 저장된 Compose와 서비스 목록을 유지하므로 APK·브라우저를 자동으로 끄지 않는다. **Git checkout이나 Compose 파일을 직접 새 버전으로 교체하는 설치**에서 APK를 계속 쓰려면 기존 `COMPOSE_FILE`에 `:compose.apk.yaml`을 추가한다. 이미 `compose.aniyomi.yaml`을 쓰는 경우는 그 파일이 APK를 활성화하므로 그대로 유지한다. 기존 `compose.no-apk.yaml`도 사용할 수 있다.
+
+프로젝트 이름, `moa-apk-data` volume, token volume/파일, 기존 bind 경로를 유지한다. token을 새로 생성하거나 기존 volume을 지우지 않는다. APK를 끌 때는 기존 worker를 `docker compose stop moa-apk`로 중지하고 선택 파일을 제거한 뒤 앱을 재생성한다. 데이터는 유지한다. 일반 업데이트에 `down -v`를 사용하지 않는다.
+
+새 다운로드 volume은 앱 사용자(UID 1000) 소유로 초기화한다. 기존 volume이나 사용자 bind 폴더의 권한은 덮어쓰지 않는다. 기존 폴더가 쓰기 불가능하면 앱 사용자에게 쓰기 권한을 부여한 뒤 활성화한다.
+
+### ByeDPI
+
+소스 연결에서 ByeDPI 우회를 켜면 즉시 저장하고 내장 SOCKS 프록시를 사용한다. 끄면 저장해 둔 수동 프록시로 돌아간다. 확장별 프록시는 이 기본값보다 우선한다. 기능이 켜져 있는데 helper가 실패하면 직접 연결로 몰래 전환하지 않는다. 끄면 ByeDPI를 쓰던 연결이 종료되므로 해당 영상은 다시 열어야 할 수 있다.
+
+내장 proxy는 Docker 내부에서만 열리며 호스트 포트를 공개하지 않는다. 기본 주소 `socks5://moa:1080`은 선택 설치한 APK·Camoufox에서도 접근 가능하다. 커스텀 네트워크에서는 같은 내부 네트워크와 서비스 이름을 유지한다. IPv4 TCP 분할 전략을 사용하며, VPN이나 Cloudflare 인증 대체 기능은 아니다. 추가 설정 없이 모든 회선에서 작동한다고 보장하지 않는다.
 
 VAAPI는 `COMPOSE_FILE`에 `:compose.vaapi.yaml`을 추가하고 `stat -c %g /dev/dri/renderD128`로 확인한 GID를 `MOA_RENDER_GID`에 넣는다. `MOA_VAAPI_DEVICE`, `MOA_DRI_PATH`, 필요하면 `LIBVA_DRIVER_NAME`을 설정한다. GPU가 없으면 기본 구성의 소프트웨어 처리를 사용한다.
 
@@ -120,7 +140,7 @@ docker compose up -d --pull never
 기본 Compose의 `moa-updater`가 릴리스 확인·백업·설치를 처리한다. 별도 호스트 도구 없이 설정 → 정보에서 채널을 선택하고 업데이트한다. Docker socket은 이 서비스에만 연결되며 호스트 컨테이너 관리 권한을 가진다. 기존 설치 전환과 Git 서버의 선택적 호스트 도구는 [업데이트 안내](UPDATES.md)를 참고한다. 기본 이미지 소유자는 `sidetool`이며 `MOA_IMAGE_OWNER`로 변경할 수 있다. 서명된 릴리스가 없는 개발 빌드는 자동 설치를 사용할 수 없다. 백업·운영 측정 결과를 공개 저장소에 추가하지 않는다.
 
 
-## APK 기본 포함 변경의 검증
+## 이전 APK 기본 포함 변경의 검증 (beta.3 기록)
 
 서버 160, extensions 17, subtitles 88, skip-markers 18, 인증·gateway·connector·worker Node 54개로 총 337개 테스트가 통과했다. workspace typecheck와 웹 build, 앱·인증·APK·connector 이미지의 로컬 build가 통과했다. `.env` 없는 기본 구성, 기존 네 overlay와 token 파일을 유지한 합성 production 구성, APK 비활성 override의 compose 검증도 통과했다.
 

@@ -463,9 +463,10 @@ export interface SourcePreload {
 // GET/PATCH /api/sources/:id/preferences -> SourcePreference[]
 // GET /api/sources/:id/browse?mode=popular|latest|search&q=&page= -> Page<MediaCard>
 
-export interface NetworkSettings { defaultProxy: string; revision: number }
-// GET/PATCH /api/network -> NetworkSettings (server-wide; empty proxy = direct)
-// POST /api/network/test { defaultProxy } -> { ok: true, elapsedMs: number, sources: number }
+export interface NetworkSettings { defaultProxy: string; revision: number; byedpi?: { available: boolean; enabled: boolean; running: boolean; proxy: string } }
+// GET /api/network -> NetworkSettings; defaultProxy retains the manual address while ByeDPI is enabled.
+// PATCH /api/network {defaultProxy,revision,byedpiEnabled?}; per-source overrides still win.
+// POST /api/network/test { defaultProxy, byedpiEnabled? } -> { ok: true, elapsedMs: number, sources: number }
 
 export type FilterValue = string | number | boolean | { index: number; ascending: boolean };
 export interface SourceFilter { id: string; position: number; groupPosition?: number; label: string; kind: 'header'|'separator'|'select'|'sort'|'checkbox'|'text'|'tri_state'; options?: string[]; defaultValue?: FilterValue }

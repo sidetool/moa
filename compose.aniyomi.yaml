@@ -1,11 +1,15 @@
 # Compatibility for installations with an existing host-file APK token.
-# APK support is already included in compose.yaml; new installs do not need this file.
+# This legacy overlay also enables the optional APK service.
 services:
   moa:
     environment:
+      MOA_APK_URL: http://moa-apk:8797
       MOA_APK_SECRET_FILE: /run/secrets/apk-token
     secrets: [apk-token]
+    depends_on:
+      moa-apk: {condition: service_healthy}
   moa-apk:
+    profiles: !reset []
     environment:
       MOA_APK_SECRET_FILE: /run/secrets/apk-token
       MOA_APK_GENERATE_SECRET: "0"
