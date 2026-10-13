@@ -226,7 +226,7 @@ export interface WebsitePlugin {
   version: string;
   description: string;
   placements: Array<'app' | 'settings' | 'player' | 'home' | 'detail'>;
-  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read' | 'schedule.read'>;
+  permissions: Array<'app.context' | 'app.navigate' | 'ui' | 'player.context' | 'player.control' | 'subtitles.import' | 'storage' | 'notifications' | 'catalog.modify' | 'discovery.read' | 'metadata.read' | 'history.read' | 'watchlist.read' | 'schedule.read' | 'boxoffice.read'>;
   kind: 'html' | 'script';
   actions?: Array<{ id: string; label: string }>;
   connect: string[];
@@ -634,3 +634,7 @@ export interface ShortsFeed {
 export interface ScheduleQuery {kind:'movie'|'tv';date:string}
 export interface ScheduleItem {id:string;title:string;date:string;time:string|null;detail:string}
 export interface ScheduleResponse {provider:'tmdb'|'tvmaze';date:string;status:'ready'|'restricted'|'unconfigured'|'unavailable';items:ScheduleItem[];truncated:boolean}
+
+export interface WatchlistNewsEvent {mediaId:string;title:string;date:string;kind:'release'|'episode';detail:string}
+export interface WatchlistNews {provider:'tmdb';status:'ready'|'restricted'|'unconfigured'|'unavailable';from:string;through:string;items:WatchlistNewsEvent[];unlinked:number;checked:number;truncated:boolean}
+export interface BoxOfficeResponse {provider:'kobis';period:'day'|'week';from:string;through:string;status:'ready'|'restricted'|'unconfigured'|'unavailable';items:Array<{id:string;title:string;rank:number;audience:number;totalAudience:number;change:number|null;isNew:boolean}>}

@@ -229,6 +229,22 @@ export class Tmdb {
     return {trailers:trailerCandidates(data?.videos?.results),adult:data?.adult!==false};
   }
 
+  async upcoming(kind:'movie'|'tv',id:number):Promise<Array<Omit<import('@moa/shared').WatchlistNewsEvent,'mediaId'|'title'>>>{
+    if(!this.enabled||!['movie','tv'].includes(kind)||!Number.isSafeInteger(id)||id<1)throw new Error('invalid-upcoming');
+    const data=await this.get(kind==='movie'?`/movie/${id}/release_dates`:`/tv/${id}`,{language:'ko-KR'});
+    const validDate=(d:unknown):d is string=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
+    if(kind==='movie'){
+      if(!Array.isArray(data?.results))throw new Error('invalid-upcoming');
+      const kr=data.results.find((r:any)=>r.iso_3166_1==='KR');
+      const dates=new Set<string>();for(const r of Array.isArray(kr?.release_dates)?kr.release_dates:[]){const date=typeof r.release_date==='string'?r.release_date.slice(0,10):'';if([2,3].includes(r.type)&&validDate(date))dates.add(date);}
+      return [...dates].sort().map(date=>({date,kind:'release' as const,detail:'한국 극장 개봉 · 재개봉 포함'}));
+    }
+    if(!data||data.id!==id)throw new Error('invalid-upcoming');
+    const e=data.next_episode_to_air;
+    if(!e||!validDate(e.air_date)||!Number.isSafeInteger(e.season_number)||e.season_number<0||!Number.isSafeInteger(e.episode_number)||e.episode_number<1)return [];
+    return [{date:e.air_date,kind:'episode',detail:`시즌 ${e.season_number} · ${e.episode_number}화 · 원방영일 기준`}];
+  }
+
   async movieSchedule(date:string):Promise<{items:import('@moa/shared').ScheduleItem[];truncated:boolean}>{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!this.enabled)throw new Error('invalid-schedule');
     const data=await this.get('/discover/movie',{language:'ko-KR',region:'KR','release_date.gte':date,'release_date.lte':date,with_release_type:'2|3',include_adult:'false',sort_by:'popularity.desc',page:'1'});
