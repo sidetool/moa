@@ -246,7 +246,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     setFatal(null); setEnded(false); setNextDismissed(false); setCountdown(null); setWaiting(true);
 
     const start = session.startPosition;
-    setResumeChip(start > 30 && t === null);
+    // Home resume links carry ?t= too; an explicit positive position still offers restart.
+    setResumeChip(!session.live && start > 30);
     const onFailure = (message:string) => {
       if (disposed || advancedStream) return;
       if (session.runtimeDependent && runtimeRecoveries.current < 1) {
@@ -661,10 +662,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   };
 
   useEffect(() => {
-    if (!resumeChip) return;
+    if (!resumeChip || waiting || !playing) return;
     const timer = setTimeout(() => setResumeChip(false), 7000);
     return () => clearTimeout(timer);
-  }, [resumeChip]);
+  }, [resumeChip, waiting, playing]);
 
   useEffect(() => {
     const onHide = () => saveProgress(true);

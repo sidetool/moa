@@ -10,7 +10,7 @@ assert.ok(bytes.length > 0, 'provide a nonempty synthetic MP4 longer than 45 sec
 const modes = process.env.MOA_TEST_HLS ? ['direct', 'hls'] : ['direct'];
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
 try {
-  for (const mode of modes) for (const early of [true, false]) {
+  for (const mode of modes) for (const early of [true, false]) for (const query of ['', '?t=40', '?t=0']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
     await context.addInitScript(() => localStorage.setItem('moa.profile', 'test'));
     const calls = [], errors = [];
@@ -47,9 +47,24 @@ try {
     });
     const page = await context.newPage(); page.on('pageerror', e => errors.push(String(e))); page.setDefaultTimeout(10000);
     try {
-      await page.goto(`${base}/watch/ep`);
+      await page.goto(`${base}/watch/ep${query}`);
+      if (query === '?t=0') {
+        release();
+        await page.waitForFunction(() => document.querySelector('video')?.readyState >= 3);
+        assert.equal(calls[0].startPosition, 0);
+        assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0);
+        assert.deepEqual(errors, []);
+        console.log(`PASS: ${mode} explicit zero has no resume prompt`);
+        continue;
+      }
       await page.getByRole('button', { name: '처음부터', exact: true }).waitFor();
-      if (early) assert.equal(await page.locator('video').evaluate(v => v.readyState), 0);
+      if (early) {
+        assert.equal(await page.locator('video').evaluate(v => v.readyState), 0);
+        if (query) {
+          await page.waitForTimeout(7500);
+          assert.ok(await page.getByRole('button', { name: '처음부터', exact: true }).isVisible(), 'loading must not consume the restart prompt');
+        }
+      }
       else await page.waitForFunction(() => { const v = document.querySelector('video'); return v && !v.paused && v.currentTime >= 40; });
       await page.getByRole('button', { name: '처음부터', exact: true }).click();
       release();
@@ -59,7 +74,7 @@ try {
       assert.equal(calls.at(-1).startPosition, 0, 'explicit zero supersedes saved progress');
       assert.equal(await page.getByRole('button', { name: '처음부터', exact: true }).count(), 0);
       assert.deepEqual(errors, []);
-      console.log(`PASS: ${mode} restart ${early ? 'before metadata' : 'during playback'} starts at zero`);
+      console.log(`PASS: ${mode} restart ${early ? 'before metadata' : 'during playback'} ${query || 'saved history'} starts at zero`);
     } finally { release(); await context.close(); }
   }
 } finally { await browser.close(); }
