@@ -6,14 +6,10 @@ import type { UpdatePolicy, UpdateStatus } from '@moa/shared';
 import { useMe } from '../api/queries';
 import { api, ApiError } from '../lib/api';
 import { cx } from '../lib/format';
-import { busyStates, errorCode, installNote, revision, updateErrors, updatesKey, useUpdateAction, useUpdateNoticePref, useUpdateStatus, version } from '../lib/updates';
+import { busyStates, errorCode, installNote, revision, updateStateLabels as states, updateErrors, updatesKey, useUpdateAction, useUpdateNoticePref, useUpdateStatus, version } from '../lib/updates';
 import { Button, ConfirmDialog, IconButton, Select, Skeleton } from './ui';
 
 type Channel = UpdatePolicy['channel'];
-const states: Partial<Record<UpdateStatus['state'], string>> = {
-  idle: '확인 전', checking: '업데이트 확인 중…', updating: '업데이트 중…', current: '최신 상태', available: '업데이트 가능', blocked: '설치 확인 필요', failed: '업데이트 실패', 'restart-required': '서버 재시작 필요',
-  downloading: '다운로드 중…', preflight: '설치 전 확인 중…', backup: '백업 중…', applying: '적용 중…', verifying: '상태 확인 중…', 'rolling-back': '이전 버전 복구 중…', 'rolled-back': '이전 버전으로 복구됨', 'recovery-required': '수동 복구 필요'
-};
 const steps: UpdateStatus['state'][] = ['downloading', 'preflight', 'backup', 'applying', 'verifying'];
 const outcomes: Record<NonNullable<UpdateStatus['history']>[number]['outcome'], string> = { complete: '완료', 'rolled-back': '복구됨', failed: '실패' };
 const Markdown = lazy(() => import('react-markdown'));

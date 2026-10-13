@@ -1,3 +1,4 @@
+import { ByeDpi } from './byedpi.js';
 import { SourceIdentities } from './source-identity.js';
 import { SourceQueue, type SourceLane } from './source-queue.js';
 import { isInlineHls } from './inline-hls.js';
@@ -38,7 +39,7 @@ export class Sources {
   private identities: SourceIdentities;
   private navigationRevision = new Map<string,number>();
   private failedNavigation = new Map<string,{source:string;until:number}>();
-  constructor(public db: Store, public catalog: Catalog, private runtime = invokeMangayomi, private fetchCode = fetchExtension, private fetchRegistry = fetchRepository, public apk = new ApkBridge(), private browser = new SourceBrowser()) {
+  constructor(public db: Store, public catalog: Catalog, private runtime = invokeMangayomi, private fetchCode = fetchExtension, private fetchRegistry = fetchRepository, public apk = new ApkBridge(), private browser = new SourceBrowser(), private byedpi = new ByeDpi()) {
     db.db.exec(`CREATE TABLE IF NOT EXISTS server_network(id INTEGER PRIMARY KEY CHECK(id=1),proxy TEXT NOT NULL,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS source_entries(id TEXT PRIMARY KEY,repository TEXT NOT NULL,entry TEXT NOT NULL,installed_entry TEXT,code TEXT,sha256 TEXT,preferences TEXT NOT NULL DEFAULT '{}',enabled INTEGER NOT NULL DEFAULT 0,type TEXT NOT NULL DEFAULT 'series',live INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS source_network(source_id TEXT PRIMARY KEY REFERENCES source_entries(id) ON DELETE CASCADE,proxy TEXT NOT NULL DEFAULT '',browser INTEGER NOT NULL DEFAULT 0 CHECK(browser IN (0,1)));
@@ -61,9 +62,32 @@ export class Sources {
   }
   network() {
     const row = this.db.get('SELECT * FROM server_network WHERE id=1');
-    return { defaultProxy: row?.proxy || '', revision: row?.revision || 0 };
+    return { defaultProxy: row?.proxy || '', revision: row?.revision || 0, byedpi: { available: this.byedpi.available, enabled: this.byedpiEnabled(), running: this.byedpi.running, proxy: this.byedpi.proxy } };
   }
-  proxy(sourceId?: string) { return (sourceId ? this.db.get('SELECT proxy FROM source_network WHERE source_id=?',sourceId)?.proxy : '') || this.network().defaultProxy || undefined; }
+  proxy(sourceId?: string) { return (sourceId ? this.db.get('SELECT proxy FROM source_network WHERE source_id=?',sourceId)?.proxy : '') || (this.byedpiEnabled() ? this.byedpi.proxy : this.network().defaultProxy) || undefined; }
+  private networkSaving: Promise<unknown> = Promise.resolve();
+  private byedpiEnabled() { return this.db.get("SELECT value FROM admin_settings WHERE key='networkByeDpi'")?.value === 'true'; }
+  async startNetwork() { if (this.byedpiEnabled()) await this.byedpi.start().catch(() => {}); }
+  configureNetwork(proxy: string, revision: number, enabled?: boolean) {
+    const run = async () => {
+      try { parseOutboundProxy(proxy); } catch { throw new ApiFailure(400, 'invalid-proxy-address'); }
+      if (this.network().revision !== revision) throw new ApiFailure(409, 'network-settings-conflict');
+      const previous = this.byedpiEnabled(), next = enabled ?? previous;
+      try {
+        if (next) await this.byedpi.start();
+        this.db.transaction(() => {
+          if (this.network().revision !== revision) throw new ApiFailure(409, 'network-settings-conflict');
+          this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('networkByeDpi',?)", String(next));
+          this.saveNetwork(proxy, revision);
+        });
+      } catch (error) { if (!previous) await this.byedpi.stop(); throw error; }
+      if (!next) await this.byedpi.stop();
+      return this.network();
+    };
+    const work = this.networkSaving.catch(() => {}).then(run);
+    this.networkSaving = work;
+    return work;
+  }
   private browserInvocation(id: string, proxy: string | undefined) {
     return this.db.get('SELECT browser FROM source_network WHERE source_id=?',id)?.browser ? this.browser.invocation(id,proxy) : {};
   }
@@ -76,7 +100,8 @@ export class Sources {
     for(const row of this.db.all('SELECT id FROM source_entries'))this.invalidate(row.id);
     return this.network();
   }
-  async testNetwork(proxy: string) {
+  async testNetwork(proxy: string, byedpi = false) {
+    if (byedpi) { if (!this.byedpiEnabled()) throw new ApiFailure(409, 'byedpi-save-required'); await this.byedpi.start(); proxy = this.byedpi.proxy; }
     let value: string | undefined; try { value = parseOutboundProxy(proxy); } catch { throw new ApiFailure(400,'invalid-proxy-address'); }
     const repository = this.repositories().find(r => r.kind === 'mangayomi-js');
     if (!repository) return { ok: false, skipped: true, elapsedMs: 0 };
@@ -690,5 +715,5 @@ export class Sources {
       filtered.apkLease = videos.apkLease; return filtered;
     }, 'interactive');
   }
-  async close() { this.abort.abort(); this.browser.close(); await Promise.allSettled([...this.reading.values()].flatMap(readers=>[...readers])); await this.reads.drain(); await this.queues.drain(); }
+  async close() { this.abort.abort(); this.browser.close(); await Promise.allSettled([...this.reading.values()].flatMap(readers=>[...readers])); await this.reads.drain(); await this.queues.drain(); await this.networkSaving.catch(() => {}); await this.byedpi.stop(); }
 }

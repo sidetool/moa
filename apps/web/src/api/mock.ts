@@ -402,6 +402,35 @@ const shortsTrailerKeys: Record<string, string[]> = { "movie:101": ["aaaaaaaaaa1
 const shortsSeen = new Set<string>();
 const shortsFailures = new Map<string, number>();
 
+// Optional components: an install walks through the updater phases over a few polls; "?componentFail" makes it roll back.
+type MockComponent = { id: "apk" | "browser"; installed: boolean; enabled: boolean; managed: boolean; supported: boolean; reason: string | null; downloadBytes: number | null };
+const mockComponents: MockComponent[] = [
+  { id: "apk", installed: false, enabled: false, managed: true, supported: true, reason: null, downloadBytes: 182_000_000 },
+  { id: "browser", installed: true, enabled: false, managed: true, supported: true, reason: null, downloadBytes: null }
+];
+let componentJob: { id: "apk" | "browser"; enabled: boolean; at: number; fail: boolean } | null = null;
+let componentOperation: { id: "apk" | "browser"; enabled: boolean; state: "working" | "complete" | "failed" | "rolled-back"; error: string | null } | null = null;
+const componentPhases = ["downloading", "preflight", "applying", "verifying"] as const;
+function componentStatus() {
+  let phase: string = "current";
+  if (componentJob) {
+    const step = Math.floor((Date.now() - componentJob.at) / 1500);
+    if (step < componentPhases.length) phase = componentPhases[step];
+    else {
+      const item = mockComponents.find(c => c.id === componentJob!.id)!;
+      if (componentJob.fail) componentOperation = { id: item.id, enabled: componentJob.enabled, state: "rolled-back", error: "update-docker-failed" };
+      else { item.enabled = componentJob.enabled; item.installed ||= componentJob.enabled; componentOperation = { id: item.id, enabled: componentJob.enabled, state: "complete", error: null }; }
+      componentJob = null;
+    }
+  }
+  return { available: true, reason: null, currentVersion: "0.4.0-beta.4", items: mockComponents, busy: !!componentJob, phase, error: null, operation: componentOperation };
+}
+function startComponent(id: "apk" | "browser", enabled: boolean) {
+  componentJob = { id, enabled, at: Date.now(), fail: location.search.includes("componentFail") };
+  componentOperation = { id, enabled, state: "working", error: null };
+  return componentStatus();
+}
+
 const json = (body: unknown, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -421,6 +450,9 @@ export function installMockApi() {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     if (path === "/health") return json({ ok: true, version: "mock" });
+    if (path === "/admin/components" && method === "GET") return json(componentStatus());
+    const component = /^\/admin\/components\/(apk|browser)$/.exec(path);
+    if (component && method === "POST") return json(startComponent(component[1] as "apk" | "browser", body.enabled === true), 202);
     if (path === "/admin/updates") return json({ configured: false, connected: false, state: 'idle', mode: null, current: 'unknown', latest: null, branch: null, behind: 0, ahead: 0, checkedAt: null, error: null });
     if (path === "/profiles" && method === "GET") return json(profiles);
     if (path === "/profiles/lock" && method === "POST") { unlockedProfile = null; return json(null, 204); }

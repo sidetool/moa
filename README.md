@@ -48,7 +48,7 @@ MOA는 직접 운영하는 영상 스트리밍 앱입니다. 여러 확장 소�
 - **어느 화면에서나** — PC, 모바일, TV에 맞춰 화면이 바뀝니다. TV에서는 리모컨 방향키만으로 모든 화면을 조작할 수 있고, 휴대폰에서는 홈 화면에 앱처럼 설치할 수 있습니다(PWA).
 - **확장 실행** — Mangayomi(JS)와 Aniyomi(APK) 확장 형식을 지원합니다. 저장소는 사용자가 직접 추가합니다.
 - **웹사이트 플러그인** — ZIP이나 폴더로 설치한 JavaScript 플러그인으로 자막 가져오기, 재생 제어, 페이지 도구를 추가합니다. [개발 템플릿](plugins/template/README.md)과 [API 문서](docs/PLUGINS.md)를 제공합니다.
-- **서버 업데이트** — 기본 Compose 구성에서 관리자가 안정·사전 릴리스를 확인하고 데이터와 설정을 유지하며 업데이트할 수 있습니다.
+- **서버 업데이트** — 호스트 업데이트 도구를 연결하면 관리자가 정식·베타 릴리스를 확인하고 데이터와 설정을 유지하며 업데이트할 수 있습니다.
 
 <table>
   <tr>
@@ -71,13 +71,16 @@ MOA는 직접 운영하는 영상 스트리밍 앱입니다. 여러 확장 소�
 
 ## 빠른 시작
 
+최신 정식 **v0.1.1** 기준입니다.
+
 Linux는 Docker Engine과 Compose 플러그인, macOS·Windows는 Docker Desktop이 필요합니다. Windows에서는 WSL2를 켜고 Linux 컨테이너를 사용합니다.
 
 1. 저장소를 받고 공개 이미지로 실행합니다.
 
    ```sh
-   git clone https://github.com/sidetool/moa.git
+   git clone --branch v0.1.1 --depth 1 https://github.com/sidetool/moa.git
    cd moa
+   echo MOA_VERSION=v0.1.1 > .env
    docker compose up -d
    docker compose logs moa-auth
    ```
@@ -96,11 +99,11 @@ MOA에는 **기본 확장 저장소가 없습니다.** 설정 → 소스에서 �
 | 형식 | 저장소 파일 | 실행 방식 |
 |---|---|---|
 | Mangayomi JS | `index.min.json` / `anime_index.json` | 서버 안의 격리된 JS 런타임 |
-| Aniyomi APK | `index.min.json` | 기본 포함된 별도 컨테이너의 APK 브리지 |
+| Aniyomi APK | `index.min.json` | 정식 기본 구성에 포함된 별도 APK 브리지 |
 
 지원하는 형식과 동작 방식은 [확장 문서](docs/EXTENSIONS.md)에 있습니다. 특정 사이트나 확장 저장소를 추가하는 PR은 받지 않습니다.
 
-확장 옵션의 **연결**에서 개별 프록시를 지정할 수 있습니다. 비워 두면 서버 기본값을 사용합니다. **소스 브라우저 사용 - 실험**은 별도 서비스를 설치한 경우 브라우저 호출을 지원하는 JS 확장에만 적용되며 기본값은 꺼짐입니다. [설정 안내](docs/SOURCE-BROWSER.md)를 참고하세요.
+확장 옵션의 **연결**에서 개별 프록시를 지정할 수 있습니다. 비워 두면 서버 기본값을 사용합니다. **브라우저 인증 사용**은 브라우저 인증 서비스를 설치한 경우 지원하는 JS 확장에 적용되며 기본값은 꺼짐입니다. [설정 안내](docs/SOURCE-BROWSER.md)를 참고하세요.
 
 ## 문서
 

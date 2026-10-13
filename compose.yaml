@@ -14,8 +14,8 @@ services:
       MOA_UPDATER_DIR: /run/moa-updater
       MOA_DOWNLOAD_ROOT: /downloads
       MOA_DOWNLOADS_ENABLED: ${MOA_DOWNLOADS_ENABLED:-1}
-      MOA_APK_URL: http://moa-apk:8797
-      MOA_APK_SECRET_FILE: /run/moa-apk/token
+      MOA_APK_URL: ""
+      MOA_APK_SECRET_FILE: ""
       MOA_CONNECTOR_URL: http://moa-gateway:8798
       MOA_CONNECTOR_SECRET_FILE: /run/moa-connector/token
       MOA_MAX_TRANSCODES: "${MOA_MAX_TRANSCODES:-2}"
@@ -23,9 +23,9 @@ services:
       MOA_TMDB_API_KEY: ${MOA_TMDB_API_KEY:-}
       MOA_YOUTUBE_API_KEY: ${MOA_YOUTUBE_API_KEY:-}
       MOA_KOBIS_API_KEY: ${MOA_KOBIS_API_KEY:-}
-      MOA_SHORTS_EXTRACTOR: ${MOA_SHORTS_EXTRACTOR:-}
-    depends_on:
-      moa-apk: {condition: service_healthy}
+      MOA_SHORTS_EXTRACTOR: ${MOA_SHORTS_EXTRACTOR-/usr/local/bin/yt-dlp}
+      MOA_BYEDPI_BIND: 0.0.0.0
+      MOA_BYEDPI_PROXY: socks5://moa:1080
     volumes:
       - ${MOA_APK_SECRET_PATH:-moa-apk-secret}:/run/moa-apk:ro
       - ${MOA_CONNECTOR_SECRET_PATH:-moa-connector-secret}:/run/moa-connector:ro
@@ -115,6 +115,7 @@ services:
     # No host port, Docker socket, TUN device, or NET_ADMIN capability.
 
   moa-apk:
+    profiles: [apk]
     image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa-apk:${MOA_VERSION:-latest}
     pull_policy: always
     build:

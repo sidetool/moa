@@ -22,3 +22,10 @@ Suwayomi의 `androidx/preference/*.java`, `MemoryCookieJar.kt`, `RxCoroutineBrid
 웹 JS와 WASM, JASSUB/libass/FreeType/default font, sharp/libvips 및 포함된 하위 라이브러리의 **정확한 버전·전체 고지·원소스·수정분·빌드 옵션**을 릴리스별로 확보한다. GPL Corresponding Source와 LGPL의 라이브러리 교체/재링크에 필요한 자료·방식을 함께 제공한다. 잠금 파일이나 wrapper LICENSE만으로 WASM/prebuilt 구성 전체를 인증하지 않는다.
 
 Maven JAR는 `dependencies.lock.json`의 좌표/해시와 embedded META-INF 고지를 보존한다. OS 이미지에는 `/usr/share/doc` 등의 copyright 자료를 유지하고, FFmpeg의 실제 configure/license, Chromium, OpenJDK, 폰트 버전을 기록한다. `xpp3`, legacy W3C/SAX와 shaded JAR의 미확정 항목은 바이너리 공개 전에 확인해야 한다. 권한을 확인하지 못한 외부 미디어·자막·API 데이터는 릴리스에 넣지 않는다.
+
+## 기본 이미지의 요청 시 실행 도구
+
+- ByeDPI: [고정 소스](https://github.com/hufrea/byedpi/tree/ba532298de7b28cfe854aea83d061369d13ca290), MIT (`LICENSES/ByeDPI-MIT.txt`). tar SHA-256 `c7211cfc0729d213219be9b67d774e375d75ae53bbf18b6af1967f06919bbac4`. 정적으로 연결한 musl 1.2.5 고지는 `LICENSES/musl-COPYRIGHT.txt`에 보존한다. 소스 변경 없이 Alpine에서 `make LDFLAGS=-static`, `strip ciadpi`로 빌드한다.
+- yt-dlp: [2026.08.19](https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19), Unlicense (`LICENSES/yt-dlp-Unlicense.txt`). Unix zipapp SHA-256 `1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6`. 포함된 EJS 0.8.0도 Unlicense이며 archive 내부 고지를 유지한다. Python3와 기존 Node로 실행하고 원본 archive를 수정하지 않는다.
+
+Dockerfile이 정확한 다운로드·해시·빌드 명령을 정의한다. 두 도구는 비활성 상태에서 프로세스를 실행하지 않는다.

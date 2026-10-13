@@ -54,6 +54,7 @@ test('maintenance acknowledges a live lease, blocks new work, preserves status a
   app.setErrorHandler((error, _req, reply) => reply.code(error instanceof ApiFailure ? error.statusCode : 500).send({ error: error.message }));
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/admin/updates', async () => ({}));
+  app.get('/api/admin/components', async () => ({}));
   app.post('/api/playback', async () => ({ started: true }));
   const id = '00000000-0000-0000-0000-000000000001';
   try {
@@ -69,6 +70,7 @@ test('maintenance acknowledges a live lease, blocks new work, preserves status a
     assert.equal((await app.inject({ method: 'POST', url: '/api/playback' })).statusCode, 503);
     assert.equal((await app.inject('/api/health')).statusCode, 200);
     assert.equal((await app.inject('/api/admin/updates')).statusCode, 200);
+    assert.equal((await app.inject('/api/admin/components')).statusCode, 200);
     await writeFile(path.join(dir, 'maintenance.json'), JSON.stringify({ id, expiresAt: Date.now() - 1 }));
     await maintenance.tick();
     assert.equal((await app.inject({ method: 'POST', url: '/api/playback' })).statusCode, 200);

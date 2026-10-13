@@ -25,7 +25,9 @@ test('source mapping, serial preference state, stable episode IDs, isolated prog
   db.run('INSERT INTO source_entries(id,repository,entry,installed_entry,code,enabled) VALUES(?,?,?,?,?,1)','source','https://repo.test/index.json',entry,entry,'fixture');
   for (const id of ['p1','p2']) db.run('INSERT INTO profiles(id,name,color,kids,created_at) VALUES(?,?,?,?,?)',id,id,'blue',0,'2026');
   try {
-    assert.deepEqual(source.network(), {defaultProxy:'',revision:0});
+    const { byedpi, ...network } = source.network();
+    assert.deepEqual(network, {defaultProxy:'',revision:0});
+    assert.equal(byedpi.enabled,false); assert.equal(byedpi.running,false);
     assert.equal(source.saveNetwork('socks5://proxy:1080',0).revision,1);
     assert.throws(() => source.saveNetwork('',0), /network-settings-conflict/);
     assert.throws(() => source.saveNetwork('file:///bad',1), /invalid-proxy-address/);

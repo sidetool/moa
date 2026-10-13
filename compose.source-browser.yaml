@@ -1,8 +1,8 @@
 # Explicit opt-in only: add this override to the usual compose command.
 services:
   moa:
-    image: moa:source-browser-local
-    pull_policy: never
+    image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa:${MOA_VERSION:-latest}
+    pull_policy: always
     environment:
       MOA_SOURCE_BROWSER_URL: http://moa-source-browser:8799
       MOA_SOURCE_BROWSER_SECRET_FILE: /run/moa-source-browser/token
@@ -11,7 +11,8 @@ services:
     depends_on:
       moa-source-browser: {condition: service_healthy}
   moa-source-browser:
-    image: moa-source-browser:local
+    image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa-source-browser:${MOA_VERSION:-latest}
+    pull_policy: always
     build:
       context: .
       dockerfile: deploy/source-browser/Dockerfile

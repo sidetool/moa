@@ -1,0 +1,10 @@
+# Optional APK runtime. Existing APK data and tokens are retained.
+services:
+  moa:
+    environment:
+      MOA_APK_URL: http://moa-apk:8797
+      MOA_APK_SECRET_FILE: /run/moa-apk/token
+    depends_on:
+      moa-apk: {condition: service_healthy}
+  moa-apk:
+    profiles: !reset []

@@ -20,8 +20,7 @@ const key = createPrivateKey(process.env.RELEASE_PRIVATE_KEY);
 if (key.asymmetricKeyType !== 'ed25519' || createPublicKey(key).export({ type: 'spki', format: 'pem' }) !== createPublicKey(publicKey).export({ type: 'spki', format: 'pem' })) throw new Error('Release signing key mismatch');
 const files = {};
 for (const name of BUNDLE_FILES) files[name] = name === 'trusted-key.pem' ? publicKey : await readFile(name, 'utf8');
-// Release defaults are image-based; local development overrides remain unchanged in Git.
-files['compose.source-browser.yaml'] = files['compose.source-browser.yaml'].replace('image: moa:source-browser-local', 'image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa:${MOA_VERSION:-stable}').replace('pull_policy: never', 'pull_policy: always').replace('image: moa-source-browser:local', 'image: ghcr.io/${MOA_IMAGE_OWNER:-sidetool}/moa-source-browser:${MOA_VERSION:-stable}');
+// Compose files already use published images; optional runtime selection is installer-owned.
 const bundle = Buffer.from(JSON.stringify({ format: 1, files }));
 await writeFile(path.join(output, 'moa-release.json'), bundle);
 const services = {};
