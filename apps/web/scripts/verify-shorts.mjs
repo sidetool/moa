@@ -60,8 +60,9 @@ const POOL = [
 const TRAILERS = { 'movie:1': ['e101aaaaaaa', 'okaaaaaaaaa'], 'tv:2': [], 'movie:3': ['blkcccccccc'], 'tv:4': ['e153ddddddd'], 'tv:5': ['okeeeeeeeee'], 'movie:6': ['okfffffffff'] };
 
 let settings, kids, log;
-const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], failures: [], patches: [] }; };
+const reset = () => { settings = { navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] }; kids = false; log = { feed: [], trailers: [], seen: [], skips: [], failures: [], patches: [], devicePatches: [] }; };
 const route = async context => {
+  let deviceSettings = null;
   await context.route(url => !['127.0.0.1', 'localhost'].includes(url.hostname), r => {
     const url = new URL(r.request().url());
     if (url.href === 'https://www.youtube.com/iframe_api') return r.fulfill({ contentType: 'text/javascript', body: FAKE_YT });
@@ -72,6 +73,7 @@ const route = async context => {
   await context.route(url => url.pathname.startsWith('/api/') || url.pathname.startsWith('/__moa/api/'), r => {
     const url = new URL(r.request().url()), path = url.pathname, method = r.request().method();
     if (path === '/api/settings') { if (method === 'PATCH') { log.patches.push(r.request().postDataJSON()); settings = { ...settings, ...r.request().postDataJSON() }; } return r.fulfill({ json: settings }); }
+    if (path === '/api/settings/device') { if (method === 'PATCH') { const body = r.request().postDataJSON(); deviceSettings = { ...deviceSettings, ...body.settings }; log.devicePatches.push(body.settings); } return r.fulfill({ json: { settings: deviceSettings } }); }
     if (path === '/api/home') return r.fulfill({ json: { hero: [], rows: [] } });
     if (path === '/api/me') return r.fulfill({ json: { id: 'u', username: '테스트', role: 'member' } });
     if (path === '/api/profiles') return r.fulfill({ json: [{ id: 'test', name: '테스트', color: 'blue', kids }] });
@@ -144,7 +146,7 @@ try {
   await page.goto(`${base}settings#experimental`);
   await page.getByRole('switch', { name: '쇼츠' }).click();
   await until(() => settings.shortsEnabled === true, 'enable');
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   const group = page.getByRole('group', { name: '종류' });
   await group.getByRole('button', { name: '애니' }).click();
   await group.getByRole('button', { name: '시리즈' }).click();
@@ -173,6 +175,7 @@ try {
   assert.equal(await activeTitle(page), '첫 작품');
   await until(async () => (await yt(page)).created.join() === 'e101aaaaaaa,okaaaaaaaaa', 'same-work fallback');
   assert.deepEqual([...new Set(log.trailers)], ['movie:1'], 'only the active work asks for trailers'); // dev StrictMode may repeat an aborted request
+  await page.waitForFunction(() => document.querySelector('.shorts-slide.is-active .shorts-stage')?.getBoundingClientRect().width > 0, undefined, { timeout: 3000 });
   const stage = await page.locator('.shorts-slide.is-active .shorts-stage').boundingBox();
   assert.ok(await page.locator('.shorts.is-fit').count(), 'fit by default');
   assert.ok(stage.width >= 200 && stage.height >= 200 && Math.abs(stage.width / stage.height - 16 / 9) < .05, `fit preserves landscape viewport ${stage.width}x${stage.height}`);
@@ -274,13 +277,14 @@ try {
 
   // Fit OFF keeps 16:9; a revisit leaves out seen and skipped works; replay brings them back.
   await page.goto(`${base}settings#experimental`);
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   await page.getByRole('switch', { name: '화면 맞춤' }).click();
-  await until(() => settings.shortsScreenFit === false, 'fit off');
+  await until(() => log.devicePatches.at(-1)?.shortsScreenFit === false, 'fit off');
   await page.goto(`${base}shorts`);
   await page.locator('.shorts-slide.is-active').waitFor();
   assert.deepEqual(await page.locator('article.shorts-slide h2').allTextContents(), ['둘째 페이지'], 'revisit excludes seen + skipped + failures');
   assert.equal(await page.locator('.shorts.is-fit').count(), 0);
+  await page.waitForFunction(() => document.querySelector('.shorts-slide.is-active .shorts-stage')?.getBoundingClientRect().width > 0, undefined, { timeout: 3000 });
   const plain = await page.locator('.shorts-slide.is-active .shorts-stage').boundingBox();
   assert.ok(Math.abs(plain.width / plain.height - 16 / 9) < .05, `16:9 when off ${plain.width}x${plain.height}`);
   await until(async () => (await activeTitle(page)) === '둘째 페이지', 'fit off playable');

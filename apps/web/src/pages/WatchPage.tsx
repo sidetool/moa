@@ -1,18 +1,18 @@
-import { mergePlaybackMarkers } from '../player/skip-markers';
-import { SeekPreview } from '../player/SeekPreview';
-import { SubtitleStyleControls } from '../components/SubtitleStyleControls';
-import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitle-files';
-import { PluginScripts, PluginTools } from '../components/WebsitePlugins';
-import { CastButton } from '../player/CastButton';
-import type { CastMedia } from '../player/cast';
-import { checkSubtitleAlignment } from '../player/subtitle-sync';
-import { preparePlayback, retirePlayback } from '../player/session-lifecycle';
-import { subtitlesOffForTitle, rememberSubtitlesOff, subtitleOffsetForEpisode, rememberSubtitleOffset, subtitlePreference, rememberSubtitle, loadSubtitlePreference, restoreSubtitle } from "../player/subtitle-preference";
+import { mergePlaybackMarkers } from '../player/playback/skip-markers';
+import { SeekPreview } from '../player/playback/SeekPreview';
+import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
+import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
+import { PluginScripts, PluginTools } from '../features/plugins/WebsitePlugins';
+import { CastButton } from '../player/casting/CastButton';
+import type { CastMedia } from '../player/casting/cast';
+import { checkSubtitleAlignment } from '../player/subtitles/subtitle-sync';
+import { preparePlayback, retirePlayback } from '../player/playback/session-lifecycle';
+import { subtitlesOffForTitle, rememberSubtitlesOff, subtitleOffsetForEpisode, rememberSubtitleOffset, subtitlePreference, rememberSubtitle, loadSubtitlePreference, restoreSubtitle } from "../player/subtitles/subtitle-preference";
 import { enterFullscreen } from "../lib/playback-fullscreen";
-import { documentPipSupported, useDocumentPip } from "../player/document-pip";
+import { documentPipSupported, useDocumentPip } from "../player/playback/document-pip";
 import { useDevicePrefs, setDevicePref } from "../lib/device-prefs";
 import { isRemoteMode, type RemotePlayerEvent } from "../lib/remote";
-import { PlaybackSources } from '../components/PlaybackSources';
+import { PlaybackSources } from '../features/settings/PlaybackSources';
 import {
   ArrowLeft, Captions, Check, ChevronLeft, ChevronRight, CloudDownload, Download, FileUp, ExternalLink, FastForward, Pencil, Search, ListVideo, Maximize, Minimize, Pause, PictureInPicture2,
   House, Play, Rewind, RotateCcw, RotateCw, Settings, Shuffle, SkipForward, SlidersHorizontal, Volume1, Volume2, VolumeX, X
@@ -22,15 +22,16 @@ import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, SubtitleTrack } from "@moa/shared";
+import { keyboardShortcutKey, playerShortcutLabel, type PlayerShortcutAction } from '@moa/shared';
 import { useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
 import { useEpisodeDownload } from "../api/downloads";
 import { cancelTranslationJob, coveredUntil, isTranslationTrack, savedTranslations, translationModeOf, untranslatedGap, useTranslationConfig, type TranslatedRange, type TranslationJob } from "../api/translation";
-import { useSubtitleTranslation } from "../player/subtitle-translation";
-import { hasUnlabelledSiteSubtitle } from "../player/subtitle-language";
-import { useJimakuSearch } from "../player/jimaku";
-import { isKorean, TranslationEntry, TranslationOfferCard, TranslationView } from "../player/TranslationPanel";
-import { rememberAuto, useTranslationAutopilot } from "../player/translation-autopilot";
-import { trackName } from "../player/track-name";
+import { useSubtitleTranslation } from "../player/translation/subtitle-translation";
+import { hasUnlabelledSiteSubtitle } from "../player/subtitles/subtitle-language";
+import { useJimakuSearch } from "../player/translation/jimaku";
+import { isKorean, TranslationEntry, TranslationOfferCard, TranslationView } from "../player/translation/TranslationPanel";
+import { rememberAuto, useTranslationAutopilot } from "../player/translation/translation-autopilot";
+import { trackName } from "../player/subtitles/track-name";
 import { Stepper } from "../player/Stepper";
 import { Artwork } from "../components/Artwork";
 import { Button, ProgressBar, Spinner } from "../components/ui";
@@ -38,7 +39,7 @@ import { api, ApiError } from "../lib/api";
 
 const KIDS_RESTRICTED = "어린이 프로필에서는 볼 수 없는 작품이에요";
 import { clock, cx, episodeTitle } from "../lib/format";
-import { attach, detectCapabilities, compatibilityPlayback, setCompatibilityPlayback, SubtitleController, type EngineHandle } from "../player/engine";
+import { attach, detectCapabilities, compatibilityPlayback, setCompatibilityPlayback, SubtitleController, type EngineHandle } from "../player/playback/engine";
 
 type Panel = null | "subs" | "settings" | "episodes";
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -179,6 +180,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ key: number; side: "left" | "right" | "center"; label: string } | null>(null);
   const prefs = useDevicePrefs();
+  const shortcutLabel = (action: PlayerShortcutAction, label: string) => {
+    const key = playerShortcutLabel(prefs.playerShortcuts[action]);
+    return key ? `${label} (${key})` : label;
+  };
   const step = prefs.seekStep;
   const [boost, setBoost] = useState(false);
   const [ended, setEnded] = useState(false);
@@ -666,6 +671,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     setSubOffset(next); subOffsetRef.current = next;
     subs.current?.setOffset(next);
     rememberSubtitleOffset(episodeId, next);
+    return next;
   };
 
   useEffect(() => {
@@ -751,6 +757,11 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     localStorage.setItem(VOLUME_KEY, String(next));
   };
   const toggleMute = () => { const v = video.current; if (!v) return; v.muted = !v.muted; setMuted(v.muted); };
+  const changeSpeed = (value: number) => {
+    setSpeed(value);
+    if (boosting.current) boosting.current.rate = value;
+    else if (video.current) video.current.playbackRate = value;
+  };
   const toggleFullscreen = useCallback(async () => {
     if (pipWindow) return;
     if (document.fullscreenElement) { await document.exitFullscreen().catch(() => {}); return; }
@@ -953,32 +964,58 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   /* ---------- keyboard ---------- */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
       if(sourcePicker) { if(event.key === "Escape") {event.preventDefault();setSourcePicker(false);} return; }
       const target = event.target as HTMLElement;
       if (target.closest("input, textarea, select, [contenteditable='true']")) return;
-      if (event.key === " " && target.closest("button, a")) return;
+      if (event.key === " " && (panel || target.closest("button, a, summary, [role='button'], [role='slider']") || root.current?.querySelector("dialog[open]"))) return;
       const v = video.current;
       if (!v) return;
       const key = event.key.toLowerCase();
-      const handled = true;
-      if (key === " " || key === "k") togglePlay();
-      else if (key === "arrowleft" || key === "j") seekBy(key === "j" ? -step : -5);
-      else if (key === "arrowright" || key === "l") seekBy(key === "l" ? step : 5);
-      else if (key === "arrowup") changeVolume(v.volume + 0.1);
-      else if (key === "arrowdown") changeVolume(v.volume - 0.1);
-      else if (key === "f") void toggleFullscreen();
-      else if (key === "m") toggleMute();
-      else if (key === "n") goNext();
-      else if (key === "c") chooseSubtitle(subtitle ? null : allSubs[0] ?? null);
+      if (root.current?.querySelector("dialog[open], [aria-modal='true']")) return;
+      if (panel && key !== 'escape') return;
+      const binding = keyboardShortcutKey(event);
+      const action = binding && Object.entries(prefs.playerShortcuts).find(([, value]) => value === binding)?.[0];
+      if (key === " ") { if (!event.repeat) startPress('space'); }
+      else if (key === "arrowleft") seekBy(-5);
+      else if (key === "arrowright") seekBy(5);
       else if (key === "escape") { if (panel) setPanel(null); else if (!document.fullscreenElement && !pipWindow) back(); }
       else if (/^[0-9]$/.test(key)) seekTo((Number(key) / 10) * (v.duration || total));
-      else return;
-      if (handled) { event.preventDefault(); poke(); }
+      else if (action) {
+        if (event.repeat && ['playPause', 'fullscreen', 'mute', 'nextEpisode', 'subtitles'].includes(action)) { event.preventDefault(); return; }
+        if (action === 'playPause') togglePlay();
+        else if (action === 'seekBackward') seekBy(-step);
+        else if (action === 'seekForward') seekBy(step);
+        else if (action === 'volumeUp') changeVolume(v.volume + 0.1);
+        else if (action === 'volumeDown') changeVolume(v.volume - 0.1);
+        else if (action === 'fullscreen') void toggleFullscreen();
+        else if (action === 'mute') toggleMute();
+        else if (action === 'nextEpisode') goNext();
+        else if (action === 'subtitles') chooseSubtitle(subtitle ? null : allSubs[0] ?? null);
+        else if (action === 'speedDown' || action === 'speedUp') {
+          const current = boosting.current?.rate ?? v.playbackRate;
+          const next = (action === 'speedUp' ? SPEEDS.find(value => value > current) : [...SPEEDS].reverse().find(value => value < current)) ?? current;
+          changeSpeed(next);
+          setFlash({ key: Date.now(), side: 'center', label: `${next}배속` });
+        } else if (subtitle && (action === 'subtitleEarlier' || action === 'subtitleLater')) {
+          const offset = nudgeSubs(action === 'subtitleEarlier' ? -0.5 : 0.5);
+          setFlash({ key: Date.now(), side: 'center', label: `자막 ${offset > 0 ? '+' : ''}${offset.toFixed(1)}초` });
+        }
+      } else return;
+      event.preventDefault(); poke();
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' && event.key !== ' ' || holdOrigin.current !== 'space') return;
+      event.preventDefault();
+      const wasBoosting = endPress();
+      if (!wasBoosting && !panel && !sourcePicker && !root.current?.querySelector("dialog[open]")) togglePlay();
+      poke();
     };
     window.addEventListener("keydown", onKey);
     pipWindow?.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("keydown", onKey); pipWindow?.removeEventListener("keydown", onKey); };
+    window.addEventListener("keyup", onKeyUp);
+    pipWindow?.addEventListener("keyup", onKeyUp);
+    return () => { window.removeEventListener("keydown", onKey); pipWindow?.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onKeyUp); pipWindow?.removeEventListener("keyup", onKeyUp); };
   });
 
   // Observers created by this window do not follow the player into the PiP window's rendering loop.
@@ -1011,7 +1048,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const suppressGestureClick = useRef(false);
   const boosting = useRef<{ video: HTMLVideoElement; rate: number } | null>(null);
-  const holdOrigin = useRef<{ id: number; x: number; y: number } | null>(null);
+  const holdOrigin = useRef<number | 'space' | null>(null);
   const mouseClicks = useRef(0);
   const pinch = useRef<{ start: number; done: boolean } | null>(null);
   const fill = prefs.videoFill;
@@ -1041,7 +1078,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const distance = () => { const [a, b] = [...pointers.current.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
   const endPress = useCallback((cancelled = false) => {
     window.clearTimeout(pressTimer.current);
-    if (boosting.current || (cancelled && holdOrigin.current)) { suppressGestureClick.current = true; mouseClicks.current = 0; }
+    if (boosting.current || (cancelled && holdOrigin.current !== null)) { suppressGestureClick.current = true; mouseClicks.current = 0; }
     holdOrigin.current = null;
     const previous = boosting.current;
     if (!previous) return false;
@@ -1050,14 +1087,28 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     setBoost(false);
     return true;
   }, []);
+  // A single owner keeps keyboard and pointer holds from restoring each other's speed.
+  const startPress = (origin: number | 'space') => {
+    if (holdOrigin.current !== null) return;
+    holdOrigin.current = origin;
+    pressTimer.current = window.setTimeout(() => {
+      const v = video.current;
+      if (v && !v.paused && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
+    }, 450);
+  };
+  useEffect(() => { if (panel || sourcePicker) endPress(true); }, [panel, sourcePicker, endPress]);
   useEffect(() => {
     const cancel = () => { window.clearTimeout(tapTimer.current); pointers.current.clear(); pinch.current = null; lastTap.current = null; suppressGestureClick.current = true; mouseClicks.current = 0; endPress(); };
+    const ownerDocument = pipWindow?.document ?? document;
+    const onVisibility = () => { if (ownerDocument.hidden) cancel(); };
     window.addEventListener('blur', cancel);
     pipWindow?.addEventListener('blur', cancel);
-    return () => { window.removeEventListener('blur', cancel); pipWindow?.removeEventListener('blur', cancel); cancel(); };
+    ownerDocument.addEventListener('visibilitychange', onVisibility);
+    return () => { window.removeEventListener('blur', cancel); pipWindow?.removeEventListener('blur', cancel); ownerDocument.removeEventListener('visibilitychange', onVisibility); cancel(); };
   }, [endPress, pipWindow, session]);
 
   const onSurfacePointerDown = (event: React.PointerEvent) => {
+    if (holdOrigin.current === 'space') return;
     lastSurfacePointer.current = event.pointerType;
     if (!pointers.current.size) suppressGestureClick.current = false;
     const surface = (event.currentTarget as HTMLElement).classList.contains("player-surface");
@@ -1077,16 +1128,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     // Buttons retain their normal single-tap click. Only the video surface
     // starts a hold; both layers contribute pointers to the same pinch.
     if (pointers.current.size !== 1 || !surface || panel) return;
-    holdOrigin.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
-    pressTimer.current = window.setTimeout(() => {
-      const v = video.current;
-      if (v && !v.paused && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
-    }, 450);
+    startPress(event.pointerId);
   };
   const onSurfacePointerMove = (event: React.PointerEvent) => {
     if (!pointers.current.has(event.pointerId)) return;
-    const origin = holdOrigin.current;
-    if (event.pointerType !== 'touch' && origin?.id === event.pointerId && Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 12) endPress(true);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const p = pinch.current;
     if (!p || p.done || pointers.current.size !== 2) return;
@@ -1129,6 +1174,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     if (live && side !== "center") toggle(); else tapTimer.current = window.setTimeout(toggle, 280);
   };
   const onSurfacePointerCancel = (event: React.PointerEvent) => {
+    if (!pointers.current.has(event.pointerId)) return;
     pointers.current.delete(event.pointerId);
     if (!pointers.current.size) { pinch.current = null; poke(); }
     suppressGestureClick.current = true;
@@ -1205,7 +1251,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         preload="auto"
         crossOrigin="anonymous"
         onPlay={event => { setPlaying(!event.currentTarget.paused); setEnded(false); }}
-        onPause={event => { setPlayFeedback(false); setPlaying(!event.currentTarget.paused); endPress(true); saveProgress(); swapRevision(); }}
+        onPause={event => { setPlayFeedback(false); setPlaying(!event.currentTarget.paused); if (event.currentTarget.paused) endPress(true); saveProgress(); swapRevision(); }}
         onSeeked={event => { setTime(event.currentTarget.currentTime); setEnded(event.currentTarget.ended || event.currentTarget.currentTime >= event.currentTarget.duration); setWaiting(false); swapRevision(); if (translation.busy) translation.prioritize(event.currentTarget.currentTime); }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
@@ -1356,13 +1402,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
         <div className="player-controls" data-remote-group>
           <div className="controls-left">
-            <button className="icon-btn icon-btn-l" data-remote-entry aria-label={playing ? "일시정지 (K)" : "재생 (K)"} title={playing ? "일시정지 (K)" : "재생 (K)"} onClick={togglePlay}>
+            <button className="icon-btn icon-btn-l" data-remote-entry aria-label={shortcutLabel('playPause', playing ? '일시정지' : '재생')} title={shortcutLabel('playPause', playing ? '일시정지' : '재생')} onClick={togglePlay}>
               {playing ? <Pause size={30} fill="currentColor" /> : <Play size={30} fill="currentColor" />}
             </button>
-            {!live && <><button className="icon-btn icon-btn-l" aria-label={`${step}초 뒤로 (J)`} title={`${step}초 뒤로 (J)`} onClick={() => seekBy(-step)}><RotateCcw size={26} /></button>
-            <button className="icon-btn icon-btn-l" aria-label={`${step}초 앞으로 (L)`} title={`${step}초 앞으로 (L)`} onClick={() => seekBy(step)}><RotateCw size={26} /></button></>}
+            {!live && <><button className="icon-btn icon-btn-l" aria-label={shortcutLabel('seekBackward', `${step}초 뒤로`)} title={shortcutLabel('seekBackward', `${step}초 뒤로`)} onClick={() => seekBy(-step)}><RotateCcw size={26} /></button>
+            <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('seekForward', `${step}초 앞으로`)} title={shortcutLabel('seekForward', `${step}초 앞으로`)} onClick={() => seekBy(step)}><RotateCw size={26} /></button></>}
             <div className="volume">
-              <button className="icon-btn icon-btn-l" aria-label="음소거 (M)" title="음소거 (M)" onClick={toggleMute}><VolumeIcon size={26} /></button>
+              <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('mute', '음소거')} title={shortcutLabel('mute', '음소거')} onClick={toggleMute}><VolumeIcon size={26} /></button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="볼륨" onChange={event => changeVolume(Number(event.target.value))} style={{ "--fill": `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties} />
             </div>
             <span className="player-time">{live ? <b className="live-label">● LIVE</b> : <>{clock(shown)} <span>/ {clock(total)}</span></>}</span>
@@ -1377,14 +1423,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               setAirplayMedia(target);
               if (playing) await v.play().catch(() => {});
             }} />}
-            {session?.next && <button className="icon-btn icon-btn-l" aria-label="다음 화 (N)" title="다음 화 (N)" onClick={goNext}><SkipForward size={26} /></button>}
+            {session?.next && <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('nextEpisode', '다음 화')} title={shortcutLabel('nextEpisode', '다음 화')} onClick={goNext}><SkipForward size={26} /></button>}
             {episodes.length > 1 && <button className={cx("icon-btn icon-btn-l", panel === "episodes" && "is-active")} aria-label="회차 목록" title="회차 목록" onClick={() => setPanel(panel === "episodes" ? null : "episodes")}><ListVideo size={26} /></button>}
             {session && (
-              <button className={cx("icon-btn icon-btn-l", panel === "subs" && "is-active")} aria-label="자막 및 음성" title="자막 및 음성 (C)" onClick={() => setPanel(panel === "subs" ? null : "subs")}><Captions size={26} /></button>
+              <button className={cx("icon-btn icon-btn-l", panel === "subs" && "is-active")} aria-label="자막 및 음성" title="자막 및 음성" onClick={() => setPanel(panel === "subs" ? null : "subs")}><Captions size={26} /></button>
             )}
             <button className={cx("icon-btn icon-btn-l", panel === "settings" && "is-active")} aria-label="재생 설정" title="재생 설정" onClick={() => setPanel(panel === "settings" ? null : "settings")}><Settings size={26} /></button>
             {("pictureInPictureEnabled" in document || documentPipSupported()) && <button className={cx("icon-btn icon-btn-l hide-mobile", pipWindow && "is-active")} aria-label={pipWindow ? "PIP 닫기" : "PIP"} title={pipWindow ? "PIP 닫기" : "PIP"} onClick={() => void pip()}><PictureInPicture2 size={26} /></button>}
-            {!pipWindow && <button className="icon-btn icon-btn-l" aria-label="전체 화면 (F)" title="전체 화면 (F)" onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize size={26} /> : <Maximize size={26} />}</button>}
+            {!pipWindow && <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('fullscreen', '전체 화면')} title={shortcutLabel('fullscreen', '전체 화면')} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize size={26} /> : <Maximize size={26} />}</button>}
           </div>
         </div>
 
@@ -1532,7 +1578,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                 <span className="pf-label">재생 속도</span>
                 <div className="seg seg-fill" role="group" aria-label="재생 속도" style={{ "--segments": SPEEDS.length, "--selected": SPEEDS.indexOf(speed) } as React.CSSProperties}>
                   {SPEEDS.map(value => (
-                    <button key={value} className={cx(speed === value && "is-active")} aria-pressed={speed === value} onClick={() => { setSpeed(value); if (video.current) video.current.playbackRate = value; }}>{value === 1 ? "1x" : `${value}x`}</button>
+                    <button key={value} className={cx(speed === value && "is-active")} aria-pressed={speed === value} onClick={() => changeSpeed(value)}>{value === 1 ? "1x" : `${value}x`}</button>
                   ))}
                 </div>
               </div>

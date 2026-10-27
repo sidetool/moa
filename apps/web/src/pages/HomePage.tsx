@@ -1,16 +1,16 @@
-import { TabFeed, useTabFeed } from '../components/GroupedFeed';
+import { TabFeed, useTabFeed } from '../features/catalog/GroupedFeed';
 import { Settings2 } from "lucide-react";
 import { Link, NavLink, useParams, useSearchParams } from "react-router-dom";
 import type { MediaType } from "@moa/shared";
 import { useHome, useMe, useMediaList } from "../api/queries";
-import { Hero, HeroSkeleton } from "../components/Hero";
+import { Hero, HeroSkeleton } from "../features/catalog/Hero";
 import { Row, RowSkeleton } from "../components/Row";
 import { PosterCard } from "../components/Cards";
 import { Button, ButtonLink, EmptyState, ScrollLoader } from "../components/ui";
 import { TYPE_LABEL, cx } from "../lib/format";
 import { useNavigation, tabPath } from "../lib/navigation";
-import { HomePlugins } from '../components/WebsitePlugins';
-import { RecommendationRow } from '../components/RecommendationRow';
+import { HomePlugins } from '../features/plugins/WebsitePlugins';
+import { RecommendationRow } from '../features/catalog/RecommendationRow';
 
 export function HomePage({ localOnly = false }: { localOnly?: boolean }) {
   const admin = useMe().data?.role === "admin";

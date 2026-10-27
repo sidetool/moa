@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fixture from '../test/fixtures/franchise-seasons.json' with { type: 'json' };
 import { fixtureCatalog } from '../test/fixtures/catalog.js';
-import { Franchises } from '../src/franchise.js';
+import { Franchises } from '../src/catalog/franchise.js';
 
 const { db, catalog, sources, groups } = fixtureCatalog(fixture);
 const service = new Franchises(catalog, groups, { browse: async () => ({ items: [], page: 1, hasNextPage: false }) });

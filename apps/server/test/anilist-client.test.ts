@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {AniListClient} from '../src/anilist-client.js';
-import {AniListRecommendations} from '../src/anilist-recommendations.js';
-import {PluginReviews} from '../src/plugin-reviews.js';
+import {AniListClient} from '../src/metadata/anilist-client.js';
+import {AniListRecommendations} from '../src/profiles/anilist-recommendations.js';
+import {PluginReviews} from '../src/plugins/reviews.js';
 import {Store} from '../src/db.js';
-import {Tmdb} from '../src/tmdb.js';
+import {Tmdb} from '../src/metadata/tmdb.js';
 const seed={kind:'tv' as const,id:1,title:'Synthetic',year:2024};
 const wait=async(s:AniListRecommendations)=>{for(let i=0;i<100&&s.busy;i++)await new Promise(r=>setTimeout(r,1));assert.equal(s.busy,false);};
 

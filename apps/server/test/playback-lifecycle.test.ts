@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RemotePlayback } from '../src/remote-playback.js';
+import { RemotePlayback } from '../src/playback/remote.js';
 import { ApiFailure } from '../src/util.js';
 import { buildApp } from '../src/app.js';
 import Fastify from 'fastify';

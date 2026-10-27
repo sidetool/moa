@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectedCrop } from '../src/thumbnail.js';
+import { detectedCrop } from '../src/playback/thumbnail.js';
 
 test('cropdetect removes cinematic bars, preserves full-frame anime, rejects dark transient crops', () => {
   const metadata = (w: number, h: number, x: number, y: number) => `frame:0\nlavfi.cropdetect.w=${w}\nlavfi.cropdetect.h=${h}\nlavfi.cropdetect.x=${x}\nlavfi.cropdetect.y=${y}\n`;

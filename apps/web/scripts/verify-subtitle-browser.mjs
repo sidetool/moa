@@ -59,8 +59,8 @@ const server = await createServer({
             video { width: 640px; height: 360px; } canvas.JASSUB { position: absolute; pointer-events: none; transform:translateY(calc(-1 * var(--subtitle-lift,0%))); }
             </style></head><body><div class="stage"><video preload="auto"></video></div>
             <script type="module">
-            import '/src/styles/player.css';
-            import { SubtitleController } from '/src/player/engine.ts';
+            import '/src/styles/player.scss';
+            import { SubtitleController } from '/src/player/playback/engine.ts';
             window.video = document.querySelector('video');
             window.controller = new SubtitleController(window.video);
             window.track = format => (${JSON.stringify(tracks)})[format];

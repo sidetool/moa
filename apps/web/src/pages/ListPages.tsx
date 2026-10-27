@@ -1,4 +1,4 @@
-import { GroupedSearch } from '../components/GroupedFeed';
+import { GroupedSearch } from '../features/catalog/GroupedFeed';
 import { hasLoginGate } from "../lib/api";
 import { Bookmark, ChevronRight, History, LogOut, Search as SearchIcon, Settings as SettingsIcon, Trash2, UsersRound, X } from "lucide-react";
 import type { HistoryEntry, Settings } from "@moa/shared";
@@ -8,7 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSources } from "./SourcesPage";
 import { keys, useHistory, useMe, useProfiles, useSearch, useSettings, useWatchlist } from "../api/queries";
 import { PosterCard } from "../components/Cards";
-import { Avatar } from "../components/AppShell";
+import { Avatar } from "../features/layout/AppShell";
 import { logout } from "./AccountsPage";
 import { Artwork } from "../components/Artwork";
 import { Button, ConfirmDialog, EmptyState, ProgressBar, Skeleton, Toggle } from "../components/ui";

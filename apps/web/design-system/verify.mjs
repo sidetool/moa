@@ -1,0 +1,119 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+
+const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
+const server = await createServer({ configFile: fileURLToPath(new URL('./vite.config.ts', import.meta.url)), logLevel: 'error', server: { port: 0, strictPort: false } });
+await server.listen();
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
+const errors = [];
+const results = [];
+try {
+  for (const width of [1280, 390, 320]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(`${server.resolvedUrls.local[0]}#component-library`);
+    await page.locator('[data-preview="buttons"]').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `overflow at ${width}`);
+    assert.equal(await page.evaluate(() => document.querySelector('.docs-prose > h1').getBoundingClientRect().top >= document.querySelector('.docs-header').getBoundingClientRect().bottom), true, `heading hidden at ${width}`);
+    await page.locator('[data-preview="buttons"]').getByRole('button', { name: 'primary', exact: true }).click();
+    await page.getByText('primary 선택됨', { exact: true }).waitFor();
+    const select = page.getByRole('combobox', { name: '자막 언어', exact: true });
+    await select.focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    assert.equal(await select.innerText(), 'English');
+    await select.click();
+    await page.keyboard.press('Escape');
+    assert.equal(await select.getAttribute('aria-expanded'), 'false');
+    assert.equal(await select.evaluate(element => element === document.activeElement), true);
+    const segmented = page.getByRole('radiogroup', { name: '목록 정렬', exact: true });
+    await segmented.getByRole('radio', { name: '인기' }).focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await segmented.getByRole('radio', { name: '최신' }).getAttribute('aria-checked'), 'true');
+    const open = page.getByRole('button', { name: '선택 항목 삭제', exact: true });
+    await open.click();
+    const dialog = page.getByRole('alertdialog');
+    await dialog.waitFor();
+    assert.equal(await dialog.getByRole('button', { name: '취소', exact: true }).evaluate(element => element === document.activeElement), true);
+    for (const key of ['Tab', 'Tab', 'Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab']) {
+      await page.keyboard.press(key);
+      assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true, `dialog focus escaped with ${key}`);
+    }
+    await page.keyboard.press('Escape');
+    await page.getByRole('alertdialog').waitFor({ state: 'detached' });
+    assert.equal(await open.evaluate(element => element === document.activeElement), true);
+    if (width < 760) {
+      const menu = page.getByRole('button', { name: '목차', exact: true });
+      await menu.click();
+      assert.equal(await menu.getAttribute('aria-expanded'), 'true');
+      await page.keyboard.press('Escape');
+      assert.equal(await menu.getAttribute('aria-expanded'), 'false');
+    }
+    const download = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Markdown', exact: true }).click();
+    assert.equal((await download).suggestedFilename(), 'component-library.md');
+    await page.getByRole('link', { name: 'Pattern Library', exact: true }).click();
+    const form = page.locator('[data-preview="form-pattern"]');
+    await form.getByRole('button', { name: '프로필 저장', exact: true }).click();
+    await form.getByText('이름을 입력하세요.', { exact: true }).waitFor();
+    await form.getByLabel('프로필 이름', { exact: true }).fill('미리보기');
+    await form.getByRole('button', { name: '프로필 저장', exact: true }).click();
+    await form.getByText('미리보기 저장됨', { exact: true }).waitFor();
+    const filter = page.locator('[data-preview="filter-pattern"]');
+    await filter.getByRole('searchbox').fill('English');
+    assert.equal(await filter.locator('.preview-results li').count(), 1);
+    await filter.getByRole('button', { name: '조건 초기화', exact: true }).click();
+    assert.equal(await filter.locator('.preview-results li').count(), 3);
+    const shortcuts = page.locator('[data-preview="player-shortcuts"]');
+    const playKey = shortcuts.getByRole('button', { name: '재생·일시정지 단축키', exact: true });
+    await playKey.click();
+    await page.keyboard.press('p');
+    assert.equal(await playKey.innerText(), 'P');
+    await playKey.click();
+    await page.keyboard.press('j');
+    await shortcuts.getByRole('alert').filter({ hasText: '이미 설정한 간격 뒤로에 사용 중입니다.' }).waitFor();
+    await page.keyboard.press('Space');
+    await shortcuts.getByRole('alert').filter({ hasText: '문자·기호' }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await playKey.innerText(), 'P');
+    await playKey.click();
+    await page.keyboard.press('Shift+BracketRight');
+    assert.equal(await playKey.innerText(), 'Shift + ]');
+    await playKey.click();
+    await page.keyboard.press('Backspace');
+    assert.equal(await playKey.innerText(), '사용 안 함');
+    await playKey.click();
+    await page.keyboard.press('Tab');
+    assert.equal(await playKey.getAttribute('aria-pressed'), 'false');
+    await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).click();
+    assert.equal(await playKey.innerText(), 'K');
+    assert.equal(await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).isDisabled(), true);
+    const schedule = page.frameLocator('iframe[title="요일별 신작 미리보기"]');
+    await schedule.locator('.poster img').first().waitFor();
+    assert.equal(await schedule.locator('#schedule-list').evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight <= element.clientHeight + 1), true, `schedule must scroll horizontally at ${width}`);
+    assert.equal(await schedule.locator('.anime').first().evaluate(element => {
+      const poster = element.querySelector('.poster').getBoundingClientRect();
+      const time = element.querySelector('.time').getBoundingClientRect();
+      const title = element.querySelector('.title').getBoundingClientRect();
+      return poster.width >= 140 && time.top >= poster.bottom && title.top >= time.bottom;
+    }), true, `schedule card order at ${width}`);
+    await schedule.getByRole('button', {name: /별빛 여행/}).click();
+    await page.getByText('이동 경로: /title/preview-anime', {exact:true}).waitFor();
+    await schedule.getByRole('button', {name: /새로운 모험/}).click();
+    await page.getByText(`이동 경로: /search?q=${encodeURIComponent('새로운 모험')}`, {exact:true}).waitFor();
+    assert.equal(await schedule.locator('body').evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `schedule overflow at ${width}`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `pattern overflow at ${width}`);
+    results.push({ width, navigation: true, fields: true, select: true, segmented: true, dialogFocus: true, sourceDownload: true, patterns: true, playerShortcuts: true });
+    await context.close();
+  }
+  assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ ok: true, results }, null, 2));
+} finally {
+  await browser.close();
+  await server.close();
+}

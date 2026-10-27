@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreResult, searchTerms } from '../src/tmdb.js';
+import { scoreResult, searchTerms } from '../src/metadata/tmdb.js';
 
 test('search terms drop tags, seasons and trailing numbers', () => {
   const a = searchTerms('(자막) 극장판 달빛 수호대: 별빛성편 제1장');
@@ -29,9 +29,9 @@ test('scores prefer exact titles of the expected kind', () => {
 
 test('season poster fallback is deduplicated, cached and shared by card/detail without changing the logo', async () => {
   const { Store } = await import('../src/db.js');
-  const { Catalog } = await import('../src/catalog.js');
-  const { Sources } = await import('../src/sources.js');
-  const { Tmdb } = await import('../src/tmdb.js');
+  const { Catalog } = await import('../src/catalog/service.js');
+  const { Sources } = await import('../src/sources/service.js');
+  const { Tmdb } = await import('../src/metadata/tmdb.js');
   const { mkdtemp,rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');

@@ -1,7 +1,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { compatibilityHttp, type CompatibilityHttpInput } from '@moa/extensions';
-import { SourceSessions, type BrowserState } from '../src/source-session.js';
+import { compatibilityHttp, type CompatibilityHttpInput } from '../src/sources/extensions/index.js';
+import { SourceSessions, type BrowserState } from '../src/sources/session.js';
 
 const url = 'https://example.com/read/page';
 const input = (target = url): CompatibilityHttpInput => ({ url: target, options: { browserSession: { url } } });

@@ -4,10 +4,10 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {Store} from '../src/db.js';
-import {Catalog} from '../src/catalog.js';
-import {Sources} from '../src/sources.js';
-import {RemotePlayback} from '../src/remote-playback.js';
-import {SourceIdentities} from '../src/source-identity.js';
+import {Catalog} from '../src/catalog/service.js';
+import {Sources} from '../src/sources/service.js';
+import {RemotePlayback} from '../src/playback/remote.js';
+import {SourceIdentities} from '../src/sources/identity.js';
 
 test('existing work/episode IDs and two profiles survive mirror change and database reopen',async()=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'source-identity-'));let db=new Store(dir);let sources:Sources|undefined;

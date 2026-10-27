@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
-import { invokeMangayomi, type MangayomiInvocation, type SourceWebViewRequest } from '@moa/extensions';
-import { SourceBrowser } from '../src/source-browser.js';
-import { Sources } from '../src/sources.js';
+import { invokeMangayomi, type MangayomiInvocation, type SourceWebViewRequest } from '../src/sources/extensions/index.js';
+import { SourceBrowser } from '../src/sources/browser.js';
+import { Sources } from '../src/sources/service.js';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
+import { Catalog } from '../src/catalog/service.js';
 
 const request: SourceWebViewRequest = { url: 'https://example.com/page', headers: { Referer: 'https://example.com/' }, script: 'true', waitUntil: 'load', timeoutMs: 25_000 };
 const signal = () => AbortSignal.timeout(10_000);

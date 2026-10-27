@@ -1,83 +1,36 @@
 # 출연·제작진
 
-MOA 작품 화면의 기본 출연 목록에 TMDB 출연·제작진 전체와 인물별 다른 참여 작품을 더하는 웹사이트 플러그인.
+작품 화면에 TMDB 출연·제작진 전체와 인물별 참여 작품을 표시합니다. 기존 출연 줄을 유지하며, TMDB 인물 ID가 있는 배우를 선택하면 배역·직무·참여 작품을 볼 수 있습니다. 참여 작품을 누르면 MOA에서 제목을 검색합니다.
 
-## 기능
+## 동작과 데이터
 
-- 작품 화면의 **출연** 줄은 그대로 유지함. 플러그인을 켜면 제목 옆에 **출연·제작진 전체**가 나타나고, TMDB 인물 식별자가 저장된 배우는 선택할 수 있게 됨.
-- 전체 목록은 MOA의 기본 시트로 열림. 출연·제작 탭에서 배역과 직무를 볼 수 있음.
-- 인물을 선택하면 이 작품에서 맡은 배역·직무와 TMDB에 등록된 다른 참여 작품을 보여 줌. 작품을 선택하면 MOA 검색 화면에서 제목을 검색함. 자동 재생하지 않고, MOA에서 볼 수 있는지도 보장하지 않음.
-- 기본 출연 정보가 없는 TMDB 연결 작품(제작진만 있는 작품, 이전에 저장된 작품 정보 등)에는 **출연·제작진** 줄과 목록 열기 버튼만 표시함. 연결되지 않았고 출연 정보도 없는 작품에는 아무것도 추가하지 않음.
-- 플러그인을 끄거나 지우면 기존 출연 줄로 돌아감. 열려 있던 시트도 닫히며, 다시 켜도 저절로 열리지 않음.
+`title.people` 훅으로 `moa.metadata.credits()`와 `moa.metadata.person({ provider, id })`를 제공합니다. 화면은 본체의 `apps/web/src/features/title/TitleExtras.tsx`(`PeopleRow`)와 `TitlePeople.tsx`(`PeopleSheet`)에서 표시합니다. 같은 훅이 여러 개면 현재 프로필에 등록된 플러그인 중 ID 순서의 첫 항목을 사용합니다.
 
-## 동작 방식
+확정된 TMDB 작품 연결만 사용하며 이름으로 인물을 추측하지 않습니다. TV는 시리즈 전체 기준이고 배역·직무는 원문을 유지합니다. 출연·제작 각 최대 60명, 배역·직무 각 8개, 인물별 참여 작품 최대 40편을 공급자 순서로 표시합니다. 잘린 결과는 화면에 알립니다.
 
-플러그인에는 화면이나 iframe UI가 없음. `title.people` 훅만 등록하며, MOA가 요청할 때 `moa.metadata.credits()`와 `moa.metadata.person({ provider, id })`의 결과를 돌려줌. 화면은 MOA 본체가 직접 그림(`apps/web/src/components/TitleExtras.tsx`의 `PeopleRow`, `TitlePeople.tsx`의 `PeopleSheet`).
+화면을 닫거나 작품을 바꾸면 요청을 취소하고 늦은 응답을 버립니다. 플러그인을 끄면 원래 출연 줄로 돌아갑니다. 본체는 작품·인물 ID와 응답 형식을 확인하며 TMDB의 `w185` 인물 사진과 `w342` 포스터만 표시합니다. 실패·권한 거부 시 이전 정보를 지우고 다시 시도할 수 있게 합니다.
 
-- 본체는 플러그인 ID를 하드코딩하지 않음. 현재 프로필에서 훅을 등록한 플러그인 가운데 ID 순으로 첫 번째를 사용함.
-- 기본 출연 줄의 배우는 저장된 `identity`가 있을 때에만 선택할 수 있음. 이름으로 TMDB 인물을 추정하지 않음. 이전에 저장된 작품 정보에는 식별자가 없을 수 있으며, 이때도 전체 목록에서는 현재 출연·제작진을 새로 받아 선택할 수 있음.
-- 매번 새로 요청하고 클라이언트에 캐시하지 않음. 시트를 닫거나 화면을 바꾸면 진행 중인 요청을 취소하고, 늦게 도착한 응답은 버림.
-- 본체가 모든 응답을 다시 검사함. `tmdb` 이외의 공급자, 현재 작품이 아닌 응답(`title.mediaId`), 요청하지 않은 인물, 형식이 맞지 않는 응답은 오류로 처리함. 이미지는 `https://image.tmdb.org/t/p/w185/…`(인물), `…/w342/…`(포스터) 형식만 표시하고 나머지는 대체 이미지로 바꿈.
-- 인물 요청이 거부되거나 실패하면 이전에 받은 출연·제작진도 버림. 이름·사진·배역을 남기지 않고, 목록으로 돌아가면 다시 요청함.
+## 설치와 권한
 
-## 데이터 범위와 한계
-
-- 모든 정보는 TMDB 기준이며, 관리자가 자동 또는 직접 연결한 TMDB 작품만 사용함. 제목으로 다시 찾지 않음.
-- TV 작품의 출연·제작진은 **시리즈 전체 기준**임. 특정 시즌이나 회차의 출연을 뜻하지 않으며, 화면에 이를 표시함.
-- 배역·직무는 TMDB 표기를 그대로 보여 줌. `(voice)` 같은 표기도 유지하며, 더빙 언어나 성우 여부를 따로 판단하지 않음.
-- 서버는 출연·제작 각 최대 60명(배역·직무 각 8개), 인물별 참여 작품 최대 40편을 공급자 순서대로 반환함. 잘린 경우 ‘일부만 보여요’로 표시함. 참여 작품은 인기순이 아님.
-
-## 상태
-
-| 서버 상태 | 표시 |
-| --- | --- |
-| `ready` | 목록. 비어 있으면 안내 |
-| `unlinked` | TMDB 작품과 연결되지 않음 |
-| `unconfigured` | 관리자가 TMDB를 연결해야 함. 다시 시도 가능 |
-| `restricted` | 현재 프로필에서는 볼 수 없음 |
-| `unavailable` | TMDB에서 가져오지 못함. 다시 시도 가능 |
-| 요청 실패·잘못된 응답·지원하지 않는 공급자 | 오류와 다시 시도 |
-
-## 설치
-
-`title.people` 훅과 `metadata.read` 권한을 제공하는 MOA가 필요함. `minMoaVersion`은 아직 출시되지 않은 `0.1.2-beta.1`로 잠정 지정했으며, 실제 출시 버전에 맞춰 조정해야 함. 본체 기능이 먼저 있어야 하며 ZIP만 설치해서 추가할 수는 없음.
-
-관리자 계정으로 **플러그인 → 폴더 선택**에서 이 폴더를 선택해 설치하고 활성화함. ZIP으로 설치하려면 저장소 루트에서 실행함.
+MOA `0.1.2-beta.1` 이상에서 `title.people`과 `metadata.read`를 지원해야 합니다. `metadata.read`만 요청하며 TMDB 키는 서버에 남습니다. 검색 이동과 이미지는 본체에서 처리합니다. [플러그인 안내](../../docs/PLUGINS.md)를 참고해 주세요.
 
 ```sh
 node plugins/template/build.mjs ../title-people
 ```
 
-## 권한
+## 검사
 
-| 권한 | 용도 |
-| --- | --- |
-| `metadata.read` | 현재 작품의 TMDB 출연·제작진과 인물별 참여 작품 조회. TMDB API 키는 서버에 남음 |
-| 훅 `title.people` | MOA 작품 화면에 위 정보를 제공 |
+저장소 루트에서 실행합니다. 브라우저 검사에는 Playwright와 선택적 Chromium 실행 경로를 지정합니다. 합성 SDK·공급자 응답으로 화면·권한·취소·오류 처리를 확인합니다.
 
-`app.navigate`, `ui`, 네트워크 출처(`connect`)는 요청하지 않음. 검색 이동과 이미지 표시는 MOA 본체가 처리함. 미디어 소스·계정·시청 기록에는 접근하지 않음.
+```sh
+node --test plugins/title-people/test/plugin.test.mjs
+MOA_PLAYWRIGHT_PATH=/path/to/playwright-core MOA_BROWSER_EXECUTABLE=/path/to/chrome   node plugins/title-people/test/host-ui.smoke.mjs
+```
 
 ## 출처
 
-시트 하단에 MOA 정보 화면과 같은 TMDB 공식 로고(원본 SVG)와 다음 문구를 표시함.
+화면에 TMDB 공식 로고와 다음 문구를 표시합니다.
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-인물·작품 정보와 이미지의 저작권은 TMDB와 각 권리자에게 있음.
-
-## 검사
-
-- `test/plugin.test.mjs`: 가짜 SDK로 플러그인 스크립트를 검사함. 인자 없는 `credits()` 호출, 인물 ID를 문자열 그대로 전달하는지, 다른 공급자·다른 작품·SDK 없음 거부를 확인함.
-
-  ```sh
-  node --test plugins/title-people/test/plugin.test.mjs
-  ```
-
-- `test/host-ui.smoke.mjs`: 실제 `PeopleRow`·`PeopleSheet`·훅 등록부를 웹 앱의 Vite로 묶어 가짜 공급원과 함께 브라우저에서 검사함. 외부 요청은 모두 차단하고 TMDB 이미지는 로컬 응답으로 대신함. 플러그인 없음/있음, 식별자 있는 배우만 선택 가능, 취소된 요청 무시, 배역 원문 유지, 텍스트 처리, 인물 화면, 검색 이동, 거부·실패·형식 오류 시 이전 정보 제거와 재요청, 상태별 안내, 데스크톱→모바일 크기 변경, 끄기·다시 켜기를 확인함. Playwright가 필요하며 없으면 건너뜀.
-
-  ```sh
-  MOA_PLAYWRIGHT_PATH=/path/to/playwright-core [MOA_BROWSER_EXECUTABLE=/path/to/chrome] \
-    node plugins/title-people/test/host-ui.smoke.mjs [스크린샷-폴더]
-  ```
-
-라이선스는 저장소의 [GPL-3.0-or-later 라이선스](../../LICENSE)를 따름.
+정보·이미지 권리는 TMDB와 각 권리자에게 있습니다. 플러그인 라이선스는 [GPL-3.0-or-later](../../LICENSE)를 따릅니다.

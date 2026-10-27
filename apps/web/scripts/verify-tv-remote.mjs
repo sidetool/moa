@@ -28,6 +28,7 @@ async function fixture(options = {}) {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const calls = { searches: [], applies: [], sessions: [] };
+  let device = { subtitleStep: 5, subtitleHeight: 0, ...options.device };
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/fixture/video.mp4', route => {
     const range = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/);
@@ -39,6 +40,11 @@ async function fixture(options = {}) {
   await context.route(url => url.pathname.startsWith('/api/'), async route => {
     const req = route.request(), url = new URL(req.url()), path = url.pathname;
     const json = body => route.fulfill({ json: body }).catch(() => {});
+    if (path === '/api/me') return json({ role: 'admin' });
+    if (path === '/api/plugin-runtime') return json([]);
+    if (path === '/api/settings/device') { if (req.method() === 'PATCH') device = { ...device, ...req.postDataJSON().settings }; return json({ settings: device }); }
+    if (path === '/api/admin/default-navigation') return json({ navigation: null });
+    if (path.endsWith('/markers')) return json({ status: 'matched', markers: { introStart: 20, introEnd: 80, creditsStart: 480, creditsEnd: 540 } });
     if (path === '/api/profiles') return json([{id:'ui-test',name:'테스트',color:'violet'}]);
     if (path === '/api/sources') return json([]);
     if (path === '/api/home') {
@@ -121,10 +127,11 @@ try {
     await p.keyboard.press('ArrowDown');await p.keyboard.press('ArrowRight');
     assert.equal(await p.locator('video').evaluate(v=>v.currentTime),before,'Panel arrows must not seek');
     await f.panel.getByRole('button',{name:/자막 설정/}).focus();await p.keyboard.press('Enter');
-    await f.panel.getByRole('button',{name:'더 크게',exact:true}).focus();await p.keyboard.press('Enter');
+    await f.panel.getByRole('slider',{name:'자막 크기',exact:true}).focus();await p.keyboard.press('ArrowRight');
+    await f.panel.locator('summary').filter({hasText:'상세 조절'}).focus();await p.keyboard.press('Enter');
     await p.getByRole('slider',{name:'자막 높이'}).focus();
     const old=await p.getByRole('slider',{name:'자막 높이'}).inputValue();await p.keyboard.press('ArrowRight');
-    assert.equal(Number(await p.getByRole('slider',{name:'자막 높이'}).inputValue()),Number(old)+1);
+    assert.equal(Number(await p.getByRole('slider',{name:'자막 높이'}).inputValue()),Number(old)+5);
     await p.keyboard.press('Escape');await f.panel.locator('.panel-link').waitFor();
     await p.keyboard.press('Escape');await p.waitForFunction(()=>!document.querySelector('.player-panel'));
     await p.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='자막 및 음성');
@@ -157,9 +164,9 @@ try {
     await p.getByRole('button',{name:'테스트',exact:true}).waitFor();
     await p.keyboard.press('ArrowRight');await p.keyboard.press('Enter');await p.waitForURL(base+'/');
     assert.equal(await p.evaluate(()=>document.documentElement.hasAttribute('data-tv')),true);
-    await p.goto(base+'/settings#device');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).waitFor();
+    await p.goto(base+'/settings#controls');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).waitFor();
     await p.getByRole('combobox',{name:'TV 리모컨 모드'}).click();await p.getByRole('option',{name:'항상 켜기',exact:true}).click();
-    await p.goto(base+'/settings/tabs');await p.getByRole('button',{name:'홈 편집',exact:true}).focus();await p.keyboard.press('Enter');
+    await p.goto(base+'/settings#tabs');await p.getByRole('button',{name:'홈 편집',exact:true}).focus();await p.keyboard.press('Enter');
     const dialog=p.getByRole('dialog',{name:'홈 탭 편집'});await dialog.waitFor();
     await p.waitForFunction(()=>document.activeElement?.closest('[role="dialog"]'));
     for(const key of ['ArrowDown','ArrowDown','ArrowRight','ArrowLeft']) {
@@ -168,7 +175,7 @@ try {
     await p.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Unidentified',keyCode:461,bubbles:true})));
     await p.waitForFunction(()=>!document.querySelector('[role="dialog"]'));
     await p.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='홈 편집');
-    await p.goto(base+'/settings#device');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).click();await p.getByRole('option',{name:'끄기',exact:true}).click();await p.reload();
+    await p.goto(base+'/settings#controls');await p.getByRole('combobox',{name:'TV 리모컨 모드'}).click();await p.getByRole('option',{name:'끄기',exact:true}).click();await p.reload();
     await p.getByRole('combobox',{name:'TV 리모컨 모드'}).waitFor();
     assert.equal(await p.getByRole('combobox',{name:'TV 리모컨 모드'}).textContent(),'끄기');
     assert.equal(await p.evaluate(()=>document.documentElement.hasAttribute('data-tv')),false);

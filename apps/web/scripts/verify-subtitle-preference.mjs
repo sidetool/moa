@@ -133,7 +133,7 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('moa.subtitleChoice:["second","e2"]')), null);
   await page.evaluate(async () => {
     localStorage.setItem('moa.profile', 'first');
-    const { rememberSubtitle } = await import('/src/player/subtitle-preference.ts');
+    const { rememberSubtitle } = await import('/src/player/subtitles/subtitle-preference.ts');
     await rememberSubtitle('e2', { id: 'upload-stable', source: 'upload', label: '선택한 파일.srt', format: 'vtt', url: '/expired' }, 'e1');
   });
   let release;

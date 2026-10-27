@@ -4,8 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { Tmdb } from '../src/tmdb.js';
-import { PluginDiscovery } from '../src/plugin-discovery.js';
+import { Tmdb } from '../src/metadata/tmdb.js';
+import { PluginDiscovery } from '../src/plugins/discovery.js';
 import { buildApp } from '../src/app.js';
 
 const items = [{provider:'tmdb',kind:'movie' as const,id:'1',title:'영화'}];

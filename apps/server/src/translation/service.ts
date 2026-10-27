@@ -5,9 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { TranslationConfig, TranslationJob, SubtitleTrack } from '@moa/shared';
 import { TRANSLATION_MAX_KEYS } from '@moa/shared';
 import { Store } from '../db.js';
-import { Catalog } from '../catalog.js';
+import { Catalog } from '../catalog/service.js';
 import { ApiFailure } from '../util.js';
-import { Gemini, MODEL, ENDPOINTS, validModel, validKey, normalizeEndpoint } from './gemini.js';
+import { TranslationClient } from './client.js';
+import { DEFAULT_MODEL, ENDPOINTS, validModel, validKey, normalizeEndpoint } from './endpoint.js';
 import { subtitleDocument, nextBatch, translatedRanges, type Document } from './subtitle.js';
 
 interface Secret {
@@ -64,7 +65,7 @@ const LIMIT = 200 * 1024 * 1024;
 const TTL = 24 * 60 * 60 * 1000;
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
-/** Manual, shared work queue. Only validated cue text is sent to Gemini. */
+/** Manual, shared work queue. Only validated cue text is sent to the translation provider. */
 export class Translations {
   get updaterBusy() { return this.work.size > 0 || this.testingKeys.size > 0 || [...this.jobs.values()].some(job => job.state === 'queued' || job.state === 'running'); }
   private secret: Secret;
@@ -84,10 +85,10 @@ export class Translations {
     private db: Store,
     private catalog: Catalog,
     dataDir: string,
-    private gemini = new Gemini(),
+    private client = new TranslationClient(),
   ) {
     this.filename = path.join(dataDir, 'translation-secret.json');
-    this.secret = { provider: 'gemini', baseUrl: ENDPOINTS.gemini, apiKeys: [], model: MODEL, enabled: false, batchSize: 120, requestIntervalMs: 1000, retryCount: 2 };
+    this.secret = { provider: 'gemini', baseUrl: ENDPOINTS.gemini, apiKeys: [], model: DEFAULT_MODEL, enabled: false, batchSize: 120, requestIntervalMs: 1000, retryCount: 2 };
     try {
       const saved = JSON.parse(readFileSync(this.filename, 'utf8'));
       const keys = (Array.isArray(saved.apiKeys) ? saved.apiKeys : saved.apiKey ? [saved.apiKey] : [])
@@ -109,7 +110,7 @@ export class Translations {
         };
       chmodSync(this.filename, 0o600);
     } catch (error: any) {
-      this.secret = { provider: 'gemini', baseUrl: ENDPOINTS.gemini, apiKeys: [], model: MODEL, enabled: false, batchSize: 120, requestIntervalMs: 1000, retryCount: 2 };
+      this.secret = { provider: 'gemini', baseUrl: ENDPOINTS.gemini, apiKeys: [], model: DEFAULT_MODEL, enabled: false, batchSize: 120, requestIntervalMs: 1000, retryCount: 2 };
       if (error.code !== 'ENOENT') console.warn('translation-config-unreadable: translation disabled');
     }
     db.db
@@ -167,7 +168,7 @@ export class Translations {
     }
     if (next.provider !== this.secret.provider) {
       next.baseUrl = ENDPOINTS[next.provider];
-      next.model = next.provider === 'gemini' ? MODEL : 'gpt-4.1-mini';
+      next.model = next.provider === 'gemini' ? DEFAULT_MODEL : 'gpt-4.1-mini';
     }
     if (update.baseUrl !== undefined) next.baseUrl = normalizeEndpoint(update.baseUrl);
     const endpointChanged = next.provider !== this.secret.provider || next.baseUrl !== this.secret.baseUrl;
@@ -219,7 +220,7 @@ export class Translations {
   async models(): Promise<{ models: string[] }> {
     if (!this.secret.apiKeys.length) throw new ApiFailure(400, 'translation-not-configured');
     const endpoint = this.secret;
-    return { models: await this.withKey((key) => this.gemini.models(key, AbortSignal.timeout(15000), endpoint)) };
+    return { models: await this.withKey((key) => this.client.models(key, AbortSignal.timeout(15000), endpoint)) };
   }
   async testKey(id: string): Promise<TranslationConfig> {
     const endpoint = this.secret;
@@ -232,7 +233,7 @@ export class Translations {
       for (let attempt = 0; attempt <= endpoint.retryCount; attempt++) {
         if (this.secret !== endpoint) throw new ApiFailure(409, 'translation-config-changed');
         try {
-          await this.gemini.translate(key, endpoint.model, [{ id: 0, text: 'Hello.' }], { title: '', sourceLanguage: 'en' }, AbortSignal.timeout(30000), endpoint);
+          await this.client.translate(key, endpoint.model, [{ id: 0, text: 'Hello.' }], { title: '', sourceLanguage: 'en' }, AbortSignal.timeout(30000), endpoint);
           result = { ok: true };
           break;
         } catch (error) {
@@ -526,7 +527,7 @@ export class Translations {
             .slice(-6)
             .map((line) => ({ original: line.text.slice(0, 500), translation: output[line.id].slice(0, 500) }));
           const translated = await this.translateWithRetry((key) =>
-            this.gemini.translate(
+            this.client.translate(
               key,
               work.model,
               missing,

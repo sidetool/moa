@@ -252,7 +252,7 @@ try {
     await page.locator('.source-more').scrollIntoViewIfNeeded();
     await page.locator('.source-more').waitFor({ state: 'detached' });
     assert.deepEqual(pages, [['popular', 1], ['popular', 2], ['popular', 2], ['popular', 3]]);
-    await slide(page.locator('.segmented'), page.getByRole('button', { name: '최신', exact: true }));
+    await slide(page.locator('.segmented'), page.getByRole('radio', { name: '최신', exact: true }));
     await page.getByRole('link', { name: 'latest 작품 0', exact: true }).waitFor();
     assert.equal(await page.getByRole('link', { name: 'popular 작품 0', exact: true }).count(), 0);
     await page.goto(`${base}local/genre/드라마`);

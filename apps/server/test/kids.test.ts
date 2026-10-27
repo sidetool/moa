@@ -4,8 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { kidsAllowed, selectCertification } from '../src/kids.js';
-import { Tmdb } from '../src/tmdb.js';
+import { kidsAllowed, selectCertification } from '../src/profiles/kids.js';
+import { Tmdb } from '../src/metadata/tmdb.js';
 import { Store } from '../src/db.js';
 import { buildApp } from '../src/app.js';
 

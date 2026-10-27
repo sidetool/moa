@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { Store } from '../../src/db.js';
-import { Catalog } from '../../src/catalog.js';
-import { Sources } from '../../src/sources.js';
-import { TitleGroups } from '../../src/title-groups.js';
+import { Catalog } from '../../src/catalog/service.js';
+import { Sources } from '../../src/sources/service.js';
+import { TitleGroups } from '../../src/catalog/title-groups.js';
 
 /** Load only authored fixture records into an in-memory database. */
 export function fixtureCatalog(fixture: any) {

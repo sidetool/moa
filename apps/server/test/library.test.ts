@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
 import { Store } from '../src/db.js';
-import { Library } from '../src/library.js';
+import { Library } from '../src/library/service.js';
 import { config } from '../src/config.js';
 
 test('scanner groups seasons, auto-detects singleton movies, reuses probes and updates/deletes changed files', async () => {

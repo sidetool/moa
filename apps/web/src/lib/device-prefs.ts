@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { DEFAULT_DEVICE_SETTINGS, type DeviceSettings, type Settings } from '@moa/shared';
+import { DEFAULT_DEVICE_SETTINGS, isPlayerShortcuts, type DeviceSettings, type Settings } from '@moa/shared';
 import { api, currentProfileId } from './api';
 export { deviceId } from './device-id';
 
@@ -18,6 +18,7 @@ const record = (key: string) => {
       if (!Object.hasOwn(DEFAULT_DEVICE_SETTINGS, key)) return false;
       if (key in limits) return value === null && ['subtitleScale', 'subtitleShadow', 'subtitleOutline'].includes(key)
         || typeof value === 'number' && Number.isFinite(value) && value >= limits[key][0] && value <= limits[key][1];
+      if (key === 'playerShortcuts') return isPlayerShortcuts(value);
       if (key === 'shortsScreenFit') return value === null || typeof value === 'boolean';
       if (key === 'subtitleSize') return typeof value === 'string' && ['small', 'medium', 'large', 'xlarge'].includes(value);
       if (key === 'subtitleBackground') return typeof value === 'string' && ['original', 'none', 'soft', 'solid'].includes(value);

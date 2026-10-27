@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Playback, type Session } from '../src/playback.js';
+import { Playback, type Session } from '../src/playback/service.js';
 import { config } from '../src/config.js';
 import { buildApp } from '../src/app.js';
 

@@ -1,0 +1,365 @@
+{
+  "version": 1,
+  "include": [
+    "base.css",
+    "document.css"
+  ],
+  "token_files": [
+    "base.css",
+    "document.css"
+  ],
+  "exceptions": [
+    {
+      "file": "document.css",
+      "property": "max-height",
+      "value": "calc(100dvh - var(--docs-header-offset) - var(--space-8))",
+      "reason": "Keep the document navigation within the viewport below its measured sticky header."
+    },
+    {
+      "file": "document.css",
+      "property": "transform",
+      "value": "translateY(-200%)",
+      "reason": "Move the skip link outside the viewport until keyboard focus reveals it."
+    },
+    {
+      "file": "document.css",
+      "property": "border",
+      "value": "var(--border-width) solid CanvasText",
+      "reason": "Use the operating system foreground in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "min-height",
+      "value": "100dvh",
+      "reason": "The document must fill the dynamic viewport without hard-coding a device size."
+    },
+    {
+      "file": "base.css",
+      "property": "width",
+      "value": "1px",
+      "reason": "Keep screen-reader-only text in the accessibility tree without occupying layout space."
+    },
+    {
+      "file": "base.css",
+      "property": "height",
+      "value": "1px",
+      "reason": "Keep screen-reader-only text in the accessibility tree without occupying layout space."
+    },
+    {
+      "file": "base.css",
+      "property": "margin",
+      "value": "-1px",
+      "reason": "Cancel the one-pixel box of screen-reader-only text."
+    },
+    {
+      "file": "base.css",
+      "property": "animation-duration",
+      "value": "0.01ms",
+      "reason": "Honor reduced motion while preserving animation completion events."
+    },
+    {
+      "file": "base.css",
+      "property": "animation-iteration-count",
+      "value": "1",
+      "reason": "Stop looping animations when reduced motion is requested."
+    },
+    {
+      "file": "base.css",
+      "property": "transition-duration",
+      "value": "0.01ms",
+      "reason": "Honor reduced motion while preserving transition completion events."
+    },
+    {
+      "file": "base.css",
+      "property": "outline-offset",
+      "value": "calc(-1 * var(--focus-width))",
+      "reason": "Inset the password reveal focus ring inside its input without clipping."
+    },
+    {
+      "file": "base.css",
+      "property": "outline-offset",
+      "value": "calc(-1 * var(--focus-tv-width))",
+      "reason": "Inset the television focus ring inside the password reveal button."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "rotate(180deg)",
+      "reason": "Reverse the balanced chevron when its menu opens."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "translateY(calc(-1 * var(--menu-inset)))",
+      "reason": "Menu entrance travel follows the existing list inset."
+    },
+    {
+      "file": "base.css",
+      "property": "z-index",
+      "value": "-1",
+      "reason": "Place the selected segment surface behind its controls inside an isolated stacking context."
+    },
+    {
+      "file": "base.css",
+      "property": "width",
+      "value": "calc((100% - 2 * var(--switch-inset)) / var(--segments))",
+      "reason": "Divide usable group width evenly after removing the two edge insets."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "translateX(calc(var(--selected) * 100%))",
+      "reason": "Move the selection surface by the selected integer cell index."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "translateX(calc(var(--selected) * -100%))",
+      "reason": "Reverse cell movement for right-to-left reading direction."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "translateY(calc(-1 * var(--border-width))) rotate(-45deg)",
+      "reason": "Construct the checkbox tick from two perpendicular borders."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "translateX(calc(-1 * var(--switch-travel)))",
+      "reason": "Mirror switch travel in right-to-left direction."
+    },
+    {
+      "file": "base.css",
+      "property": "max-height",
+      "value": "calc(100dvh - var(--space-8))",
+      "reason": "Keep a centered dialog inside the viewport with two equal outer gutters."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "translateY(calc(-1 * var(--space-2)))",
+      "reason": "Use the shared small spacing for the existing modal entrance."
+    },
+    {
+      "file": "base.css",
+      "property": "background",
+      "value": "var(--skeleton-fill) 0 0/300% 100%",
+      "reason": "Expand the skeleton gradient to allow its loading sweep."
+    },
+    {
+      "file": "base.css",
+      "property": "animation",
+      "value": "shimmer var(--motion-skeleton) linear infinite",
+      "reason": "Repeat only the existing loading placeholder while data is pending."
+    },
+    {
+      "file": "base.css",
+      "property": "background-position",
+      "value": "100% 0",
+      "reason": "Start the skeleton sweep at its far edge."
+    },
+    {
+      "file": "base.css",
+      "property": "background-position",
+      "value": "-50% 0",
+      "reason": "Move the expanded skeleton gradient past its opposite edge."
+    },
+    {
+      "file": "base.css",
+      "property": "width",
+      "value": "calc(4 * var(--space-10))",
+      "reason": "The existing heading skeleton spans four control-width units."
+    },
+    {
+      "file": "base.css",
+      "property": "animation",
+      "value": "spin var(--motion-spinner) linear infinite",
+      "reason": "Repeat the spinner only while its loading component is mounted."
+    },
+    {
+      "file": "base.css",
+      "property": "transform",
+      "value": "rotate(360deg)",
+      "reason": "Complete one rotation for the existing spinner."
+    },
+    {
+      "file": "base.css",
+      "property": "border",
+      "value": "var(--border-width) solid ButtonText",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "background",
+      "value": "ButtonFace",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "background",
+      "value": "ButtonText",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "background",
+      "value": "Highlight",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "border-color",
+      "value": "Highlight",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "background",
+      "value": "HighlightText",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    },
+    {
+      "file": "base.css",
+      "property": "color",
+      "value": "HighlightText",
+      "reason": "Use operating system control and selection colors so switches and selected segments remain visible in forced-colors mode."
+    }
+  ],
+  "duplicate_token_reviews": [
+    {
+      "value": "220px",
+      "tokens": [
+        {
+          "file": "document.css",
+          "name": "--docs-sidebar-width"
+        },
+        {
+          "file": "document.css",
+          "name": "--docs-grid-min"
+        }
+      ],
+      "reason": "Navigation rail width and minimum form column width have separate responsive roles."
+    },
+    {
+      "value": "#ffffff",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--accent-ink"
+        },
+        {
+          "file": "base.css",
+          "name": "--focus-color"
+        },
+        {
+          "file": "base.css",
+          "name": "--primary-bg"
+        }
+      ],
+      "reason": "Accent icon ink, keyboard focus and primary action surface are separate color roles."
+    },
+    {
+      "value": "10px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--radius-m"
+        },
+        {
+          "file": "base.css",
+          "name": "--option-padding"
+        }
+      ],
+      "reason": "Popup radius and option padding describe independent shape and spacing."
+    },
+    {
+      "value": "4px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--space-1"
+        },
+        {
+          "file": "base.css",
+          "name": "--backdrop-blur"
+        }
+      ],
+      "reason": "Small layout spacing and backdrop blur are independent geometry and visual roles."
+    },
+    {
+      "value": "40px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--space-10"
+        },
+        {
+          "file": "base.css",
+          "name": "--control-height"
+        }
+      ],
+      "reason": "Group spacing and default control hit height can evolve independently."
+    },
+    {
+      "value": "48px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--space-12"
+        },
+        {
+          "file": "base.css",
+          "name": "--control-height-lg"
+        }
+      ],
+      "reason": "Section spacing and large control height can evolve independently."
+    },
+    {
+      "value": "18px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--control-padding"
+        },
+        {
+          "file": "base.css",
+          "name": "--checkbox-size"
+        },
+        {
+          "file": "base.css",
+          "name": "--switch-travel"
+        }
+      ],
+      "reason": "Button padding, checkbox size and switch travel have independent control geometry."
+    },
+    {
+      "value": "2px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--focus-width"
+        },
+        {
+          "file": "base.css",
+          "name": "--focus-gap"
+        }
+      ],
+      "reason": "Focus stroke thickness and separation from the element are independent."
+    },
+    {
+      "value": "3px",
+      "tokens": [
+        {
+          "file": "base.css",
+          "name": "--switch-inset"
+        },
+        {
+          "file": "base.css",
+          "name": "--focus-tv-width"
+        }
+      ],
+      "reason": "Switch inset and television focus stroke serve unrelated controls."
+    }
+  ]
+}

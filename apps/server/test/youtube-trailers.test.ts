@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { YouTubeTrailers } from '../src/youtube-trailers.js';
+import { YouTubeTrailers } from '../src/metadata/youtube-trailers.js';
 import { buildApp } from '../src/app.js';
 
 const id = (s: string) => s.repeat(11);

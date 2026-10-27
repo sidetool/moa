@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ApkBridge } from '../src/apk-bridge.js';
+import { ApkBridge } from '../src/sources/apk-bridge.js';
 
 test('APK status distinguishes disabled, ready and unreachable without returning RPC secrets/errors', async () => {
   const disabled = new ApkBridge('', '');

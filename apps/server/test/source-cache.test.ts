@@ -4,9 +4,9 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Store} from '../src/db.js';
-import {SourceReadCache,SOURCE_CACHE_LIMITS} from '../src/source-cache.js';
-import {Sources} from '../src/sources.js';
-import {Catalog} from '../src/catalog.js';
+import {SourceReadCache,SOURCE_CACHE_LIMITS} from '../src/sources/cache.js';
+import {Sources} from '../src/sources/service.js';
+import {Catalog} from '../src/catalog/service.js';
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 async function fixture(){const root=await mkdtemp(join(tmpdir(),'moa-cache-'));const db=new Store(root),catalog=new Catalog(db);return{root,db,catalog};}
 const seed=(db:Store)=>{const e=JSON.stringify({id:'s',name:'Source',format:'mangayomi-js',baseUrl:'https://source.test',version:'1'});db.run('INSERT INTO source_entries(id,repository,entry,installed_entry,code,enabled) VALUES(?,?,?,?,?,1)','s','https://repo.test',e,e,'source');};

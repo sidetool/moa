@@ -1,81 +1,44 @@
 # 요즘 인기 영화·TV
 
-MOA 홈에 TMDB 일간·주간 인기 영화와 TV 작품을 표시하는 웹사이트 플러그인.
+홈에 TMDB 일간·주간 인기 영화와 TV 작품을 최대 20편 표시합니다. 작품을 누르면 MOA 제목 검색으로 이동하며, 방향키·Home·End 또는 모바일 가로 스크롤로 탐색할 수 있습니다.
 
-## 기능
+## 데이터와 동작
 
-- 영화·TV, 일간·주간을 선택해 인기 작품을 최대 20편 표시함.
-- 작품을 선택하면 MOA 검색 화면에서 해당 제목을 검색함. 자동 재생하거나 특정 소스의 재생 가능 여부를 보장하지 않음.
-- 새로고침과 다시 시도로 목록을 다시 요청함. 선택을 빠르게 바꾸면 마지막 선택의 응답만 표시함.
-- 방향키와 Home·End 키로 작품 카드 사이를 이동할 수 있음. 모바일에서는 가로로 밀어 넘김.
-- 응답과 캐시는 MOA 서버가 관리함. 플러그인은 화면에 보이는 선택의 최신 응답만 유지하고 별도 목록 캐시를 두지 않음.
+[TMDB 트렌드](https://developer.themoviedb.org/reference/trending-all)는 전 세계 TMDB 이용자의 관심도 기준입니다. 국내·OTT 순위나 MOA 재생 가능 여부를 뜻하지 않습니다. 한국어 정보가 있으면 한국어로 표시하며 TV에는 드라마·예능·애니·다큐 등이 포함됩니다.
 
-## 데이터 범위와 한계
+새로고침과 기간 변경 때 마지막 요청만 표시합니다. 서버가 새 결과를 받지 못하면 24시간 미만의 캐시와 갱신 시각을 보여 주며 오래된 결과임을 알립니다. 권한 거부·미설정·오류에서는 이전 목록을 지웁니다.
 
-- TMDB [트렌드](https://developer.themoviedb.org/reference/trending-all)는 전 세계 TMDB 이용자의 관심도 기준임. 국내 인기 순위나 OTT 시청 순위가 아님. 제목·소개는 한국어 정보가 있으면 한국어로 표시됨.
-- TV에는 드라마뿐 아니라 예능·애니메이션·다큐멘터리·토크쇼 등이 포함됨.
-- 서버가 최신 목록을 가져오지 못하면 24시간 미만의 캐시가 있을 때에만 마지막 목록과 갱신 시각을 ‘최신 정보가 아닐 수 있음’과 함께 표시함.
+## 설치와 권한
 
-## 상태
-
-| 서버 상태 | 표시 |
-| --- | --- |
-| `ready` | 작품 목록. 결과가 없으면 빈 목록 안내 |
-| `unconfigured` | 관리자가 MOA 설정에서 TMDB를 연결해야 함. 다시 시도 가능 |
-| `restricted` | 현재 프로필(예: 키즈 프로필)에서는 목록을 표시하지 않음 |
-| `unavailable` | 사용 가능한 캐시가 없는 경우 오류와 다시 시도. 오래된 캐시가 있으면 호스트는 `ready`와 `stale: true`를 반환함 |
-| 요청 실패·잘못된 응답 | 오류와 다시 시도 |
-
-`restricted`, `unconfigured`, 오류 상태에서는 이전 목록을 남기지 않고 포스터도 요청하지 않음.
-
-## 설치
-
-`moa.discovery.trending()`과 `discovery.read` 권한을 제공하는 MOA가 필요함. `minMoaVersion`은 아직 출시되지 않은 `0.1.2-beta.1`로 잠정 지정했으며, 실제 출시 버전에 맞춰 조정해야 함. 현재 v0.1.1은 새 권한을 알지 못해 설치 단계에서 거부할 수 있음. 본체에 이 API가 먼저 포함되어야 하며 ZIP만 설치해서 기능을 추가할 수는 없음.
-
-관리자 계정으로 **플러그인 → 폴더 선택**에서 이 폴더를 선택해 설치하고 활성화하면 홈에 표시됨. ZIP으로 설치하려면 저장소 루트에서 템플릿 빌드 도구를 실행함.
+MOA `0.1.2-beta.1` 이상의 `moa.discovery.trending()`과 `discovery.read`가 필요합니다. 관리자가 폴더나 ZIP을 설치하면 홈에 표시됩니다. [플러그인 안내](../../docs/PLUGINS.md)를 참고해 주세요.
 
 ```sh
 node plugins/template/build.mjs ../trending-titles
 ```
 
-생성된 `plugins/template/dist/trending-titles.zip`을 플러그인 화면에서 설치하면 됨. 패키지에는 `manifest.json`과 `plugin.js`만 포함됨.
-
-## 권한
+생성 파일은 `plugins/template/dist/trending-titles.zip`입니다.
 
 | 권한 | 용도 |
 | --- | --- |
-| `discovery.read` | MOA 서버를 통해 TMDB 인기 영화·TV 목록 조회. TMDB API 키는 서버에 남고 플러그인에 전달되지 않음 |
-| `app.navigate` | 선택한 작품의 MOA 검색 화면으로 이동 |
-| `ui` | 홈에 표시하는 플러그인 높이 조정(120–1200px) |
-| `https://image.tmdb.org` | 포스터 이미지 다운로드 |
+| `discovery.read` | 서버에서 인기 작품을 조회합니다. TMDB 키는 서버에 남습니다. |
+| `app.navigate` | MOA 검색으로 이동합니다. |
+| `ui` | 패널 높이를 120–1200px로 조절합니다. |
+| `https://image.tmdb.org` | 포스터를 가져옵니다. |
 
-플러그인 iframe의 보안 정책은 `data:`·`blob:` 이미지만 허용함. 그래서 포스터는 `moa.fetch`로 MOA 서버를 거쳐 받아 blob URL로 표시함. `https://image.tmdb.org/t/p/w342/…` 형식의 주소만 요청하며, 화면에 보이거나 곧 보일 카드의 포스터만 한 번에 하나씩 가져옴. 목록이 바뀌면 남은 요청은 버리고 blob URL을 해제함. 포스터를 받지 못하면 제목을 대신 표시함. TMDB 이미지 서버에 소스 사이트의 쿠키나 TMDB API 키를 전송하지 않음.
+포스터는 `w342` 주소만 `moa.fetch`로 받아 blob URL로 표시합니다. 보이거나 곧 보일 이미지를 한 번에 하나씩 요청하며 목록이 바뀌면 남은 요청과 blob URL을 정리합니다. 미디어 소스·계정·시청 기록에는 접근하지 않습니다.
 
-미디어 소스·계정·시청 기록에는 접근하지 않음. 작품 정보는 텍스트로만 표시함.
+응답의 `provider`와 `(provider, kind, id)`를 함께 확인합니다. ID는 문자열이며 MOA 작품 ID와 다릅니다. 현재 패키지는 TMDB의 출처·이미지 규칙만 지원합니다.
 
-## 출처
+## 검사와 출처
 
-[TMDB](https://www.themoviedb.org/)의 공식 로고(MOA 정보 화면과 같은 원본 SVG)와 다음 문구를 표시함.
+다음 검사는 합성 SDK로 상태·포스터·키보드·요청 취소를 확인합니다. Playwright가 필요합니다.
+
+```sh
+MOA_PLAYWRIGHT_PATH=/path/to/node_modules/playwright-core node plugins/trending-titles/test/smoke.mjs
+```
+
+화면에 TMDB 공식 로고와 다음 고지를 표시합니다.
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-작품 정보와 포스터의 저작권은 TMDB와 각 권리자에게 있음.
-
-## 검사
-
-`test/smoke.mjs`는 가짜 SDK와 호스트와 같은 CSP를 사용하는 브라우저 검사임. 상태별 화면, 요청 경쟁, 포스터 순차 다운로드와 허용 목록, 키보드 이동, 높이 범위, 신뢰할 수 없는 텍스트 처리를 확인함. Playwright를 별도로 설치해야 하며, 없으면 건너뜀.
-
-```sh
-MOA_PLAYWRIGHT_PATH=/path/to/node_modules/playwright-core node plugins/trending-titles/test/smoke.mjs [스크린샷-폴더]
-```
-
-라이선스는 저장소의 [GPL-3.0-or-later 라이선스](../../LICENSE)를 따름.
-
-## 공급자와 식별자
-
-공통 API 이름은 `moa.discovery.trending`이며 공급자에 종속되지 않음. 응답의
-`provider`와 각 항목의 `(provider, kind, id)`를 함께 확인함. `id`는 숫자로
-변환하지 않는 문자열이고, MOA 작품 ID와 별개임. 이 패키지는 현재 TMDB의
-출처 표시·이미지 권한에 맞춰 구현되어 다른 공급자 응답은 명시적으로
-지원 불가로 표시함. 새 공급자를 추가할 때 출처 표시와 이미지 권한도
-맞춰야 하며, 다른 서비스 결과를 TMDB 트렌드라고 표시하지 않음.
+정보·포스터 권리는 TMDB와 각 권리자에게 있습니다. 플러그인 라이선스는 [GPL-3.0-or-later](../../LICENSE)를 따릅니다.

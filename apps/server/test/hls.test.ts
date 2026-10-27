@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { vodInitialization } from '../src/hls.js';
+import { vodInitialization } from '../src/playback/hls.js';
 
 const box = (type: string, contents: Buffer) => {
   const header = Buffer.alloc(8); header.writeUInt32BE(contents.length + 8); header.write(type, 4);

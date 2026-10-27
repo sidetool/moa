@@ -1,5 +1,5 @@
-import { SourceFilters, useSourceFilters } from '../components/SourceFilters';
-import { sourcePage, parseSelection } from '../lib/source-browse';
+import { SourceFilters, useSourceFilters } from '../features/sources/SourceFilters';
+import { sourcePage, parseSelection } from '../features/sources/source-browse';
 import { useEffect, useId, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -7,7 +7,7 @@ import { ArrowLeft, ChevronRight, Plus, Radio, RefreshCw, Search, Settings2, Tra
 import type { BrowseSelection, MediaCard, MediaType, Page, SourcePreference, SourcePreload, SourceRemovalImpact, SourceRemovalResult, VideoSource } from '@moa/shared';
 import { api, ApiError, sized } from '../lib/api';
 import { useMe } from '../api/queries';
-import { Button, ButtonLink, EmptyState, IconButton, ScrollLoader, Select, Skeleton, Spinner, Toggle } from '../components/ui';
+import { Button, ButtonLink, EmptyState, IconButton, ScrollLoader, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../components/ui';
 import { LandscapeCard, PosterCard } from '../components/Cards';
 import { Row, RowSkeleton } from '../components/Row';
 import { cx } from '../lib/format';
@@ -47,13 +47,13 @@ export function SourceBrowsePage() {
   const [draft,setDraft] = useState<BrowseSelection | undefined>(selection);
   useEffect(() => setDraft(selection), [rawFilters,id]);
   const mode = term || selection?.filters?.length ? 'search' : params.get('mode') === 'latest' ? 'latest' : 'popular';
-  const setMode = (mode: string) => setParams({ mode }, { replace: true });
+  const setMode = (mode: 'popular' | 'latest' | 'search') => setParams({ mode }, { replace: true });
   const query = useInfiniteQuery({ queryKey: ['source-browse',id,mode,term,selection], initialPageParam: 1, queryFn: ({ pageParam, signal }) => sourcePage(id,mode,term,pageParam,selection,signal), getNextPageParam: last => last.hasNextPage ? last.page + 1 : undefined, enabled: Boolean(source?.enabled), staleTime: 5 * 60_000, retry: false });
   const items = [...new Map(query.data?.pages.flatMap(p => p.items).map(item => [item.id,item]) || []).values()];
-  const modes = [['popular','인기'],['latest','최신']].filter(([value]) => schema.data?.availableModes.includes(value));
+  const modes = ([{ value: 'popular', label: '인기' }, { value: 'latest', label: '최신' }] as const).filter(({ value }) => schema.data?.availableModes.includes(value));
   return <div className="page-pad"><header className="page-head"><button type="button" className="text-btn" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate("/", { replace: true })}><ArrowLeft size={16}/>뒤로</button><h1>{source?.name || '소스'}</h1></header>
     <form className="source-search-form" role="search" onSubmit={e => { e.preventDefault(); const next = new URLSearchParams(params); next.set('q',input.trim()); setParams(next, { replace: true }); }}><label className="field"><span>{source?.name || '이 소스'}에서 검색</span><input type="search" aria-label="이 소스에서 검색" placeholder="작품 제목" maxLength={200} value={input} onChange={e => setInput(e.target.value)}/></label><Button type="submit" variant="primary">검색</Button>{term && <Button type="button" onClick={() => {const next = new URLSearchParams(params); next.delete('q'); setParams(next, { replace: true });}}>검색 지우기</Button>}</form>
-    <div className="source-toolbar"><div className="segmented" role="group" aria-label="목록 정렬" style={{ '--segments': Math.max(1, modes.length), '--selected': modes.findIndex(([value]) => value === mode) } as React.CSSProperties}>{modes.map(([value,label]) => <button key={value} type="button" aria-pressed={mode === value} className={cx(mode === value && 'is-active')} onClick={() => setMode(value)}>{label}</button>)}</div><Button icon={<RefreshCw size={16}/>} onClick={() => void query.refetch()} disabled={query.isFetching}>새로고침</Button></div>
+    <div className="source-toolbar"><SegmentedControl label="목록 정렬" value={mode} options={modes} onChange={setMode} /><Button icon={<RefreshCw size={16}/>} onClick={() => void query.refetch()} disabled={query.isFetching}>새로고침</Button></div>
     {rawFilters && !selection && <p role="alert">저장된 필터 주소를 읽을 수 없습니다. <button className="text-btn" onClick={() => { const next=new URLSearchParams(params); next.delete('filters'); setParams(next, { replace: true }); }}>조건 초기화</button></p>}
     <details className="browse-filters"><summary>필터와 정렬{selection?.filters?.length ? ' · 적용 중' : ''}</summary>{schema.data ? <SourceFilters schema={schema.data} value={draft} onChange={setDraft} actions={<Button variant="primary" onClick={() => { const next=new URLSearchParams(params); if(draft) next.set('filters',JSON.stringify(draft)); else next.delete('filters'); setParams(next, { replace: true }); }}>조건 적용</Button>} /> : <p>{schema.isPending ? '불러오는 중…' : '필터를 불러오지 못했습니다.'}</p>}</details>
     {term && <p className="source-muted">“{term}” 검색 결과 · {items.length}개{query.hasNextPage ? " 이상" : ""}</p>}

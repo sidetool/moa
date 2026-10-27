@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { Sources } from '../src/sources.js';
-import { TitleGroups } from '../src/title-groups.js';
-import { Franchises, buildFranchise, type FranchiseMedia } from '../src/franchise.js';
+import { Catalog } from '../src/catalog/service.js';
+import { Sources } from '../src/sources/service.js';
+import { TitleGroups } from '../src/catalog/title-groups.js';
+import { Franchises, buildFranchise, type FranchiseMedia } from '../src/catalog/franchise.js';
 
 function media(id:string,title:string,season?:number,part?:number):FranchiseMedia {
   return {title,card:{id,title,type:'anime',provider:{id:'ko',name:'한국',kind:'mangayomi-js',lang:'ko'}},seasons:[],

@@ -2,11 +2,11 @@
 import { createRoot } from "react-dom/client";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import type { Person } from "@moa/shared";
-import { PeopleRow } from "../../../../apps/web/src/components/TitleExtras";
-import { registerPeopleHook, type PeopleRequest } from "../../../../apps/web/src/lib/people-hooks";
-import "../../../../apps/web/src/styles/base.css";
-import "../../../../apps/web/src/styles/components.css";
-import "../../../../apps/web/src/styles/pages.css";
+import { PeopleRow } from "../../../../apps/web/src/features/title/TitleExtras";
+import { registerPeopleHook, type PeopleRequest } from "../../../../apps/web/src/features/title/people-hooks";
+import "../../../../apps/web/src/styles/base.scss";
+import "../../../../apps/web/src/styles/components.scss";
+import "../../../../apps/web/src/styles/pages.scss";
 
 type Pending = { value: PeopleRequest; resolve: (value: unknown) => void; reject: (error: Error) => void; aborted: boolean };
 const pending: Pending[] = [];

@@ -32,7 +32,7 @@ for key, value in {'PUBLIC_HOST': 'localhost', 'PUBLIC_SCHEME': 'http', 'GATEWAY
 # Use separate test containers; mount compiled source code over existing runtime images.
 services = {
  'moa': {'image':'moa-moa:latest','environment':{'MOA_REQUIRE_ACCOUNT':'1','MOA_SCAN_INTERVAL_MS':'0','MOA_TMDB_TOKEN':'','MOA_TMDB_API_KEY':''},
-   'volumes':[f'{root}/apps/server/dist:/app/apps/server/dist:ro',f'{root}/packages/extensions/dist:/app/packages/extensions/dist:ro',f'{root}/packages/subtitles-ko/dist:/app/packages/subtitles-ko/dist:ro',f'{root}/packages/skip-markers/dist:/app/packages/skip-markers/dist:ro',f'{work}/app-data:/data',f'{work}/media:/media:ro']},
+   'volumes':[f'{root}/apps/server/dist:/app/apps/server/dist:ro',f'{work}/app-data:/data',f'{work}/media:/media:ro']},
  'moa-auth': {'image':'moa-moa-auth:latest','environment':{'PUBLIC_ORIGIN':origin},'volumes':[f'{root}/deploy/auth:/app:ro',f'{work}/config:/config:ro',f'{work}/auth-data:/data']},
  'gateway': {'image':'nginx:1.27-alpine','ports':[f'127.0.0.1:{port}:8080'],'volumes':[f'{work}/gateway.conf:/etc/nginx/conf.d/default.conf:ro'],'depends_on':['moa','moa-auth']},
 }

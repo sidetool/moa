@@ -11,7 +11,7 @@ const base = process.env.MOA_VERIFY_URL || 'http://127.0.0.1:5181';
 const videoBytes = await readFile(process.env.MOA_TEST_VIDEO);
 const output = process.env.MOA_VERIFY_OUTPUT || verificationPath('verification-player-state');
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
 const errors = [], results = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function gate() { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; }
@@ -28,6 +28,7 @@ async function fixture(options = {}) {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const calls = { searches: [], applies: [], sessions: [] };
+  const preferences = new Map(), titleChoices = new Map();
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/fixture/video.mp4', route => {
     const range = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/);
@@ -39,6 +40,14 @@ async function fixture(options = {}) {
   await context.route(url => url.pathname.startsWith('/api/'), async route => {
     const req = route.request(), url = new URL(req.url()), path = url.pathname;
     const json = body => route.fulfill({ json: body }).catch(() => {});
+    if (path === '/api/me') return json({ role: 'admin' });
+    if (path === '/api/plugin-runtime') return json([]);
+    if (path.endsWith('/markers')) return json({ status: 'matched', markers: { introStart: 20, introEnd: 80, creditsStart: 480, creditsEnd: 540 } });
+    if (path.endsWith('/subtitles/preference')) {
+      const episode = path.split('/')[3], media = episode === 'e3' ? 'm2' : 'm1';
+      if (req.method() === 'PUT') { const { choice } = req.postDataJSON(); preferences.set(episode, choice); titleChoices.set(media, choice); }
+      return json(preferences.has(episode) ? { choice: preferences.get(episode) } : titleChoices.get(media) === null ? { choice: null } : {});
+    }
     if (path === '/api/settings') { await options.settingsGate?.promise; return json({ ...settings, ...options.settings }); }
     if (path === '/api/playback' && req.method() === 'POST') {
       const { episodeId } = req.postDataJSON(); calls.sessions.push(episodeId);
@@ -114,7 +123,10 @@ try {
     assert.match(await f.off().getAttribute('class'), /is-active/);
     await f.panel.getByRole('button', { name: '일본어 (파일)' }).click();
     await f.page.reload();
-    await until(() => f.calls.applies.includes('e2'), 'Explicit subtitle selection clears title off preference');
+    await f.open();
+    assert.match(await f.panel.getByRole('button', { name: '일본어 (파일)' }).getAttribute('class'), /is-active/);
+    await f.page.goto(base+'/watch/e4');
+    await until(() => f.calls.applies.includes('e4'), 'Explicit subtitle selection clears title off preference for another episode');
     results.push('Title subtitle off survives next/reload, isolates other titles and clears on manual enable'); await f.close();
   }
   {
@@ -153,10 +165,16 @@ try {
     assert.match(await f.page.locator('.player').getAttribute('class'), /is-chrome/);
     await f.page.screenshot({ path: `${output}/mobile-subtitles.png` });
     await f.panel.getByRole('button', { name: '닫기', exact: true }).click();
+    assert.equal(await f.page.locator('.next-countdown').count(), 0, 'closing the panel keeps the dismissed countdown stopped');
+    results.push('Post-credits content preserved; an open panel and interaction stop next-up'); await f.close();
+  }
+  {
+    const f = await fixture({ settings: { autoFetchSubtitles: false }, mobile: true });
+    await f.page.locator('video').evaluate(v => { v.currentTime = 587; void v.play(); });
     await f.page.locator('.next-countdown').waitFor();
     await f.page.locator('video').evaluate(v => v.dispatchEvent(new Event('waiting')));
     await until(async () => await f.page.locator('.next-countdown').count() === 0, 'buffering pauses countdown');
-    results.push('Post-credits content preserved; open panel and buffering pause next-up'); await f.close();
+    results.push('Buffering pauses an active next-up countdown'); await f.close();
   }
   for (const automatic of [false, true]) {
     const nextGate = gate();

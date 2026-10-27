@@ -4,10 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { Sources } from '../src/sources.js';
-import { Catalog } from '../src/catalog.js';
-import { subtitleQuery } from '../src/subtitle-query.js';
-import { playbackMediaType } from '../src/tmdb.js';
+import { Sources } from '../src/sources/service.js';
+import { Catalog } from '../src/catalog/service.js';
+import { subtitleQuery } from '../src/subtitles/query.js';
+import { playbackMediaType } from '../src/metadata/tmdb.js';
 import { buildApp } from '../src/app.js';
 
 test('anime playback classification preserves catalog type, rejects non-Japanese animation and live/movie types', async () => {

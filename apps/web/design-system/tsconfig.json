@@ -1,0 +1,4 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["main.tsx", "previews.ts", "preview-components.tsx"]
+}

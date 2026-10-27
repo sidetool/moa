@@ -32,7 +32,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
   const template = readFileSync(new URL('./login.html', import.meta.url), 'utf8');
   const setupTemplate = readFileSync(new URL('./setup.html', import.meta.url), 'utf8');
   const joinTemplate = readFileSync(new URL('./join.html', import.meta.url), 'utf8');
-  const assets = new Map(['login.css', 'login.js', 'icon.svg'].map(name => [name, readFileSync(new URL(`./${name}`, import.meta.url))]));
+  const assets = new Map(['login.css', 'login.js', 'icon.svg'].map(name => [name, readFileSync(new URL(name === 'login.css' ? './dist/login.css' : `./${name}`, import.meta.url))]));
   migrateAccounts(database, credentials, now);
   setupCode(database);
   const needsSetup = () => !database.prepare('SELECT 1 FROM accounts LIMIT 1').get();

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ApkBridge, APK_RELAY, apkIconUrl, type ApkEntry } from '../src/apk-bridge.js';
-import { Sources } from '../src/sources.js';
+import { ApkBridge, APK_RELAY, apkIconUrl, type ApkEntry } from '../src/sources/apk-bridge.js';
+import { Sources } from '../src/sources/service.js';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { RemotePlayback } from '../src/remote-playback.js';
+import { Catalog } from '../src/catalog/service.js';
+import { RemotePlayback } from '../src/playback/remote.js';
 const repo='https://repo.test/index.json', packageId='a'.repeat(64), lease='b'.repeat(32);
 const entry=(id:string,name:string):ApkEntry=>({id,name,lang:'ko',version:'14.1',baseUrl:'https://source.test',format:'aniyomi-apk',package:{pkg:'test.factory',code:1,version:'14.1',apkUrl:'https://repo.test/apk/a.apk'}});
 class Fixture extends ApkBridge {

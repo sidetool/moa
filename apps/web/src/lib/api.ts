@@ -1,5 +1,5 @@
 import { PROFILE_HEADER } from "@moa/shared";
-import { transformPluginCatalog } from './plugin-hooks';
+import { transformPluginCatalog } from '../features/plugins/plugin-hooks';
 import { deviceId } from './device-id';
 
 export const hasLoginGate = document.querySelector('meta[name="moa-auth"]')?.getAttribute("content") === "enabled";

@@ -7,12 +7,12 @@ import {
   parseEpisodes,
   parseSeason,
   convertSubtitle,
-} from '@moa/subtitles-ko';
+} from '../subtitles/korean/index.js';
 import type { JimakuCandidate, JimakuSearch } from '@moa/shared';
 import { Store } from '../db.js';
-import { Catalog } from '../catalog.js';
+import { Catalog } from '../catalog/service.js';
 import { ApiFailure } from '../util.js';
-import { subtitleQuery } from '../subtitle-query.js';
+import { subtitleQuery } from '../subtitles/query.js';
 import type { Translations } from './service.js';
 
 const ORIGIN = 'https://jimaku.cc';

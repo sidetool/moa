@@ -4,10 +4,10 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {Store} from '../src/db.js';
-import {Tmdb} from '../src/tmdb.js';
-import {PluginReviews} from '../src/plugin-reviews.js';
+import {Tmdb} from '../src/metadata/tmdb.js';
+import {PluginReviews} from '../src/plugins/reviews.js';
 import {buildApp} from '../src/app.js';
-import {pluginPackage} from '../src/website-plugins.js';
+import {pluginPackage} from '../src/plugins/service.js';
 const candidate={id:1,isAdult:false,title:{native:'例',english:'Example',romaji:'Rei'},startDate:{year:2023},format:'TV'};
 const reviews={Media:{id:1,isAdult:false,reviews:{nodes:[{mediaId:1,summary:'<b>Review</b>',body:'<p>Text</p>',siteUrl:'https://anilist.co/review/12',user:{name:'Writer'}},{mediaId:2,summary:'Wrong title',siteUrl:'https://anilist.co/review/13'},{mediaId:1,siteUrl:'javascript:alert(1)'}]}}};
 async function fixture(){const dir=await mkdtemp(path.join(tmpdir(),'moa-reviews-'));const db=new Store(dir);db.run("INSERT INTO profiles(id,name,color,kids,created_at) VALUES('p','P','blue',0,'2026')");db.run("INSERT INTO media VALUES('m',NULL,'예제 애니','anime','{}','2026')");const tmdb=new Tmdb(db,()=>{},{});return {db,tmdb,close:async()=>{tmdb.close();db.close();await rm(dir,{recursive:true,force:true});}};}

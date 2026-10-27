@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import {readFile} from 'node:fs/promises';
 const {chromium}=createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH||'playwright-core');
 const base=process.env.MOA_VERIFY_URL||'http://127.0.0.1:18795',bytes=await readFile(process.env.MOA_TEST_VIDEO);
-const browser=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']});const context=await browser.newContext({hasTouch:true,viewport:process.env.MOA_LANDSCAPE?{width:844,height:390}:{width:390,height:844}});await context.addInitScript(()=>localStorage.setItem('moa.profile','test'));
+const browser=await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE,args:['--autoplay-policy=no-user-gesture-required']});const context=await browser.newContext({hasTouch:true,viewport:process.env.MOA_LANDSCAPE?{width:844,height:390}:{width:390,height:844}});await context.addInitScript(()=>localStorage.setItem('moa.profile','test'));
 const p=await context.newPage(),calls=[],errors=[];p.on('pageerror',e=>errors.push(String(e)));p.setDefaultTimeout(20000);
 await context.route('**/fixture/fail.mp4',r=>r.fulfill({status:404}));
 await context.route('**/fixture/ko.vtt',r=>r.fulfill({contentType:'text/vtt',body:'WEBVTT\n\n00:00:00.000 --> 00:09:59.000\n자막 위치 확인\n'}));
@@ -46,7 +46,7 @@ try {
   assert.equal(await p.locator('.player.is-fill').count(),Number(out),name);
   assert.equal(await p.locator('video').evaluate(v=>v.paused),true,name+' must not click play');
   assert.ok(Math.abs(await p.locator('video').evaluate(v=>v.currentTime)-before)<.1,name+' must not click seek');
-  assert.equal(await p.evaluate(()=>localStorage.getItem('moa.videoFill')),out?'1':'0');
+  assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('moa.deviceSettings:test')).value.videoFill),out);
   results.push(name);
  };
  await gesture('pinch over both seek buttons',[[lx,cy],[rx,cy]],true);
@@ -106,7 +106,7 @@ try {
  assert.equal(await p.locator('video').evaluate(v=>v.paused),true,'band taps must not toggle playback');
  results.push('taps in empty control areas toggle the UI');
  // Auto skip (device setting) jumps over a known opening once.
- await p.evaluate(()=>{localStorage.setItem('moa.autoSkip','1');localStorage.setItem('moa.seekStep','5');});
+ await p.evaluate(async()=>{const {saveDevicePrefs}=await import('/src/lib/device-prefs.ts');await saveDevicePrefs({autoSkip:true,seekStep:5});});
  await p.reload();await p.waitForFunction(()=>document.querySelector('video')?.currentTime>0);
  assert.equal(await p.locator('.player-center [aria-label="5초 앞으로"]').count(),1,'seek step setting labels the buttons');
  await p.locator('video').evaluate(v=>{v.currentTime=21;return v.play();});

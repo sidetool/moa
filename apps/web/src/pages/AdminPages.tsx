@@ -1,33 +1,34 @@
-import { SubtitleStyleControls } from '../components/SubtitleStyleControls';
-import { SubtitleMemorySettings } from '../components/SubtitleMemorySettings';
-import { WebsitePlugins } from '../components/WebsitePlugins';
-import { SubtitleLibrarySettings } from '../components/SubtitleLibrarySettings';
+import { PlayerShortcutSettings } from '../features/settings/PlayerShortcutSettings';
+import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
+import { SubtitleMemorySettings } from '../features/settings/SubtitleMemorySettings';
+import { WebsitePlugins } from '../features/plugins/WebsitePlugins';
+import { SubtitleLibrarySettings } from '../features/settings/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
-import { NavigationSettings } from "../components/NavigationSettings";
-import { useDevicePrefs, setDevicePref, type DevicePrefs } from "../lib/device-prefs";
+import { NavigationSettings } from "../features/settings/NavigationSettings";
+import { useDevicePrefs, setDevicePref, saveDevicePrefs, type DevicePrefs } from "../lib/device-prefs";
 import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, Users, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
-import { NetworkSettings } from "../components/NetworkSettings";
-import { TmdbSettings } from "../components/TmdbSettings";
-import { YouTubeSettings } from "../components/YouTubeSettings";
-import { TranslationSettings } from "../components/TranslationSettings";
-import { DownloadSettings } from "../components/DownloadSettings";
+import { NetworkSettings } from "../features/settings/NetworkSettings";
+import { TmdbSettings } from "../features/settings/TmdbSettings";
+import { YouTubeSettings } from "../features/settings/YouTubeSettings";
+import { TranslationSettings } from "../features/settings/TranslationSettings";
+import { DownloadSettings } from "../features/settings/DownloadSettings";
 import { recommendationsKey, useResetDismissals } from "../api/recommendations";
-import { UpdateSettings } from "../components/UpdateSettings";
-import { ComponentSettings } from "../components/ComponentSettings";
-import { SystemInfo } from "../components/SystemInfo";
-import { SubtitleAdvancedSettings, RequestControls } from "../components/SubtitleAdvancedSettings";
-import { ShortsSettings } from "../components/ShortsSettings";
+import { UpdateSettings } from "../features/settings/UpdateSettings";
+import { ComponentSettings } from "../features/settings/ComponentSettings";
+import { SystemInfo } from "../features/settings/SystemInfo";
+import { SubtitleAdvancedSettings, RequestControls } from "../features/settings/SubtitleAdvancedSettings";
+import { ShortsSettings } from "../features/settings/ShortsSettings";
 import { translationModeOf, useTranslationConfig, type TranslationMode } from "../api/translation";
 import { keys, useFolders, useMe, useProfiles, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
 import { AccountSection, AccountsPage } from "./AccountsPage";
 import { SourcesPage } from "./SourcesPage";
 import { AboutPage } from "./AboutPage";
 import { RemoteAccessPage } from "./RemoteAccessPage";
-import { Button, ConfirmDialog, EmptyState, IconButton, Select, Skeleton, Spinner, Toggle } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, IconButton, SegmentedControl, Select, Skeleton, Spinner, Toggle } from "../components/ui";
 import { api, currentProfileId, hasLoginGate } from "../lib/api";
 import { TYPE_LABEL, cx } from "../lib/format";
 
@@ -55,11 +56,8 @@ function FolderPicker({ onPick, onClose }: { onPick: (path: string, type: MediaT
         </ul>
         <div className="field-row">
           <label className="field"><span>종류</span>
-            <div className="segmented" role="radiogroup" style={{ '--segments': 3, '--selected': ['anime', 'series', 'movie'].indexOf(type) } as React.CSSProperties}>
-              {(["anime", "series", "movie"] as MediaType[]).map(item => (
-                <button key={item} type="button" role="radio" aria-checked={type === item} className={cx(type === item && "is-active")} onClick={() => setType(item)}>{TYPE_LABEL[item]}</button>
-              ))}
-            </div>
+            <SegmentedControl label="종류" value={type} onChange={setType}
+              options={(["anime", "series", "movie"] as const).map(value => ({ value, label: TYPE_LABEL[value] }))} />
           </label>
           <label className="field"><span>이름 (선택)</span><input value={label} placeholder={crumbs.at(-1)} onChange={event => setLabel(event.target.value)} /></label>
         </div>
@@ -188,7 +186,7 @@ export function SettingsPage() {
     { value: "subtitles", label: "자막", group: "프로필", icon: <Subtitles size={18} />, scope: "선택한 자막은 모든 기기에서 이어져요. 자막 모양은 이 기기와 프로필에, 싱크는 영상과 기기마다 따로 저장돼요." },
     { value: "tabs", label: "홈 화면", group: "프로필", icon: <LayoutGrid size={18} />, scope: "이 프로필의 모든 기기에 적용돼요." },
     ...(hasLoginGate ? [{ value: "account", label: "내 계정", group: "프로필", icon: <UserRound size={18} />, scope: "로그인한 계정에 적용돼요." }] : []),
-    { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "리모컨·키보드·터치로 다루는 방식이에요. 이 브라우저에만 저장돼요." },
+    { value: "controls", label: "조작", group: "이 기기", icon: <Gamepad2 size={18} />, scope: "현재 기기의 리모컨·키보드·터치 조작을 설정합니다." },
     { value: "experimental", label: "실험 기능", group: "이 기기", icon: <FlaskConical size={18} />, scope: "동작이 바뀌거나 없어질 수 있어요." },
     ...(admin ? [
       { value: "sources", label: "영상 소스", group: "서버 관리", icon: <Tv size={18} />, scope: "" },
@@ -261,9 +259,10 @@ export function SettingsPage() {
       </div></section>}
       {category === "controls" && <section className="settings-group"><div className="settings-card">
         {row("TV 리모컨 모드", "방향키로 이동하고 확인 버튼으로 선택합니다. 자동 모드는 TV 감지 또는 탐색 화면의 방향키 입력으로 켜집니다.", <Select className="setting-select" aria-label="TV 리모컨 모드" value={remote} onChange={value => { setRemote(value as RemotePreference); setRemotePreference(value as RemotePreference); }} options={[{ value: "auto", label: "자동" }, { value: "on", label: "항상 켜기" }, { value: "off", label: "끄기" }]} />)}
-        {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 J·L 키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />)}
-        {row("길게 누르기 배속", "영상을 누르고 있는 동안 적용할 속도", <Select className="setting-select" aria-label="길게 누르기 배속" value={String(device.holdSpeed)} onChange={value => setPref("holdSpeed", Number(value) as DevicePrefs["holdSpeed"])} options={[1.25, 1.5, 2, 2.5, 3].map(value => ({ value: String(value), label: `${value}배속` }))} />)}
+        {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 탐색 단축키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />)}
+        {row("길게 누르기 배속", "영상이나 Space 키를 길게 누르는 동안 적용할 속도", <Select className="setting-select" aria-label="길게 누르기 배속" value={String(device.holdSpeed)} onChange={value => setPref("holdSpeed", Number(value) as DevicePrefs["holdSpeed"])} options={[1.25, 1.5, 2, 2.5, 3].map(value => ({ value: String(value), label: `${value}배속` }))} />)}
       </div></section>}
+      {category === "controls" && <PlayerShortcutSettings key={currentProfileId()} shortcuts={device.playerShortcuts} save={value => saveDevicePrefs({ playerShortcuts: value })} />}
       {category === "subtitles" && <section className="settings-group">
         <h2>언어와 자동 찾기</h2>
         <div className="settings-card">

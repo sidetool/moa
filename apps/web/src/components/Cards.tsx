@@ -4,7 +4,7 @@ import type { MediaCard } from "@moa/shared";
 import { Artwork } from "./Artwork";
 import { ProgressBar, Skeleton } from "./ui";
 import { TYPE_LABEL, cx } from "../lib/format";
-import { foreignLang, resumeTarget, seasonInfo } from "../lib/card-meta";
+import { foreignLang, resumeTarget, seasonInfo } from "../features/catalog/card-meta";
 
 function metaLine(card: MediaCard) {
   return [card.rating ? `★ ${card.rating.toFixed(1)}` : null, card.year, TYPE_LABEL[card.type], card.episodeCount && card.type !== "movie" ? `${card.episodeCount}화` : null].filter(Boolean).join(" · ");

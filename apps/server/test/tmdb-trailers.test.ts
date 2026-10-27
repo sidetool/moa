@@ -4,8 +4,8 @@ import { mkdtemp,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/db.js';
-import { Tmdb, overlayDetail } from '../src/tmdb.js';
-import { trailerCandidates } from '../src/tmdb-trailers.js';
+import { Tmdb, overlayDetail } from '../src/metadata/tmdb.js';
+import { trailerCandidates } from '../src/metadata/tmdb-trailers.js';
 import type { MediaDetail } from '@moa/shared';
 
 const video=(key:string,fields:Record<string,unknown>={})=>({key,site:'YouTube',type:'Trailer',official:true,iso_639_1:'en',...fields});

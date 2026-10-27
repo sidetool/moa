@@ -4,7 +4,7 @@ import { StrictMode, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider, useNavigate, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AppShell } from "./components/AppShell";
+import { AppShell } from "./features/layout/AppShell";
 import { GenrePage, HomePage } from "./pages/HomePage";
 import { PlayRedirect, TitlePage } from "./pages/TitlePage";
 import { ProfilesPage } from "./pages/ProfilesPage";
@@ -17,11 +17,8 @@ import { useMe } from "./api/queries";
 import { EmptyState } from "./components/ui";
 import { ApiError, currentProfileId } from "./lib/api";
 import type { MediaType } from "@moa/shared";
-import "./styles/base.css";
-import "./styles/components.css";
-import "./styles/pages.css";
-import "./styles/player.css";
-import "./styles/shorts.css";
+import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+import "./styles/app.scss";
 
 if (import.meta.env.VITE_MOCK === "1") {
   const { installMockApi } = await import("./api/mock");

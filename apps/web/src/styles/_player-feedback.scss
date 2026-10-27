@@ -1,0 +1,5 @@
+.player-boost { position: absolute; top: calc(56px + var(--safe-top)); left: 50%; z-index: 6; display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 999px; background: rgba(24, 24, 28, .55); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 0 0 1px var(--hairline); font-weight: 700; font-size: .88rem; transform: translateX(-50%); animation: fade .2s var(--ease); }
+
+@media (max-width: 760px) {
+  .player-boost { top: calc(68px + var(--safe-top)); }
+}

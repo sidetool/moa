@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSeasonInfo, seasonIdentity, searchRelevance } from '../src/season-info.js';
+import { parseSeasonInfo, seasonIdentity, searchRelevance } from '../src/catalog/season-info.js';
 import type { MediaCard } from '@moa/shared';
 
 for (const [title,label] of [

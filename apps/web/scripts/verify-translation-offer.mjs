@@ -20,6 +20,11 @@ process.env.VITE_MOCK = '1';
 const server = await createServer({
   root: webRoot, configFile: path.join(webRoot, 'vite.config.ts'), cacheDir: path.join(evidence, 'vite-cache'), logLevel: 'warn', server: { port: 0, open: false },
   plugins: [{ name: 'fixture', configureServer(vite) { vite.middlewares.use((req, res, next) => {
+    if (/^\/api\/playback\/mock-[^/]+\/subtitles\/s0\.vtt(?:\?.*)?$/.test(req.url ?? '')) {
+      res.writeHead(200, { 'Content-Type': 'text/vtt; charset=utf-8' });
+      res.end('WEBVTT\n\n00:00:01.000 --> 00:00:30.000\n日本語字幕\n');
+      return;
+    }
     if (!req.url?.startsWith('/__fixture.mp4')) return next();
     const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? ''), start = range ? +range[1] : 0, end = range?.[2] ? +range[2] : size - 1;
     res.writeHead(range ? 206 : 200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Content-Length': end - start + 1, ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}) });
@@ -28,7 +33,7 @@ const server = await createServer({
 });
 await server.listen();
 const base = server.resolvedUrls.local[0].replace(/\/$/, '');
-const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
 const errors = [];
 
 async function open(viewport, remote = false) {
@@ -42,6 +47,7 @@ async function open(viewport, remote = false) {
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(String(error)));
   await page.goto(`${base}/settings`);
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).waitFor();
   await page.evaluate(async () => {
     const send = (path, body) => fetch(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     await send('/api/admin/translation/config', { addKeys: ['AIza-offer-0001'], enabled: true });

@@ -6,11 +6,11 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import Fastify from 'fastify';
-import { publicStream } from '@moa/extensions';
+import { publicStream } from '../src/sources/extensions/index.js';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { Sources } from '../src/sources.js';
-import { RemotePlayback, rewritePlaylist } from '../src/remote-playback.js';
+import { Catalog } from '../src/catalog/service.js';
+import { Sources } from '../src/sources/service.js';
+import { RemotePlayback, rewritePlaylist } from '../src/playback/remote.js';
 
 test('source mapping, serial preference state, stable episode IDs, isolated progress and disabled source', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(),'moa-sources-')), db = new Store(temp), catalog = new Catalog(db);

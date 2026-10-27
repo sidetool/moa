@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { GeneralMarkers } from '../src/general-markers.js';
+import { GeneralMarkers } from '../src/playback/general-markers.js';
 
 async function fixture(t: TestContext, fetcher: typeof fetch) {
   const dir = await mkdtemp(path.join(tmpdir(), 'moa-general-markers-'));
