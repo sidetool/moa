@@ -93,7 +93,7 @@ async function fixture(t, currentVersion = 'v1.2.0') {
   host.release.feed = {
     async releases(channel) {
       feedCalls.push(['releases', channel]);
-      return releases.filter(c => channel === 'beta' || !c.manifest.version.includes('-beta.'))
+      return releases.filter(c => c.manifest.channel === channel)
         .sort((a, b) => compare(b.manifest.version, a.manifest.version))
         .map(c => ({ tag_name: c.manifest.version }));
     },

@@ -48,7 +48,7 @@ export async function adopt({ cwd = '/state', installation = '/installation', ho
   version(currentVersion);
   const trust = JSON.parse(await readFile(new URL('../deploy/release-trust.json', import.meta.url), 'utf8'));
   feed ??= new ReleaseFeed({ repository: env.MOA_REPOSITORY || 'sidetool/moa', publicKey: trust.publicKey });
-  const release = (await feed.releases('beta')).find(item => item.tag_name === currentVersion);
+  const release = (await feed.releases(version(currentVersion)[3] === Infinity ? 'stable' : 'beta')).find(item => item.tag_name === currentVersion);
   if (!release) fail('update-version-unknown');
   const { manifest } = await feed.manifest(release);
   if (manifest.version !== currentVersion) fail('update-version-unknown');

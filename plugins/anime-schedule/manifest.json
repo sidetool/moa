@@ -16,5 +16,5 @@
     "https://api.anissia.net",
     "https://image.tmdb.org"
   ],
-  "minMoaVersion": "0.1.2"
+  "minMoaVersion": "0.1.3-beta.1"
 }

@@ -33,7 +33,7 @@ export async function install(args = process.argv.slice(2), dependencies = {}) {
   const cwd = path.resolve(options.cwd), root = path.join(cwd, '.moa-release');
   const publicKey = await readFile(path.resolve(options.key), 'utf8');
   const feed = dependencies.feed ?? new ReleaseFeed({ publicKey });
-  const release = (await feed.releases('beta')).find(r => r.tag_name === options.version);
+  const release = (await feed.releases(version(options.version)[3] === Infinity ? 'stable' : 'beta')).find(r => r.tag_name === options.version);
   if (!release) fail('update-no-releases');
   const { manifest: m } = await feed.manifest(release);
   if (compare(UPDATER_VERSION, m.minimumUpdaterVersion) < 0) fail('update-tool-required');

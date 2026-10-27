@@ -105,7 +105,7 @@ ID는 영문 소문자로 시작하는 2~64자의 소문자·숫자·하이픈�
 
 ### 제목으로 작품 찾기
 
-`moa.metadata.lookup({title,type?})`는 홈·앱 도구에서도 사용할 수 있습니다. `title`은 1~200자이며 선택 항목 `type`은 `anime | movie | series`입니다. 내부 요청은 `POST /api/plugin-runtime/:id/metadata/lookup`, 본문은 `{revision,query}`입니다.
+`moa.metadata.lookup({title,type?})`는 MOA 0.1.3-beta.1 이상에서 지원하며 manifest에 `minMoaVersion: "0.1.3-beta.1"` 이상을 지정합니다. 홈·앱 도구에서도 사용할 수 있습니다. `title`은 1~200자이며 선택 항목 `type`은 `anime | movie | series`입니다. 내부 요청은 `POST /api/plugin-runtime/:id/metadata/lookup`, 본문은 `{revision,query}`입니다.
 
 응답은 `{provider,status,mediaId?,poster?}`입니다. `status`는 `ready | unconfigured | restricted | unavailable`이며 포스터와 작품 ID는 확인된 경우에만 포함됩니다. 정확한 제목·기존 TMDB 연결로 저장된 작품을 찾고, 같은 작품의 여러 소스는 묶어서 처리합니다. 동명 작품이나 시즌이 모호하면 ID를 반환하지 않습니다. 원격 소스의 전체 목록을 새로 검색하거나 작품 연결을 저장하지 않습니다.
 

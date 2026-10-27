@@ -352,7 +352,7 @@ export class ReleaseUpdater {
       let template, image;
       if (enabled) {
         // Install only an image and definition authenticated for the installed release.
-        const release = (await this.feed.releases('beta')).find(r => r.tag_name === this.current.version);
+        const release = (await this.feed.releases(version(this.current.version)[3] === Infinity ? 'stable' : 'beta')).find(r => r.tag_name === this.current.version);
         if (!release) fail('update-release-incomplete');
         const signed = await this.feed.manifest(release), m = signed.manifest;
         if (m.version !== this.current.version || this.current.manifestDigest && this.current.manifestDigest !== signed.digest) fail('update-release-mutated');
