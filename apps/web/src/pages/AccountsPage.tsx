@@ -1,4 +1,4 @@
-import { LoginDevices } from '../components/LoginDevices';
+import { LoginDevices } from '../features/settings/LoginDevices';
 import { Check, ChevronRight, Copy, KeyRound, Link2, Plus, Share2, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";

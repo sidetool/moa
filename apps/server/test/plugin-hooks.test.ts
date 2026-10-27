@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { registerCatalogHook, transformPluginCatalog } from '../../web/src/lib/plugin-hooks.js';
+import { registerCatalogHook, transformPluginCatalog } from '../../web/src/features/plugins/plugin-hooks.js';
 
 test('catalog hooks apply bounded presentation patches and isolate failures, profiles, and revoked registrations', async () => {
   const value = { items: [{ id: 'one', title: 'Original', type: 'movie', provider: { id: 'local', name: 'Local' }, poster: '/api/images/poster', playTarget: { episodeId: 'episode' } }] };

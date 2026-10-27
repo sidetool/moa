@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import Fastify from 'fastify';
-import { Updates, installationInfo, registerUpdates } from '../src/updates.js';
+import { Updates, installationInfo, registerUpdates } from '../src/system/updates.js';
 
 test('updates and system info require an administrator; installation requires a live agent', async t => {
   t.mock.method(globalThis, 'fetch', async () => Response.json([]));

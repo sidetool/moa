@@ -1,0 +1,10 @@
+@use "../src/styles/base";
+@use "../src/styles/player-feedback";
+@use "document";
+
+.preview-player-frame { position: relative; display: grid; place-items: center; width: 100%; min-width: 0; min-height: 240px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-m); background: var(--surface-2); color: var(--text-3); }
+.preview-player-frame .player-boost { color: var(--text); }
+.preview-shortcuts .settings-group, .preview-shortcuts .settings-card { display: grid; gap: var(--space-3); }
+.preview-shortcuts .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-block: var(--space-2); border-bottom: var(--border-width) solid var(--hairline); }
+.preview-shortcuts .settings-hint { color: var(--text-3); font-size: var(--font-small); }
+.preview-shortcuts .settings-error { color: var(--danger); }

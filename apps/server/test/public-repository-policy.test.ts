@@ -4,8 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { Sources } from '../src/sources.js';
+import { Catalog } from '../src/catalog/service.js';
+import { Sources } from '../src/sources/service.js';
 import { buildApp } from '../src/app.js';
 
 test('repository operations require a user URL; proxy checks skip an empty registry and preserve live flags', async () => {

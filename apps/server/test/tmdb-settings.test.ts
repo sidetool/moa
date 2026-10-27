@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
-import { Tmdb } from '../src/tmdb.js';
+import { Tmdb } from '../src/metadata/tmdb.js';
 
 test('TMDB settings are admin-only, private, persistent, immediately applied and overridden by environment', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moa-tmdb-settings-'));

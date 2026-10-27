@@ -4,10 +4,10 @@ import { mkdtemp, rm, mkdir, writeFile, readdir, utimes, stat } from 'node:fs/pr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../src/db.js';
-import { Sources } from '../src/sources.js';
-import { Catalog } from '../src/catalog.js';
-import { DetailPolicy, ACTIVE_DETAIL_POLICY, COMPLETED_DETAIL_POLICY } from '../src/detail-policy.js';
-import { ImageCache } from '../src/image-cache.js';
+import { Sources } from '../src/sources/service.js';
+import { Catalog } from '../src/catalog/service.js';
+import { DetailPolicy, ACTIVE_DETAIL_POLICY, COMPLETED_DETAIL_POLICY } from '../src/catalog/detail-policy.js';
+import { ImageCache } from '../src/metadata/image-cache.js';
 import { buildApp } from '../src/app.js';
 const DAY=86400_000;
 const temporary=()=>mkdtemp(join(tmpdir(),'moa-cache-tuning-'));
@@ -129,11 +129,13 @@ test('legacy details acquire new observations safely; completed detail reads sta
 test('image startup LRU survives restart, excludes unrelated files and recovers after failed generation',async()=>{
  const root=await temporary();let cache=new ImageCache(root,100);
  try {
-  await cache.get('hot.webp',Infinity,async()=>Buffer.alloc(40));await cache.close();
+  await cache.get('hot.jpg',Infinity,async()=>Buffer.alloc(40));await cache.close();
   await writeFile(join(root,'old.webp'),Buffer.alloc(40));await utimes(join(root,'old.webp'),new Date(1000),new Date(1000));
-  await writeFile(join(root,'new.webp'),Buffer.alloc(40));await writeFile(join(root,'unrelated.json'),'keep');
+  await writeFile(join(root,'new.png'),Buffer.alloc(40));await writeFile(join(root,'unrelated.json'),'keep');
   cache=new ImageCache(root,100);await cache.prune();
-  assert.deepEqual((await readdir(root)).sort(),['hot.webp','new.webp','unrelated.json']);
+  assert.deepEqual((await readdir(root)).sort(),['hot.jpg','new.png','unrelated.json']);
+  await assert.rejects(cache.get('../escape.jpg',1,async()=>Buffer.alloc(1)),/invalid-image-key/);
+  await assert.rejects(cache.get('script.svg',1,async()=>Buffer.alloc(1)),/invalid-image-key/);
   await assert.rejects(cache.get('failed.webp',1000,async()=>{throw Error('network failed');}),/network failed/);
   assert.equal((await readdir(root)).some(n=>n.includes('.tmp')),false);
   assert.equal((await cache.get('failed.webp',1000,async()=>Buffer.from('ok'))).toString(),'ok');
@@ -141,7 +143,7 @@ test('image startup LRU survives restart, excludes unrelated files and recovers 
 });
 
 test('TMDB completion status and air date survive the actual metadata fetch/save path',async()=>{
- const {Tmdb}=await import('../src/tmdb.js');
+ const {Tmdb}=await import('../src/metadata/tmdb.js');
  const root=await temporary(),db=new Store(root),sources=new Sources(db,new Catalog(db));
  db.run("INSERT INTO media VALUES('m',NULL,'Title','series','{}','2026')");
  const tmdb=new Tmdb(db,()=>{},{token:'test-only',fetch:async()=>Response.json({id:1,name:'Title',status:'Ended',last_air_date:'2020-01-01',episodes:[]})});

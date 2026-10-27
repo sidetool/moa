@@ -2,13 +2,150 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
-import { fetchPluginPackage, pluginCompatibility, pluginPackage, unpackPlugin } from '../src/website-plugins.js';
+import { DatabaseSync } from 'node:sqlite';
+import Fastify from 'fastify';
+import { fetchPluginPackage, pluginCompatibility, pluginPackage, registerWebsitePlugins, unpackPlugin } from '../src/plugins/service.js';
+import { Store } from '../src/db.js';
 import { buildApp } from '../src/app.js';
+import { ImageCache, IMAGE_CACHE_TTL } from '../src/metadata/image-cache.js';
+import { hash } from '../src/util.js';
 
 const template = { ...JSON.parse(await readFile(new URL('../../../plugins/template/examples/subtitle-helper/manifest.json', import.meta.url), 'utf8')), html: '<p>Plugin test</p>' };
+
+test('plugin TMDB images reuse the shared disk cache across refresh and restart without bypassing permissions', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'moa-plugin-images-')), directory = path.join(root, 'images'), db = new Store(root);
+  const origin = 'https://image.tmdb.org', poster = `${origin}/t/p/w342/poster.jpg`, bytes = Buffer.from([255, 216, 255, 0, 1, 2]);
+  const requests: string[] = [];
+  let status = 200, contentType = 'image/jpeg', gate: Promise<void> | undefined, release = () => {}, revision = '';
+  const transport: NonNullable<Parameters<typeof registerWebsitePlugins>[8]> = async (input, _signal, privateOrigins, maximum, proxy, redirects) => {
+    requests.push(input.url);
+    assert.deepEqual(input.options, { timeout: 15, followRedirects: false });
+    assert.deepEqual(privateOrigins, []); assert.equal(maximum, 4 * 1024 * 1024); assert.equal(proxy, undefined); assert.equal(redirects, false);
+    if (gate) await gate;
+    return { bytes, statusCode: status, headers: {}, url: input.url, contentType };
+  };
+  const start = () => {
+    const server = Fastify(), images = new ImageCache(directory);
+    server.addHook('onRequest', async req => { req.moaProfile = String(req.headers['x-moa-profile'] || 'one'); });
+    registerWebsitePlugins(server, db, undefined, undefined, undefined, undefined, undefined, undefined, transport, images);
+    server.addHook('onClose', () => images.close());
+    return server;
+  };
+  let app = start();
+  const install = async (connect = [origin]) => {
+    const response = await app.inject({ method: 'POST', url: '/api/admin/plugins', payload: { ...template, id: 'image-cache', connect } });
+    assert.equal(response.statusCode, 200, response.body); revision = response.json().revision;
+  };
+  const call = (url = poster, profile = 'one', base = '/api/plugin-runtime') => Promise.resolve(app.inject({ method: 'POST', url: `${base}/image-cache/request`, headers: { 'x-moa-profile': profile }, payload: { revision, url } }));
+  const received = (response: Awaited<ReturnType<typeof call>>) => {
+    assert.equal(response.statusCode, 200, response.body); assert.deepEqual(response.json(), { base64: bytes.toString('base64') });
+  };
+  const entered = async (count: number) => {
+    for (let attempt = 0; requests.length < count && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(requests.length, count);
+  };
+  try {
+    await install();
+    gate = new Promise(resolve => { release = resolve; });
+    const simultaneous = Array.from({ length: 4 }, () => call());
+    await entered(1); release(); await Promise.all(simultaneous.map(async response => received(await response))); gate = undefined;
+    received(await call()); received(await call(poster, 'other', '/api/plugins')); assert.equal(requests.length, 1);
+    assert.deepEqual(await readFile(path.join(directory, `tmdb-${hash(poster)}.jpg`)), bytes);
+    await app.close(); app = start(); received(await call()); assert.equal(requests.length, 1);
+    const expired = new Date(Date.now() - IMAGE_CACHE_TTL - 1000);
+    await utimes(path.join(directory, `tmdb-${hash(poster)}.jpg`), expired, expired);
+    received(await call()); assert.equal(requests.length, 2);
+    for (const extension of ['png', 'webp']) {
+      contentType = `image/${extension}`; const url = `${origin}/t/p/original/poster.${extension}`;
+      received(await call(url)); received(await call(url));
+    }
+    assert.equal(requests.length, 4); contentType = 'image/jpeg';
+    const cached = (await readdir(directory)).sort();
+    for (const url of [`${poster}?v=1`, `${poster}#preview`, poster.replace(origin, `${origin}:443`), `${origin}/t/p/w342/poster.svg`, poster.replace('poster', '%70oster'), 'https://example.org/poster.jpg']) {
+      await install([origin, 'https://example.org']); const before = requests.length;
+      received(await call(url)); received(await call(url)); assert.equal(requests.length, before + 2);
+    }
+    assert.deepEqual((await readdir(directory)).sort(), cached);
+    for (const url of [poster.replace('https://', 'https://user@'), poster.replace(origin, 'https://127.0.0.1'), poster.replace(origin, 'https://image.tmdb.org.evil.test'), poster.replace('https:', 'http:')]) {
+      const before = requests.length; assert.equal((await call(url)).statusCode, 403); assert.equal(requests.length, before);
+    }
+    for (const failure of [{ status: 503, contentType: 'image/jpeg' }, { status: 206, contentType: 'image/jpeg' }, { status: 200, contentType: 'text/html' }]) {
+      ({ status, contentType } = failure); const url = `${origin}/t/p/w342/failure-${status}-${contentType.replace('/', '-')}.jpg`, before = requests.length;
+      assert.equal((await call(url)).statusCode, 502); assert.equal((await call(url)).statusCode, 502); assert.equal(requests.length, before + 2);
+      assert.deepEqual((await readdir(directory)).sort(), cached);
+      status = 200; contentType = 'image/jpeg'; received(await call(url)); received(await call(url)); assert.equal(requests.length, before + 3);
+      await rm(path.join(directory, `tmdb-${hash(url)}.jpg`));
+    }
+    const before = requests.length;
+    await install([]); assert.equal((await call()).statusCode, 403); assert.equal(requests.length, before);
+    await install(); db.run("UPDATE website_plugins SET enabled=0 WHERE id='image-cache'"); assert.equal((await call()).statusCode, 404);
+    db.run("UPDATE website_plugins SET enabled=1 WHERE id='image-cache'"); received(await call()); assert.equal(requests.length, before);
+    gate = new Promise(resolve => { release = resolve; }); const revoked = call(`${origin}/t/p/w342/revoked.jpg`);
+    await entered(before + 1); await install([]); release(); assert.equal((await revoked).statusCode, 409); gate = undefined;
+  } finally { release(); await app.close(); db.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('plugin fetches bound parallel work per profile and plugin, release slots, and honor revocation', async () => {
+  const app = Fastify(), db = new Store(tmpdir(), new DatabaseSync(':memory:'));
+  const waiting: Array<() => void> = [];
+  const transport: NonNullable<Parameters<typeof registerWebsitePlugins>[8]> = async (input, signal, privateOrigins, maximum, proxy, redirects) => {
+    assert.equal(input.method, 'GET'); assert.deepEqual(input.options, { timeout: 15, followRedirects: false });
+    assert.deepEqual(privateOrigins, []); assert.equal(maximum, 4 * 1024 * 1024); assert.equal(proxy, undefined); assert.equal(redirects, false);
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => reject(new Error('cancelled'));
+      signal.addEventListener('abort', abort, { once: true });
+      waiting.push(() => { signal.removeEventListener('abort', abort); resolve(); });
+    });
+    if (input.url.endsWith('/failure')) throw new Error('synthetic-network-failure');
+    return { bytes: Buffer.from('poster'), statusCode: 200, headers: {}, url: input.url, contentType: 'image/jpeg' };
+  };
+  app.addHook('onRequest', async req => { req.moaProfile = String(req.headers['x-moa-profile']); });
+  registerWebsitePlugins(app, db, undefined, undefined, undefined, undefined, undefined, undefined, transport);
+  const versions: Record<string, string> = {};
+  const install = async (id: string, connect = ['https://example.org']) => {
+    const response = await app.inject({ method: 'POST', url: '/api/admin/plugins', payload: { ...template, id, connect } });
+    assert.equal(response.statusCode, 200, response.body); versions[id] = response.json().revision;
+  };
+  const call = (profile = 'one', id = 'network-one', path = '/poster', base = '/api/plugin-runtime') => Promise.resolve(app.inject({
+    method: 'POST', url: `${base}/${id}/request`, headers: { 'x-moa-profile': profile }, payload: { revision: versions[id], url: `https://example.org${path}` },
+  }));
+  const entered = async (count: number) => {
+    for (let attempts = 0; waiting.length !== count && attempts < 100; attempts++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(waiting.length, count);
+  };
+  try {
+    await install('network-one'); await install('network-two');
+    const first = Array.from({ length: 4 }, (_, index) => call('one', 'network-one', '/poster', index % 2 ? '/api/plugins' : '/api/plugin-runtime'));
+    await entered(4);
+    assert.equal((await call()).statusCode, 429);
+    const others = [['two', 'network-one'], ['one', 'network-two'], ['three', 'network-one']].flatMap(([profile, id]) => Array.from({ length: 4 }, () => call(profile, id)));
+    await entered(16);
+    assert.equal((await call('four')).statusCode, 429);
+    waiting.shift()!(); assert.equal((await first[0]).statusCode, 200);
+    const replacement = call('four'); await entered(16);
+    waiting.splice(0).forEach(finish => finish());
+    for (const response of await Promise.all([...first, ...others, replacement])) {
+      assert.equal(response.statusCode, 200, response.body); assert.equal(Buffer.from(response.json().base64, 'base64').toString(), 'poster');
+    }
+    const failed = call('one', 'network-one', '/failure'); await entered(1); waiting.shift()!();
+    assert.equal((await failed).statusCode, 502);
+    const afterFailure = Array.from({ length: 4 }, () => call()); await entered(4); waiting.splice(0).forEach(finish => finish());
+    assert.ok((await Promise.all(afterFailure)).every(response => response.statusCode === 200));
+    const revoked = call(); await entered(1); await install('network-one', []); waiting.shift()!();
+    assert.equal((await revoked).statusCode, 409);
+    assert.equal((await call()).statusCode, 403);
+    await install('network-one');
+    const disabled = call(); await entered(1);
+    await app.inject({ method: 'PATCH', url: '/api/admin/plugins/network-one', payload: { enabled: false } });
+    waiting.shift()!(); assert.equal((await disabled).statusCode, 404);
+    await app.inject({ method: 'PATCH', url: '/api/admin/plugins/network-one', payload: { enabled: true } });
+    const restored = Array.from({ length: 4 }, () => call()); await entered(4); waiting.splice(0).forEach(finish => finish());
+    assert.ok((await Promise.all(restored)).every(response => response.statusCode === 200));
+  } finally { waiting.splice(0).forEach(finish => finish()); await app.close(); db.close(); }
+});
 
 test('plugin packages validate permissions, sizes, origins and API versions', () => {
   assert.deepEqual(pluginPackage(template), template);

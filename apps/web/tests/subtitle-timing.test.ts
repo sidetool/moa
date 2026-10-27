@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {alignCueTimes,cueTimes,type CueTime} from '../src/player/subtitle-timing.ts';
+import {alignCueTimes,cueTimes,type CueTime} from '../src/player/subtitles/subtitle-timing.ts';
 function dialogue(seed=12,count=240){let time=10,random=seed;return Array.from({length:count},()=>{random=(random*1664525+1013904223)>>>0;time+=1.7+random/2**32*7;return {start:time,end:time+1.4};});}
 const shift=(xs:CueTime[],offset:number)=>xs.map(c=>({start:c.start+offset,end:c.end+offset}));
 test('offset direction and zero alignment preserve original cue timing',()=>{

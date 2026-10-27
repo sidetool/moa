@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import { mkdtemp,rm,writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { NativeShorts, selectNativeTrailer, trailerMediaUrl, type NativeTrailer } from '../src/shorts-native.js';
+import { NativeShorts, selectNativeTrailer, trailerMediaUrl, type NativeTrailer } from '../src/shorts/native.js';
 import { buildApp } from '../src/app.js';
 const id='AAAAAAAAAAA';
 const selected:NativeTrailer={url:'https://example.googlevideo.com/video.mp4',mime:'video/mp4',headers:{'User-Agent':'fixture'}};
@@ -134,7 +134,7 @@ test('prepared references are briefly reused only within the same profile, proxy
 });
 
 test('connection and extraction failures are not mislabeled unsupported media',async()=>{
-  const {extractorFailure}=await import('../src/shorts-native.js');
+  const {extractorFailure}=await import('../src/shorts/native.js');
   assert.equal(extractorFailure('Video unavailable').statusCode,422);
   assert.equal(extractorFailure('Sign in to confirm you are not a bot').error,'shorts-native-auth-required');
   assert.equal(extractorFailure('connection timed out at secret-url').statusCode,504);
@@ -144,7 +144,7 @@ test('connection and extraction failures are not mislabeled unsupported media',a
 });
 
 test('split HLS resolves through its master and retains compatible video plus matching audio',async()=>{
-  const {selectTrailerMaster}=await import('../src/shorts-native.js');
+  const {selectTrailerMaster}=await import('../src/shorts/native.js');
   const master='https://example.googlevideo.com/master.m3u8';
   const result=selectNativeTrailer(data([{...format,protocol:'m3u8_native',acodec:'none',manifest_url:master}]),id);
   assert.equal(result.url,master);assert.equal(result.master,true);

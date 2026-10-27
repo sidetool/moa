@@ -6,8 +6,13 @@
   "scripts": {
     "dev:web": "corepack pnpm --filter @moa/web dev",
     "dev:server": "corepack pnpm --filter @moa/server dev",
-    "build": "corepack pnpm -r build",
+    "build": "corepack pnpm build:auth:css && corepack pnpm -r build",
     "typecheck": "corepack pnpm -r typecheck",
-    "test": "node --test scripts/update.test.mjs scripts/release.test.mjs scripts/release-updater.test.mjs scripts/install-release.test.mjs scripts/container-updater.test.mjs scripts/release-artifacts.test.mjs && corepack pnpm -r test"
+    "test": "corepack pnpm build:auth:css && node --test scripts/update.test.mjs scripts/release.test.mjs scripts/release-updater.test.mjs scripts/install-release.test.mjs scripts/container-updater.test.mjs scripts/release-artifacts.test.mjs && corepack pnpm -r test",
+    "dev:design-system": "corepack pnpm --filter @moa/web exec vite --config design-system/vite.config.ts",
+    "build:design-system": "corepack pnpm --filter @moa/web exec tsc --noEmit -p design-system/tsconfig.json && corepack pnpm --filter @moa/web exec vite build --config design-system/vite.config.ts",
+    "lint:design-system": "node apps/web/scripts/lint-styles.mjs",
+    "verify:design-system": "node apps/web/design-system/verify.mjs && node apps/web/scripts/verify-design-system.mjs",
+    "build:auth:css": "corepack pnpm --filter @moa/web exec sass --no-source-map ../../deploy/auth/login.scss ../../deploy/auth/dist/login.css"
   }
 }

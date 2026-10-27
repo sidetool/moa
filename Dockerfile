@@ -3,24 +3,17 @@ FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/extensions/package.json packages/extensions/package.json
 COPY packages/shared/package.json packages/shared/package.json
-COPY packages/subtitles-ko/package.json packages/subtitles-ko/package.json
-COPY packages/skip-markers/package.json packages/skip-markers/package.json
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN corepack pnpm install --frozen-lockfile
-COPY packages/extensions packages/extensions
 COPY packages/shared packages/shared
-COPY packages/subtitles-ko packages/subtitles-ko
-COPY packages/skip-markers packages/skip-markers
 COPY apps/server apps/server
 COPY apps/web apps/web
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md apps/web/public/licenses/
 COPY LICENSES apps/web/public/licenses/LICENSES/
 COPY docs/THIRD-PARTY-SOURCES.md apps/web/public/licenses/docs/THIRD-PARTY-SOURCES.md
-RUN corepack pnpm --filter @moa/extensions build && corepack pnpm --filter @moa/subtitles-ko build && corepack pnpm --filter @moa/skip-markers build \
-    && corepack pnpm --filter @moa/server build && corepack pnpm --filter @moa/web build
+RUN corepack pnpm --filter @moa/server build && corepack pnpm --filter @moa/web build
 
 # Native runtime packages (notably sharp/libvips) must match the target CPU.
 # Never copy the build-platform node_modules into the release image.
@@ -28,10 +21,7 @@ FROM node:22-bookworm-slim AS runtime-deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/extensions/package.json packages/extensions/package.json
 COPY packages/shared/package.json packages/shared/package.json
-COPY packages/subtitles-ko/package.json packages/subtitles-ko/package.json
-COPY packages/skip-markers/package.json packages/skip-markers/package.json
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN corepack pnpm --filter @moa/server... install --prod --frozen-lockfile
@@ -66,9 +56,6 @@ COPY scripts/container-updater.mjs scripts/release.mjs scripts/update-files.mjs 
 COPY deploy/release-trust.json ./deploy/release-trust.json
 COPY --from=runtime-deps /app/ ./
 COPY --from=build /app/apps/server/dist ./apps/server/dist
-COPY --from=build /app/packages/extensions/dist ./packages/extensions/dist
-COPY --from=build /app/packages/subtitles-ko/dist ./packages/subtitles-ko/dist
-COPY --from=build /app/packages/skip-markers/dist ./packages/skip-markers/dist
 COPY --from=build /app/packages/shared/src ./packages/shared/src
 COPY --from=build /app/apps/web/dist ./web
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./

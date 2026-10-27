@@ -214,9 +214,9 @@ try {
   // Settings: the main switch stays at hand; details are folded until asked for.
   await page.goto(`${base}settings#experimental`);
   await page.getByRole('switch', { name: '쇼츠' }).waitFor();
-  const details = page.getByRole('button', { name: '세부 설정' });
-  assert.equal(await details.getAttribute('aria-expanded'), 'false');
-  assert.equal(await page.getByText('고르는 방식').count(), 0, 'folded by default');
+  const details = page.locator('summary').filter({ hasText: '세부 설정' });
+  assert.equal(await details.evaluate(element => element.parentElement.open), false);
+  assert.equal(await page.getByText('고르는 방식', { exact: true }).isVisible(), false, 'folded by default');
   await page.screenshot({ path: verificationPath('ui-settings-folded.png') });
   await details.click();
   await page.getByText('고르는 방식').waitFor();

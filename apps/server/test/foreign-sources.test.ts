@@ -4,13 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { TitleGroups } from '../src/title-groups.js';
-import { Sources } from '../src/sources.js';
-import { Tmdb, MATCH_VERSION, localizedTitle, searchTerms } from '../src/tmdb.js';
-import { OnlineSubtitles } from '../src/online.js';
-import { RemotePlayback } from '../src/remote-playback.js';
-import { parseEdl, edlPlaylist } from '../src/edl.js';
+import { Catalog } from '../src/catalog/service.js';
+import { TitleGroups } from '../src/catalog/title-groups.js';
+import { Sources } from '../src/sources/service.js';
+import { Tmdb, MATCH_VERSION, localizedTitle, searchTerms } from '../src/metadata/tmdb.js';
+import { OnlineSubtitles } from '../src/subtitles/online.js';
+import { RemotePlayback } from '../src/playback/remote.js';
+import { parseEdl, edlPlaylist } from '../src/playback/edl.js';
 
 const edl = (type: string, url = 'https://cdn.test/한,;segment.ts') => `edl://!delay_open,media_type=${type},codec=${type === 'video' ? 'h264' : 'aac'};%${Buffer.byteLength(url)}%${url},start=1.35,length=8.876;`;
 test('EDL byte quoting, timings, stream partitions and explicit unsupported errors', () => {

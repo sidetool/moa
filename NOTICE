@@ -14,7 +14,7 @@ Original full license/copyright notices are retained under LICENSES.
 MOA modifies video dispatch, imports/types, network limits and proxy behavior,
 Android preference compatibility, URI storage handling, coroutine imports,
 DEX conversion, runtime scheduling and optional WebView support.
-See packages/extensions/NOTICE.md, services/aniyomi-worker/NOTICE.md and
+See apps/server/src/sources/extensions/NOTICE.md, services/aniyomi-worker/NOTICE.md and
 THIRD_PARTY_NOTICES.md for scope, exact origins and unresolved attribution.
 
 Pretendard: OFL-1.1, Copyright Kil Hyung-jin, Reserved Font Name Pretendard.

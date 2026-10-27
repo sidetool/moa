@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { Sources } from '../src/sources.js';
+import { Catalog } from '../src/catalog/service.js';
+import { Sources } from '../src/sources/service.js';
 
 const admin = { 'x-moa-account': 'admin', 'x-moa-role': 'admin' };
 const member = { 'x-moa-account': 'member', 'x-moa-role': 'member' };

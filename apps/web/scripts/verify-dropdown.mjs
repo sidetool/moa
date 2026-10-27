@@ -6,7 +6,7 @@ import { verificationPath } from './verification-path.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 process.env.VITE_MOCK = '0';
-const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), logLevel: 'error', server: { port: 0, open: false } });
+const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), logLevel: 'error', plugins: [{ name: 'auth-fixture', transformIndexHtml: html => html.replace('<head>', '<head><meta name="moa-auth" content="enabled">') }], server: { port: 0, open: false } });
 await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
 const errors = [];
@@ -63,7 +63,7 @@ try {
     await confirmation.getByRole('button', { name: '초기화', exact: true }).click();
     await confirmation.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.tab-list-foot')?.textContent?.includes('같은 프로필'));
-    await page.goto(`${base}settings`);
+    await page.goto(`${base}settings#playback`);
     const quality = page.getByRole('combobox', { name: 'preferredQuality', exact: true });
     await quality.click();
     assert.equal(await quality.getAttribute('aria-expanded'), 'true');
@@ -90,7 +90,7 @@ try {
     await quality.press('Tab');
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').getAttribute('aria-expanded') === 'false');
     await quality.click();
-    await page.getByRole('heading', { name: '설정', exact: true }).click();
+    await page.getByRole('heading', { name: '재생', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').getAttribute('aria-expanded') === 'false');
     await page.goto(`${base}settings#translation`);
     const model = page.getByRole('combobox', { name: '번역 모델', exact: true });
@@ -102,7 +102,7 @@ try {
     await page.screenshot({ path: verificationPath(`dropdown-${width}.png`) });
     await model.press('Escape');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    await page.goto(`${base}settings`);
+    await page.goto(`${base}settings#playback`);
     await page.evaluate(() => { localStorage.setItem('moa.remoteMode', 'on'); window.dispatchEvent(new Event('moa:remote-mode')); });
     await quality.scrollIntoViewIfNeeded();
     await quality.focus();
@@ -113,7 +113,7 @@ try {
     await quality.press('Enter');
     await quality.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 461, bubbles: true })));
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').getAttribute('aria-expanded') === 'false');
-    assert.ok(page.url().endsWith('/settings'));
+    assert.ok(page.url().endsWith('/settings#playback'));
     await page.goto(`${base}sources`);
     const kind = page.getByRole('combobox', { name: '확장 저장소 형식', exact: true });
     await kind.click();
@@ -121,7 +121,7 @@ try {
     await page.waitForFunction(() => document.querySelector('[aria-label="확장 저장소 형식"]').textContent === 'Aniyomi APK');
     await page.waitForFunction(() => document.querySelector('[aria-label="확장 저장소 형식"]').getAttribute('aria-expanded') === 'false');
     const controls = await page.locator('.source-repository').evaluate(form => [...form.querySelectorAll('input, .dropdown-trigger, .btn')].map(element => { const box = element.getBoundingClientRect(); return { height: box.height, bottom: box.bottom }; }));
-    assert.ok(controls.every(control => control.height === 40));
+    assert.ok(controls.every(control => control.height === 40), JSON.stringify({ width, controls }));
     if (width > 600) assert.ok(controls.every(control => Math.abs(control.bottom - controls[0].bottom) < 1));
     await page.screenshot({ path: verificationPath(`source-controls-${width}.png`), animations: 'disabled' });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -129,7 +129,10 @@ try {
     await page.locator('.account-main').click();
     const accountName = await page.locator('.account-name').boundingBox();
     const action = await page.getByRole('button', { name: '관리자 해제', exact: true }).boundingBox();
-    assert.ok(Math.abs(accountName.x - action.x) < 1);
+    const panel = await page.locator('.settings-panel').boundingBox();
+    const accountRow = await page.locator('.account-row').boundingBox();
+    const expectedActionX = panel.width <= 620 ? accountRow.x + 18 : accountName.x;
+    assert.ok(Math.abs(expectedActionX - action.x) < 1, JSON.stringify({ width, panelWidth: panel.width, expectedActionX, actualActionX: action.x }));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: verificationPath(`accounts-${width}.png`), fullPage: true });
     await context.close();
@@ -146,7 +149,7 @@ try {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(`no-popover: ${error}`));
     const base = server.resolvedUrls.local[0];
-    await page.goto(`${base}settings`);
+    await page.goto(`${base}settings#playback`);
     const quality = page.getByRole('combobox', { name: 'preferredQuality', exact: true });
     await quality.waitFor();
     assert.equal(await page.evaluate(() => typeof HTMLElement.prototype.showPopover), 'undefined');
@@ -166,7 +169,7 @@ try {
     if (process.platform === 'darwin') await quality.selectOption('480'); else await quality.press('ArrowDown');
     await page.waitForFunction(() => document.querySelector('[aria-label="preferredQuality"]').value === '480');
     assert.equal(await quality.evaluate(element => element === document.activeElement), true);
-    assert.ok(page.url().endsWith('/settings'));
+    assert.ok(page.url().endsWith('/settings#playback'));
     await page.goto(`${base}sources`);
     const kind = page.getByRole('combobox', { name: '확장 저장소 형식', exact: true });
     await kind.selectOption('aniyomi-apk');

@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import path from 'node:path';
-import {Store} from '../src/db.js';import {Tmdb} from '../src/tmdb.js';import {PluginSchedule,seoulDay} from '../src/plugin-schedule.js';import {buildApp} from '../src/app.js';import {pluginPackage} from '../src/website-plugins.js';
+import {Store} from '../src/db.js';import {Tmdb} from '../src/metadata/tmdb.js';import {PluginSchedule,seoulDay} from '../src/plugins/schedule.js';import {buildApp} from '../src/app.js';import {pluginPackage} from '../src/plugins/service.js';
 const now=()=>Date.parse('2026-10-13T16:00:00Z'),day='2026-10-14';
 const episode={id:1,airdate:day,airtime:'21:00',airstamp:'2026-10-14T12:00:00Z',season:1,number:2,show:{name:'Example',type:'Scripted',network:{name:'Channel',country:{code:'KR'}}}};
 async function fixture(){const dir=await mkdtemp(path.join(tmpdir(),'moa-calendar-')),db=new Store(dir);db.run("INSERT INTO profiles(id,name,color,kids,created_at) VALUES('p','P','blue',0,'2026')");return {db,close:async()=>{db.close();await rm(dir,{recursive:true,force:true});}};}

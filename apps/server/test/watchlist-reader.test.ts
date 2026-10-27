@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { WatchlistReader } from '../src/watchlist-reader.js';
+import { WatchlistReader } from '../src/profiles/watchlist.js';
 import { buildApp } from '../src/app.js';
 
 async function fixture(t: TestContext) {

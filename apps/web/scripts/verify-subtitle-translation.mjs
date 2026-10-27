@@ -138,8 +138,13 @@ try {
     window.__keyTests = [];
     window.__activeKeyTests = 0;
     window.__maxKeyTests = 0;
+    window.__batchSaves = [];
     const request = window.fetch;
     window.fetch = async (...args) => {
+      if (String(args[0]).endsWith('/admin/translation/config') && args[1]?.method === 'PATCH') {
+        const body = JSON.parse(args[1].body);
+        if (body.batchSize !== undefined) window.__batchSaves.push(body.batchSize);
+      }
       const test = /\/admin\/translation\/keys\/[^/]+\/test$/.test(String(args[0]));
       if (test) {
         window.__keyTests.push(String(args[0]));
@@ -192,9 +197,11 @@ try {
   await batchInput.fill('999');
   await batchInput.press('Enter');
   await section.getByText('묶음당 300줄로 저장했어요.').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.__batchSaves), [300], 'Enter saves once when disabling the input also blurs it');
   await batchInput.fill('80');
-  await batchInput.blur();
+  await batchInput.press('Tab');
   await section.getByText('묶음당 80줄로 저장했어요.').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.__batchSaves), [300, 80], 'blur saves the next value once');
   await section.getByRole('combobox', { name: '번역 모델', exact: true }).click();
   await page.locator('.dropdown-menu:popover-open').getByRole('option', { name: 'gemini-flash-lite-latest', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#translation [role=combobox][aria-label="번역 모델"]').textContent === 'gemini-flash-lite-latest');
@@ -285,7 +292,7 @@ try {
   await page.getByRole('button', { name: '끄기', exact: true }).click();
   const doneNotice = page.locator('.player-notice', { hasText: '한국어 AI 번역이 끝났어요' });
   await doneNotice.waitFor({ timeout: 20000 });
-  assert.equal(await page.locator('.panel-cols .opt.is-active span').first().textContent(), '끄기', 'subtitles stay off');
+  assert.equal(await page.locator('.panel-cols > section').filter({ has: page.getByRole('button', { name: '끄기', exact: true }) }).locator('.opt.is-active span').textContent(), '끄기', 'subtitles stay off');
   await page.locator('.panel-head').getByRole('button', { name: '닫기', exact: true }).click();
   await doneNotice.getByRole('button', { name: '적용' }).click();
   await subsPanel(page);

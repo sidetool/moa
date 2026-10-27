@@ -1,4 +1,4 @@
-import { convertSubtitle } from '@moa/subtitles-ko';
+import { convertSubtitle } from '../subtitles/korean/index.js';
 import { ApiFailure } from '../util.js';
 export interface Line {
   id: number;

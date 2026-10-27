@@ -1,7 +1,7 @@
 # 보안 제보
 
-이 저장소의 GitHub **Security → Advisories → Report a vulnerability**에서 private vulnerability reporting으로 제보한다. 영향받는 버전/커밋, 재현 절차와 최소한의 합성 증거를 포함한다. 실제 계정·API 키·쿠키·재생 세션 URL·미디어·DB는 첨부하지 않는다. private reporting이 아직 비활성화되어 있으면 비밀이나 재현 exploit을 공개 이슈에 올리지 말고, 해당 기능의 활성화만 요청한다.
+GitHub 저장소의 **Security → Advisories → Report a vulnerability**에서 비공개로 알려 주세요. 영향받는 버전, 재현 방법, 최소한의 합성 예시를 포함해 주세요. 실제 계정·API 키·쿠키·재생 주소·미디어·DB는 첨부하지 마세요.
 
-보안 수정은 최신 main과 최신 릴리스를 우선 대상으로 한다. 이전 버전에 대한 별도 지원 기간은 약속하지 않는다.
+비공개 제보 기능이 꺼져 있다면 공개 이슈에는 기능 활성화만 요청해 주세요. 비밀 정보나 공격 재현 방법은 올리지 마세요. 보안 수정은 최신 main과 최신 릴리스를 우선하며, 이전 버전의 별도 지원 기간은 정하지 않습니다.
 
-확장은 제3자 실행 코드이며 특히 APK는 일반 JVM 코드를 실행한다. 신뢰하는 확장만 설치한다. 앱은 gateway의 인증 헤더를 신뢰하므로 앱/인증/worker 포트의 외부 우회 접근을 차단한다. HTTPS, 데이터·secret 권한과 백업은 설치 운영자가 관리한다. [구조](docs/ARCHITECTURE.md)와 [배포](docs/DEPLOYMENT.md)를 참고한다.
+확장은 다른 개발자가 만든 실행 코드입니다. 특히 APK는 서버에서 JVM 코드를 실행하므로 신뢰하는 확장만 설치해 주세요. 앱·인증·worker 포트를 직접 외부에 열지 말고 로그인 게이트웨이를 통해 접속해 주세요. HTTPS, 데이터·비밀키의 접근 권한과 백업은 운영자가 관리합니다. 자세한 내용은 [개발](docs/DEVELOPMENT.md)과 [배포](docs/DEPLOYMENT.md) 문서를 참고해 주세요.

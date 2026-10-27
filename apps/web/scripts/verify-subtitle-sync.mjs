@@ -29,8 +29,9 @@ async function scenario({enabled=true,wrong=false,manual=false,offDuringCheck=fa
  await context.route(url=>url.pathname.startsWith('/api/'),route=>{
   const request=route.request(),path=new URL(request.url()).pathname;
   const json=body=>route.fulfill({json:body});
-  if(path==='/api/plugins')return json([]);
-  if(path==='/api/me')return json({id:'test',role:'member',username:'test'});
+  if(path==='/api/plugins'||path==='/api/plugin-runtime')return json([]);
+  if(path.endsWith('/markers'))return json({markers:null,status:'unavailable'});
+  if(path==='/api/me')return json({id:'test',role:'member',username:'test',permissions:['video.watch','subtitles.add']});
   if(path==='/api/translation/config')return json({configured:false,enabled:false,keys:[],batchSize:120,requestIntervalMs:1000,retryCount:2});
   if(path==='/api/settings')return json({autoplayNext:false,autoplayDelay:5,defaultSubtitleLang:'ko',subtitleSize:'medium',preferredQuality:'auto',hardwareTranscoding:true,autoFetchSubtitles:true,experimentalSubtitleSync:enabled,translationMode:'manual',skipSubtitleSearchWithSiteTrack:true});
   if(path==='/api/playback')return json({sessionId:'s',episodeId:'e',mediaId:'m',mediaTitle:'검증',mediaType:'anime',mode:'direct',url:'/fixture/video.mp4',mime:'video/mp4',duration:1800,startPosition:0,subtitles:[reference],audioTracks:[]});

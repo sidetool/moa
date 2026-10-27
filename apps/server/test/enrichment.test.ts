@@ -5,10 +5,10 @@ import path from 'node:path';
 import os from 'node:os';
 import { buildApp } from '../src/app.js';
 import { Store } from '../src/db.js';
-import { OnlineSubtitles, sqliteCache, type OnlineClient } from '../src/online.js';
-import { Enrichment, validMarkers } from '../src/enrichment.js';
+import { OnlineSubtitles, sqliteCache, type OnlineClient } from '../src/subtitles/online.js';
+import { Enrichment, validMarkers } from '../src/playback/enrichment.js';
 import { config } from '../src/config.js';
-import { ANALYSIS_VERSION, type SeasonAnalysis, type SkipMarkers } from '@moa/skip-markers';
+import { ANALYSIS_VERSION, type SeasonAnalysis, type SkipMarkers } from '../src/playback/skip-markers/index.js';
 
 const candidate = { id: 'candidate', creatorId: 'creator', creatorName: '제작자', sourceUrl: 'https://example.org/post', filename: '14.ass', format: 'ass' as const, content: '[Script Info]\nTitle: Korean', episode: 3, matchedEpisode: 14, title: '구름 정원 2기', season: 2, confidence: .9 };
 const client: OnlineClient = { async resolveKoreanTitle() { return '구름 정원 2기'; }, async searchSubtitles() { return [candidate]; } };

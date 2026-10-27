@@ -3,13 +3,16 @@ const fs=require('fs'), assert=require('assert/strict');
 (async()=>{
  assert.ok(process.env.MOA_PLAYER_FIXTURE, 'Set MOA_PLAYER_FIXTURE to a generated MP4');
  const {verificationPath}=await import('./verification-path.mjs');
- const browser=await chromium.launch({args:['--autoplay-policy=no-user-gesture-required']});
+ const browser=await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE,args:['--autoplay-policy=no-user-gesture-required']});
  const page=await browser.newPage();const errors=[],events=[];let count=0,heartbeat=0,fail=false,transient=false,runtime=true;
  page.on('pageerror',e=>errors.push(e.message));
  await page.route('http://127.0.0.1:5188/fixture.mp4',r=>{const bytes=fs.readFileSync(process.env.MOA_PLAYER_FIXTURE);const range=/bytes=(\d+)-(\d*)/.exec(r.request().headers().range||'');if(!range)return r.fulfill({contentType:'video/mp4',body:bytes,headers:{'Accept-Ranges':'bytes'}});const from=+range[1],to=range[2]?+range[2]:bytes.length-1;return r.fulfill({status:206,contentType:'video/mp4',body:bytes.subarray(from,to+1),headers:{'Content-Range':`bytes ${from}-${to}/${bytes.length}`,'Accept-Ranges':'bytes'}});});
  await page.route('http://127.0.0.1:5188/api/**',async r=>{
   const req=r.request(),path=new URL(req.url()).pathname,body=req.postDataJSON(),method=req.method();
   const json=x=>r.fulfill({json:x});
+  if(path==='/api/plugins'||path==='/api/plugin-runtime'||path.endsWith('/subtitles/translations'))return json([]);
+  if(path==='/api/me')return json({role:'admin'});
+  if(path.endsWith('/markers'))return json({markers:null,status:'unavailable'});
   if(path==='/api/playback'&&method==='POST'){
    events.push({type:'create',episode:body.episodeId,at:body.startPosition||0,clock:Date.now()});
    if(body.episodeId==='e4')await new Promise(r=>setTimeout(r,600));
@@ -20,7 +23,8 @@ const fs=require('fs'), assert=require('assert/strict');
   if(path==='/api/settings')return json({autoplayNext:false,autoFetchSubtitles:false,defaultSubtitleLang:'off',subtitleSize:'medium'});
   if(path==='/api/media/m')return json({id:'m',title:'검증',type:'movie',seasons:[],provider:{id:'test',name:'test'}});
   if(method==='POST')return r.fulfill({status:204});
-  return json({members:[],items:[]});
+  if(path.endsWith('/group'))return json({members:[]});
+  return r.fulfill({status:204});
  });
  const ready=()=>page.waitForFunction(()=>{const v=document.querySelector('video');return v&&v.readyState>=3},null,{timeout:15000});
  try{

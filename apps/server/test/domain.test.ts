@@ -4,12 +4,12 @@ import { mkdtemp, mkdir, symlink, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Episode } from '@moa/shared';
-import { parseName, matchSubtitles } from '../src/filename.js';
-import { completion, continueTarget, playTarget, summary } from '../src/progress.js';
+import { parseName, matchSubtitles } from '../src/library/filename.js';
+import { completion, continueTarget, playTarget, summary } from '../src/profiles/progress.js';
 import { safePath, normalize } from '../src/util.js';
-import { playbackMode } from '../src/playback.js';
-import { smiToVtt } from '../src/subtitles.js';
-import type { Probe } from '../src/probe.js';
+import { playbackMode } from '../src/playback/service.js';
+import { smiToVtt } from '../src/subtitles/service.js';
+import type { Probe } from '../src/playback/probe.js';
 
 test('parse synthetic release filenames and Korean/movie patterns', () => {
   const cases: [string, ReturnType<typeof parseName>][] = [

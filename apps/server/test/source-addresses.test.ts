@@ -4,11 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
-import { Sources } from '../src/sources.js';
-import { SourceIdentities } from '../src/source-identity.js';
-import { RemotePlayback } from '../src/remote-playback.js';
-import { invokeMangayomi } from '@moa/extensions';
+import { Catalog } from '../src/catalog/service.js';
+import { Sources } from '../src/sources/service.js';
+import { SourceIdentities } from '../src/sources/identity.js';
+import { RemotePlayback } from '../src/playback/remote.js';
+import { invokeMangayomi } from '../src/sources/extensions/index.js';
 
 async function fixture(runtime?: any) {
   const dir=await mkdtemp(path.join(os.tmpdir(),'source-address-')), db=new Store(dir),catalog=new Catalog(db);

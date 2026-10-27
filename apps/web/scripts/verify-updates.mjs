@@ -27,6 +27,8 @@ async function open(width, server) {
     if (path === '/api/profiles') return route.fulfill({ json: [{ id: 'test', name: '테스트', color: 'blue' }] });
     if (path === '/api/settings') return route.fulfill({ json: settings });
     if (path === '/api/admin/system') { server.systemGets = (server.systemGets || 0) + 1; return route.fulfill({ json: { os: 'Fixture Linux', kernel: '6.1.0', architecture: 'arm64', nodeVersion: '22.23.3', version: 'v1.0.0', revision: 'a'.repeat(40), deployment: 'docker', cpuCount: 4, memoryTotal: 8 * 1024 ** 3, memoryUsed: 2 * 1024 ** 3, uptimeSeconds: 7200 } }); }
+    if (path === '/api/admin/components') return route.fulfill({ json: { available: false, items: [] } });
+    if (path.startsWith('/api/admin/updates/releases/')) { const tag = decodeURIComponent(path.split('/').at(-1)); return route.fulfill({ json: { body: `## 변경 사항 ${tag}\n\n로컬 검증 릴리스입니다.` } }); }
     if (path === '/api/admin/updates') { server.gets++; return route.fulfill({ json: server.status }); }
     if (path.endsWith('/updates/check')) { server.status = { ...server.status, ...server.onCheck }; return route.fulfill({ status: 202, json: { ...server.status, state: 'checking' } }); }
     if (path.endsWith('/updates/apply')) { server.applies++; server.status = { ...server.status, state: server.status.mode === 'release' ? 'downloading' : 'updating' }; return route.fulfill({ status: 202, json: server.status }); }
@@ -65,7 +67,7 @@ try {
     server.status = { ...server.status, state: 'blocked', error: 'update-dirty' };
     await section.getByRole('alert').filter({ hasText: '수정한 파일' }).waitFor();
     server.status = { ...server.status, connected: false, error: null };
-    await section.getByText('도구 연결 끊김', { exact: true }).waitFor();
+    await section.getByText('업데이트 서비스 중지', { exact: true }).waitFor();
     await noOverflow(page);
     server.me = { ...server.me, role: 'member' };
     server.status = { ...server.status, connected: true, state: 'available' };
@@ -93,18 +95,22 @@ try {
     assert.equal(await section.getByRole('button', { name: '설정 저장' }).count(), 0);
     assert.equal(await section.getByText('설정 안내').count(), 0);
     await section.getByRole('combobox', { name: '업데이트 채널' }).click();
-    await page.getByRole('option', { name: '베타' }).click();
-    await section.getByText('업데이트 도구에 반영하는 중…').waitFor();
+    await page.getByRole('option', { name: '사전 릴리스', exact: true }).click();
+    await section.getByText('채널 변경 중…').waitFor();
     assert.deepEqual(server.patches, [{ channel: 'beta' }]);
     await page.waitForTimeout(3500);
-    assert.match(await section.getByRole('combobox', { name: '업데이트 채널' }).innerText(), /베타/, 'chosen channel stays while the host catches up');
+    assert.match(await section.getByRole('combobox', { name: '업데이트 채널' }).innerText(), /사전 릴리스/, 'chosen channel stays while the host catches up');
     server.status = { ...server.status, policy: { channel: 'beta' } };
-    await section.getByText('업데이트 도구에 반영하는 중…').waitFor({ state: 'detached' });
-    await section.getByText('베타 채널', { exact: true }).waitFor();
+    await section.getByText('채널 변경 중…').waitFor({ state: 'detached' });
+    await section.locator('.setting small').filter({ hasText: /^베타 채널/ }).waitFor();
 
     server.status = { ...server.status, state: 'available', latest: '1.3.0-beta.1', notesUrl: 'https://github.com/sidetool/moa/releases/tag/v1.3.0-beta.1' };
     await section.getByText('새 버전 v1.3.0-beta.1', { exact: true }).waitFor();
-    assert.equal(await section.getByRole('link', { name: '변경 사항 보기' }).getAttribute('href'), server.status.notesUrl);
+    await section.getByRole('button', { name: '변경 사항 보기', exact: true }).click();
+    const notes = page.getByRole('dialog', { name: '1.3.0-beta.1 릴리스', exact: true });
+    await notes.getByRole('heading', { name: '변경 사항 1.3.0-beta.1', exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/settings');
+    await notes.getByRole('button', { name: '닫기', exact: true }).click();
     assert.equal(await page.locator('.update-notice').count(), 0, 'no notice on the settings page itself');
     server.status = { ...server.status, state: 'applying', notesUrl: 'https://example.com/notes' };
     await section.getByText('4/5', { exact: true }).waitFor();
@@ -112,6 +118,10 @@ try {
     server.status = { ...server.status, state: 'available' };
     await section.getByRole('button', { name: '지금 업데이트' }).waitFor();
     assert.equal(await section.getByRole('link', { name: '변경 사항 보기' }).count(), 0);
+    await section.getByRole('button', { name: '변경 사항 보기', exact: true }).click();
+    await notes.getByRole('heading', { name: '변경 사항 1.3.0-beta.1', exact: true }).waitFor();
+    assert.equal(await notes.getByRole('link').count(), 0);
+    await notes.getByRole('button', { name: '닫기', exact: true }).click();
     await section.getByText('자세히').click();
     await section.getByRole('list', { name: '업데이트 기록' }).getByText('v1.1.0 → v1.2.0').waitFor();
     await section.scrollIntoViewIfNeeded();
@@ -223,7 +233,11 @@ try {
     await page.getByText('Fixture Linux', { exact: true }).waitFor();
     assert.equal(await section.getByRole('button', { name: '업데이트 확인', exact: true }).isEnabled(), true);
     assert.equal(await section.getByRole('button', { name: '지금 업데이트', exact: true }).count(), 0);
-    assert.equal(await section.getByRole('link', { name: '릴리스 보기' }).getAttribute('href'), discovery.releases[0].url);
+    await section.getByRole('button', { name: '릴리스 보기', exact: true }).click();
+    const notes = page.getByRole('dialog', { name: 'v2.0.0 릴리스', exact: true });
+    await notes.getByRole('heading', { name: '변경 사항 v2.0.0', exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/settings');
+    await notes.getByRole('button', { name: '닫기', exact: true }).click();
     await section.getByRole('button', { name: '업데이트 확인', exact: true }).click();
     await noOverflow(page);
     await page.screenshot({ path: verificationPath(`updates-discovery-${width}.png`), fullPage: true });

@@ -11,7 +11,7 @@ const base = process.env.MOA_VERIFY_URL || 'http://127.0.0.1:5181';
 const videoBytes = await readFile(process.env.MOA_TEST_VIDEO);
 const output = process.env.MOA_VERIFY_OUTPUT || verificationPath('verification-tv');
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, channel: 'chromium', args: ['--autoplay-policy=no-user-gesture-required'] });
 const errors = [], results = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function gate() { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; }
@@ -28,6 +28,7 @@ async function fixture(options = {}) {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const calls = { searches: [], applies: [], sessions: [] };
+  let device = { fullscreenOnPlay: true, ...options.device };
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/fixture/video.mp4', route => {
     const range = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/);
@@ -39,6 +40,10 @@ async function fixture(options = {}) {
   await context.route(url => url.pathname.startsWith('/api/'), async route => {
     const req = route.request(), url = new URL(req.url()), path = url.pathname;
     const json = body => route.fulfill({ json: body }).catch(() => {});
+    if (path === '/api/me') return json({ id: 'admin', role: 'admin' });
+    if (path === '/api/plugin-runtime') return json([]);
+    if (path === '/api/settings/device') { if (req.method() === 'PATCH') device = { ...device, ...req.postDataJSON().settings }; return json({ settings: device }); }
+    if (path.endsWith('/markers')) return json({ status: 'unavailable' });
     if (path === '/api/profiles') return json([{id:'ui-test',name:'테스트',color:'violet'}]);
     if (path === '/api/sources') return json([]);
     if (path === '/api/home') {
@@ -110,8 +115,7 @@ try {
  await p.waitForURL('**/watch/e1');await p.waitForFunction(()=>document.querySelector('video')?.currentTime>0);
  assert.equal(await p.evaluate(()=>!!document.fullscreenElement),false);
  results.push('Denied fullscreen still plays inline');await f.close();
- const off=await fixture({path:'/title/m1',mode:'off'});
- await off.page.evaluate(()=>localStorage.setItem('moa.fullscreenOnPlay','0'));await off.page.reload();
+ const off=await fixture({path:'/title/m1',mode:'off',device:{fullscreenOnPlay:false}});
  await off.page.locator('.title-hero-copy .hero-actions button').first().click();
  await off.page.waitForURL('**/watch/e1');await off.page.waitForFunction(()=>document.querySelector('video')?.currentTime>0);
  assert.equal(await off.page.evaluate(()=>!!document.fullscreenElement),false,'setting off keeps inline playback');

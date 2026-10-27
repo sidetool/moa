@@ -62,7 +62,10 @@ try {
     if (pathname === '/api/me') return json({ role });
     if (pathname === '/api/profiles') return json([{ id: 'test', name: '테스트', color: 'blue' }]);
     if (pathname === '/api/sources') return json([]);
-    if (pathname === '/api/plugins') return json([]);
+    if (pathname === '/api/admin/updates') return json({ state: 'unsupported', available: false, current: 'fixture' });
+    if (pathname === '/api/admin/subtitle-memory') return json({ retentionDays: 90, count: 0 });
+    if (pathname === '/api/plugins' || pathname === '/api/plugin-runtime') return json([]);
+    if (pathname.endsWith('/markers')) return json({ markers: null, status: 'unavailable' });
     if (pathname === '/api/translation/config') return json({ provider: 'gemini', configured: true, enabled: true, model: 'test', keys: [] });
     if (pathname.endsWith('/subtitles/translations')) return json([translated]);
     if (pathname === '/api/translations/job') {
@@ -80,7 +83,7 @@ try {
   const ready = async () => { await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2).catch(async error => { console.error(errors, await page.locator('body').innerText(), await page.locator('video').evaluate(video => ({ src: video.currentSrc, error: video.error?.message }))); throw error; }); await page.locator('video').evaluate(video => video.pause()); };
   await ready();
   const profileChanged = await page.evaluate(async () => {
-    const { importSubtitleFile } = await import('/src/player/subtitle-files.ts');
+    const { importSubtitleFile } = await import('/src/player/subtitles/subtitle-files.ts');
     const file = new File(['WEBVTT\n'], 'race.vtt');
     file.arrayBuffer = async () => { localStorage.setItem('moa.profile', 'other'); return new TextEncoder().encode('WEBVTT\n').buffer; };
     try { await importSubtitleFile(file, 'e1', new AbortController().signal); return false; }
@@ -89,7 +92,8 @@ try {
   });
   assert.equal(profileChanged, true);
   assert.equal(backend.db.get('SELECT count(*) AS n FROM uploaded_subtitles').n, 0);
-  assert.equal(await page.locator('.player').evaluate(element => element.style.getPropertyValue('--subtitle-lift')), '0%');
+  await page.waitForFunction(() => document.querySelector('track')?.track.cues?.length);
+  assert.deepEqual(await page.locator('track').evaluate(element => ({ line: element.track.cues[0].line, snapToLines: element.track.cues[0].snapToLines })), { line: 'auto', snapToLines: true });
   const openSubs = async () => { await page.mouse.move(100, 100); await page.getByRole('button', { name: '자막 및 음성', exact: true }).click(); };
   await openSubs();
   await page.getByRole('button', { name: '한국어 AI 번역', exact: true }).click();
@@ -183,12 +187,13 @@ try {
   backend.db.run("INSERT INTO online_subtitles VALUES('online','e1','제작자','https://example.com/sub','vtt',?,'hash','token',?)", vtt, Date.now());
   await page.goto(`${base}subtitles`);
   await page.getByRole('heading', { name: '자막 관리', exact: true }).waitFor();
+  assert.equal(new URL(page.url()).hash, '#subtitle-library');
   await page.getByText('6개 ·', { exact: false }).waitFor();
   const savedDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: '직접.srt 다운로드', exact: true }).click();
   assert.match(await readFile(await (await savedDownload).path(), 'utf8'), /직접 추가/);
-  page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '직접.srt 삭제', exact: true }).click();
+  await page.getByRole('alertdialog', { name: '자막 삭제', exact: true }).getByRole('button', { name: '삭제', exact: true }).click();
   await page.getByRole('button', { name: '직접.srt 삭제', exact: true }).waitFor({ state: 'detached' });
   assert.equal(backend.db.get('SELECT count(*) AS n FROM uploaded_subtitles').n, 3);
   const onlineDownload = page.waitForEvent('download');
@@ -199,15 +204,19 @@ try {
     await page.screenshot({ path: verificationPath(`subtitle-library-${width}.png`), animations: 'disabled' });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   }
-  page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '제작자 · 한국어 삭제', exact: true }).click();
+  await page.getByRole('alertdialog', { name: '자막 삭제', exact: true }).getByRole('button', { name: '삭제', exact: true }).click();
   await page.getByRole('button', { name: '제작자 · 한국어 삭제', exact: true }).waitFor({ state: 'detached' });
   assert.equal(backend.db.get('SELECT count(*) AS n FROM online_subtitles').n, 0);
   await page.goto(`${base}me`);
-  await page.getByRole('link', { name: '저장한 자막', exact: true }).click();
+  await page.getByRole('link', { name: '설정', exact: true }).click();
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('link', { name: '자막 관리', exact: true }).click();
   await page.getByRole('heading', { name: '자막 관리', exact: true }).waitFor();
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByRole('button', { name: '프로필 메뉴', exact: true }).click();
-  await page.getByRole('menuitem', { name: '플러그인', exact: true }).click();
+  assert.equal(await page.getByRole('menuitem', { name: '플러그인', exact: true }).count(), 0);
+  await page.getByRole('menuitem', { name: '설정', exact: true }).click();
+  await page.getByRole('navigation', { name: '설정 메뉴', exact: true }).getByRole('link', { name: '플러그인', exact: true }).click();
   await page.getByRole('heading', { name: '플러그인', exact: true }).waitFor();
   role = 'member';
   await page.goto(`${base}subtitles`);
@@ -215,8 +224,15 @@ try {
   assert.equal(await page.locator('#saved-subtitles').count(), 0);
   await page.goto(`${base}me`);
   assert.equal(await page.getByRole('link', { name: '저장한 자막', exact: true }).count(), 0);
-  await page.getByRole('link', { name: '플러그인', exact: true }).click();
-  await page.getByRole('heading', { name: '플러그인', exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: '플러그인', exact: true }).count(), 0);
+  await page.getByRole('link', { name: '설정', exact: true }).click();
+  const settingsMenu = page.getByRole('navigation', { name: '설정 메뉴', exact: true });
+  await settingsMenu.getByRole('link', { name: '재생', exact: true }).waitFor();
+  assert.equal(await settingsMenu.getByRole('link', { name: '자막 관리', exact: true }).count(), 0);
+  assert.equal(await settingsMenu.getByRole('link', { name: '플러그인', exact: true }).count(), 0);
+  await page.goto(`${base}plugins`);
+  await page.getByRole('heading', { name: '관리자만 볼 수 있어요', exact: true }).waitFor();
+  assert.equal(await page.locator('#plugins').count(), 0);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: true, checks: ['original position', 'translated export', 'stream subtitle retention', 'file selection', 'panel drop', 'video archive drop', 'profile change abort', 'source switch with uploaded subtitle', 'source dialog checkbox', 'saved uploads after reload', 'source switch with active translation', 'admin upload/AI/online subtitle list/download/delete'] }));
+  console.log(JSON.stringify({ passed: true, checks: ['original position', 'translated export', 'stream subtitle retention', 'file selection', 'panel drop', 'video archive drop', 'profile change abort', 'source switch with uploaded subtitle', 'source dialog checkbox', 'saved uploads after reload', 'source switch with active translation', 'admin upload/AI/online subtitle list/download/delete', 'settings navigation and member restrictions'] }));
 } finally { await browser.close(); await server.close(); await backend.app.close(); await rm(directory, { recursive: true, force: true }); }

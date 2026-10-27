@@ -2,9 +2,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { realpathSync } from 'node:fs';
 import { Store } from '../src/db.js';
-import { episodeQuery } from '../src/episode-query.js';
-import { subtitleQuery } from '../src/subtitle-query.js';
-import { playbackMediaType, subtitleIdentity } from '../src/tmdb.js';
+import { episodeQuery } from '../src/catalog/episode-query.js';
+import { subtitleQuery } from '../src/subtitles/query.js';
+import { playbackMediaType, subtitleIdentity } from '../src/metadata/tmdb.js';
 
 const [input, sourceId, title = ''] = process.argv.slice(2);
 if (!input || !sourceId) throw new Error('Usage: audit-anime-subtitles.ts <copied DB path> <source ID> [title filter]');

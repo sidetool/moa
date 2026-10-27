@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {AniListRecommendations,matchAnimeSeed,matchAnimeCandidate} from '../src/anilist-recommendations.js';
+import {AniListRecommendations,matchAnimeSeed,matchAnimeCandidate} from '../src/profiles/anilist-recommendations.js';
 const anime=(id:number,name='Synthetic Animation',year=2024)=>({id,type:'ANIME',format:'TV',isAdult:false,title:{native:name,english:name},startDate:{year}});
 const seed={kind:'tv' as const,id:9,title:'Localized',originalTitle:'Synthetic Animation',year:2024};
 const candidate={kind:'tv' as const,id:200,title:'Localized Candidate',originalTitle:'Recommended Animation',year:2023,genreIds:[16]};

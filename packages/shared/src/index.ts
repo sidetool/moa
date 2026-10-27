@@ -270,7 +270,7 @@ export interface SavedSubtitle {
   complete: boolean;
 }
 
-/* ---------- Online Korean subtitles (packages/subtitles-ko) ---------- */
+/* ---------- Online Korean subtitles ---------- */
 
 export interface OnlineSubtitleCandidate {
   id: string;
@@ -379,6 +379,42 @@ export interface ScanStatus { running: boolean; phase?: "listing" | "probing" | 
 
 /* ---------- Settings ---------- */
 
+export const PLAYER_SHORTCUT_LABELS = {
+  playPause: '재생·일시정지', seekBackward: '설정한 간격 뒤로', seekForward: '설정한 간격 앞으로',
+  volumeUp: '음량 높이기', volumeDown: '음량 낮추기', fullscreen: '전체 화면', mute: '음소거',
+  nextEpisode: '다음 화', subtitles: '자막 켜기·끄기', speedDown: '재생 속도 낮추기', speedUp: '재생 속도 높이기',
+  subtitleEarlier: '자막 0.5초 앞당기기', subtitleLater: '자막 0.5초 늦추기'
+} as const;
+export type PlayerShortcutAction = keyof typeof PLAYER_SHORTCUT_LABELS;
+export type PlayerShortcuts = Record<PlayerShortcutAction, string | null>;
+export const DEFAULT_PLAYER_SHORTCUTS: PlayerShortcuts = {
+  playPause: 'KeyK', seekBackward: 'KeyJ', seekForward: 'KeyL', volumeUp: 'ArrowUp', volumeDown: 'ArrowDown',
+  fullscreen: 'KeyF', mute: 'KeyM', nextEpisode: 'KeyN', subtitles: 'KeyC', speedDown: 'Shift+Comma',
+  speedUp: 'Shift+Period', subtitleEarlier: 'BracketLeft', subtitleLater: 'BracketRight'
+};
+const keyNames: Record<string, string> = { ArrowUp: '↑', ArrowDown: '↓', Comma: ',', Period: '.', BracketLeft: '[', BracketRight: ']', Semicolon: ';', Quote: "'", Slash: '/', Backslash: '\\', Backquote: '`', Minus: '-', Equal: '=' };
+export const playerShortcutLabel = (value: string | null): string => value === null ? '' : value.split('+').map(key => key.startsWith('Key') ? key.slice(3) : keyNames[key] ?? key).join(' + ');
+const allowedCode = /^(?:Key[A-Z]|ArrowUp|ArrowDown|Comma|Period|BracketLeft|BracketRight|Semicolon|Quote|Slash|Backslash|Backquote|Minus|Equal)$/;
+
+export function keyboardShortcutKey(event: { code: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean; isComposing?: boolean }): string | null {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing || !allowedCode.test(event.code)) return null;
+  return `${event.shiftKey ? 'Shift+' : ''}${event.code}`;
+}
+
+export function isPlayerShortcuts(value: unknown): value is PlayerShortcuts {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length !== Object.keys(DEFAULT_PLAYER_SHORTCUTS).length) return false;
+  const used = new Set<string>();
+  return entries.every(([action, key]) => {
+    if (!Object.hasOwn(DEFAULT_PLAYER_SHORTCUTS, action)) return false;
+    if (key === null) return true;
+    if (typeof key !== 'string' || !allowedCode.test(key.replace(/^Shift\+/, '')) || used.has(key)) return false;
+    used.add(key);
+    return true;
+  });
+}
+
 export interface NavigationTab {
   sourceFilters?: Record<string, BrowseSelection>;
   id: string;
@@ -482,9 +518,10 @@ export interface TitleGroup { id: string; manual: boolean; members: MediaCard[] 
 export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | 'subtitleBackground' | 'subtitleShadow' | 'subtitleOutline' | 'subtitleHeight' | 'subtitlePadding' | 'subtitlePreserveAss' | 'subtitleStep'> & {
   /** null follows the device's mobile/desktop default. */
   shortsScreenFit: boolean | null;
+  playerShortcuts: PlayerShortcuts;
   fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; holdSpeed: 1.25 | 1.5 | 2 | 2.5 | 3; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: true, subtitleStep: 5 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: true, subtitleStep: 5 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];
@@ -644,6 +681,10 @@ export interface TitleMetadata {
 }
 export interface TitleMetadataResponse {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null; details: TitleMetadata | null;
+}
+export interface MetadataLookupQuery { title: string; type?: MediaType }
+export interface MetadataLookupResponse {
+  provider: string; status: Exclude<PeopleStatus, 'unlinked'>; mediaId?: string; poster?: string;
 }
 export interface PersonWorksResponse {
   provider: string; status: PeopleStatus; title: LinkedPluginTitle | null;

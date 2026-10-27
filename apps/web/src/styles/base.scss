@@ -1,0 +1,55 @@
+@use "tokens";
+@use "ui";
+
+:root {
+  font-family: var(--font-family);
+  font-feature-settings: "ss05";
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body { min-height: 100dvh; letter-spacing: var(--letter-body); overscroll-behavior-y: none; }
+h1, h2, h3, h4, p { margin: 0; }
+h1, h2, h3 { word-break: keep-all; overflow-wrap: anywhere; letter-spacing: var(--letter-heading); }
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; }
+button:disabled { cursor: default; }
+img { display: block; max-width: 100%; }
+svg { flex: none; }
+::selection { background: var(--accent); color: var(--accent-ink); }
+:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-gap); }
+:focus:not(:focus-visible) { outline: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Scrollbars stay out of the way. */
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports selector(details::details-content) and (interpolate-size: allow-keywords) {
+    details::details-content {
+      interpolate-size: allow-keywords;
+      height: 0;
+      opacity: 0;
+      overflow: clip;
+      transition: height var(--motion-slow) var(--ease), opacity var(--motion-slow) var(--ease), content-visibility var(--motion-slow) allow-discrete;
+    }
+    details[open]::details-content { height: auto; opacity: 1; }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* A remote needs a visible selection from couch distance. */
+html[data-tv] :focus { outline: var(--focus-tv-width) solid var(--focus-color) !important; outline-offset: var(--space-1) !important; scroll-margin: var(--focus-tv-margin); }
+html[data-tv] .card:focus, html[data-tv] .rank-card:focus { border-radius: var(--space-2); }
+html[data-tv] .row-track { padding-top: var(--space-3); padding-bottom: var(--space-4); }
+html[data-tv] .row-arrow { display: none; }
+html[data-tv] .player :focus { box-shadow: var(--focus-player-shadow); }
+html[data-tv] .player-center { display: flex; }

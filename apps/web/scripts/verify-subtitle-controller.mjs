@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 
-const source = stripTypeScriptTypes(await readFile(new URL('../src/player/engine.ts', import.meta.url), 'utf8'), { mode: 'transform' });
+const source = stripTypeScriptTypes(await readFile(new URL('../src/player/playback/engine.ts', import.meta.url), 'utf8'), { mode: 'transform' });
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => {
   let resolve, reject;

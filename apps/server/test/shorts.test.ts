@@ -5,9 +5,9 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {Store} from '../src/db.js';
-import {Shorts} from '../src/shorts.js';
-import {Recommendations} from '../src/recommendations.js';
-import {Tmdb} from '../src/tmdb.js';
+import {Shorts} from '../src/shorts/service.js';
+import {Recommendations} from '../src/profiles/recommendations.js';
+import {Tmdb} from '../src/metadata/tmdb.js';
 import {buildApp} from '../src/app.js';
 const DAY=86400_000;
 async function fixture(t:TestContext){

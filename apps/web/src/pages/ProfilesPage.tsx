@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Profile } from "@moa/shared";
 import { keys, useProfiles } from "../api/queries";
-import { Avatar, Logo } from "../components/AppShell";
+import { Avatar, Logo } from "../features/layout/AppShell";
 import { AVATAR_GROUPS, AvatarArt, avatarSpec, randomAvatar } from "../components/avatars";
 import { Button, PasswordInput, Skeleton } from "../components/ui";
 import { api, ApiError, currentProfileId, setCurrentProfileId } from "../lib/api";

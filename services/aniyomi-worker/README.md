@@ -1,15 +1,20 @@
-# Aniyomi APK worker
+# Aniyomi APK 작업 서버
 
-사용자가 설치한 APK의 영상 source API 일부를 별도 JVM에서 실행한다. API14/API16 manifest 검증, DEX 변환, source/filter/preference RPC, 자산·쿠키 저장과 선택 Chromium WebView 브리지를 제공한다. Android emulator나 원래 앱 UI는 포함하지 않는다.
+설치한 APK의 영상 소스 기능을 별도 JVM에서 실행합니다. API14/API16 검사, DEX 변환, 소스·필터·환경설정 RPC, 자산·쿠키 저장, 선택적 Chromium WebView 연결을 제공합니다. Android 에뮬레이터나 원래 앱 화면은 포함하지 않습니다.
 
-[기본 Docker 설치](../../docs/DEPLOYMENT.md)에 worker와 자동 공유 token 생성이 포함된다. 기존 `compose.aniyomi.yaml`은 기존 private token 파일을 계속 쓰는 호환 overlay다. RPC는 내부 8797 포트만 사용한다. APK·변환 JAR·preference는 named volume에 저장한다. 기존 volume과 token을 업데이트 때 보존한다.
+## 설치와 보관
 
-APK는 일반 JVM 코드다. read-only root, cap-drop, no-new-privileges와 자원 제한은 완전한 격리가 아니다. 신뢰한 확장만 설치하며 worker를 외부에 노출하지 않는다. WebView에는 공개 IP 검사·연결/페이지/시간 제한과 확장별 저장 경계가 있다. 모든 Android API·네트워크 동작을 지원하지 않는다.
+[Docker 배포](../../docs/DEPLOYMENT.md)에 작업 서버와 공유 토큰 생성이 포함됩니다. `compose.aniyomi.yaml`은 기존 토큰 파일을 사용하는 호환 설정입니다. RPC는 내부 8797 포트만 사용하며 APK·변환 JAR·환경설정은 Docker 볼륨에 저장합니다. 업데이트할 때 볼륨과 토큰을 유지해 주세요.
 
-빌드는 `build.py`, `pom.xml`, `dependencies.lock.json`의 고정 소스와 JAR 해시를 사용한다. Java 21/Maven/Python과 브라우저 의존성이 필요하다. 브라우저 package lock은 pnpm workspace와 별개다.
+APK는 일반 JVM 코드이므로 신뢰하는 확장만 설치하고 작업 서버를 외부에 노출하지 않습니다. 읽기 전용 루트·권한·자원 제한은 완전한 격리를 보장하지 않습니다. WebView에는 공개 IP 검사, 연결·페이지·시간 제한, 확장별 저장 영역이 적용됩니다.
+
+## 빌드와 검사
+
+`build.py`, `pom.xml`, `dependencies.lock.json`으로 소스와 JAR 해시를 고정합니다. Java 21·Maven·Python과 브라우저 의존성이 필요하며, 브라우저 잠금 파일은 pnpm 작업 공간과 별개입니다.
 
 ```sh
-node --test services/aniyomi-worker/*.test.mjs services/aniyomi-worker/browser/*.test.mjs
+npm ci --prefix services/aniyomi-worker/browser --ignore-scripts
+node --test services/aniyomi-worker/*.test.mjs
 ```
 
-합성 WebView·source fixture를 사용한다. 실제 저장소 URL·다운로드한 APK·영상·계정 값을 테스트에 추가하지 않는다. [출처 고지](NOTICE.md), [대응 소스](../../docs/THIRD-PARTY-SOURCES.md)를 참고한다.
+프로세스 잠금·중계 테스트는 Linux에서 합성 응답으로 실행하며 실제 Chromium을 실행하지 않습니다. [출처 고지](NOTICE.md)와 [대응 소스](../../docs/THIRD-PARTY-SOURCES.md)를 참고해 주세요.

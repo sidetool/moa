@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInlineHls, INLINE_HLS_LIMIT } from '../src/inline-hls.js';
+import { parseInlineHls, INLINE_HLS_LIMIT } from '../src/playback/inline-hls.js';
 const data = (body: string) => 'data:application/vnd.apple.mpegurl;base64,' + Buffer.from(body).toString('base64');
 const key = 'data:application/octet-stream;base64,' + Buffer.alloc(16, 7).toString('base64');
 const body = `#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXT-X-KEY:METHOD=AES-128,URI="${key}",IV=0x00000000000000000000000000000001\n#EXTINF:5,\nhttps://media.example.com/one.ts\n#EXT-X-ENDLIST\n`;
@@ -21,7 +21,7 @@ test('keeps distinct rotated keys, rejects excessive key counts', () => {
 });
 
 test('session proxy hides inline key, keeps auth isolation, forwards range/proxy and expires assets', async () => {
-  const { RemotePlayback } = await import('../src/remote-playback.js');
+  const { RemotePlayback } = await import('../src/playback/remote.js');
   const { default: Fastify } = await import('fastify');
   const { Readable } = await import('node:stream');
   const calls: unknown[] = [];
@@ -57,12 +57,12 @@ test('real JS runtime and Sources.videos reach playback; inline credentials stay
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
   const { Readable } = await import('node:stream');
-  const { parseRepository } = await import('@moa/extensions');
+  const { parseRepository } = await import('../src/sources/extensions/index.js');
   const { default: Fastify } = await import('fastify');
   const { Store } = await import('../src/db.js');
-  const { Catalog } = await import('../src/catalog.js');
-  const { Sources } = await import('../src/sources.js');
-  const { RemotePlayback } = await import('../src/remote-playback.js');
+  const { Catalog } = await import('../src/catalog/service.js');
+  const { Sources } = await import('../src/sources/service.js');
+  const { RemotePlayback } = await import('../src/playback/remote.js');
   const dir = await mkdtemp(join(tmpdir(),'moa-inline-integration-'));
   const db = new Store(dir), catalog = new Catalog(db), sources = new Sources(db,catalog);
   const entry = JSON.stringify(parseRepository([{id:'inline-fixture',name:'Fixture',lang:'en',version:'1',itemType:1,sourceCodeLanguage:1,baseUrl:'https://source.example',sourceCodeUrl:'https://source.example/code.js'}])[0]);
@@ -140,7 +140,7 @@ test('real JS runtime and Sources.videos reach playback; inline credentials stay
 });
 
 test('rejected APK formats release their lease; accepted mixed results keep the lease', async () => {
-  const { Sources } = await import('../src/sources.js');
+  const { Sources } = await import('../src/sources/service.js');
   const released:string[]=[];
   const videos:any=Object.assign([{url:'data:text/html;base64,Zml4dHVyZQ=='}],{apkLease:'fixture-lease'});
   const source:any={

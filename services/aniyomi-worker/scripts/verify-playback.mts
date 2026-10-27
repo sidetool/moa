@@ -12,8 +12,8 @@ if(!process.env.MOA_CANDIDATES)throw new Error('Set MOA_CANDIDATES to a user-sup
 const appRoot=process.env.MOA_APP_ROOT || fileURLToPath(new URL('../../../',import.meta.url));
 const require=createRequire(join(appRoot,'apps/server/package.json'));
 const Fastify=require('fastify');
-const {RemotePlayback}=await import(pathToFileURL(join(appRoot,'apps/server/src/remote-playback.ts')).href);
-const {publicStream}=await import(pathToFileURL(join(appRoot,'packages/extensions/dist/index.js')).href);
+const {RemotePlayback}=await import(pathToFileURL(join(appRoot,'apps/server/src/playback/remote.ts')).href);
+const {publicStream}=await import(pathToFileURL(join(appRoot,'apps/server/dist/sources/extensions/index.js')).href);
 const {chromium}=require(process.env.MOA_PLAYWRIGHT_PATH || 'playwright');
 const candidates=JSON.parse(await readFile(process.env.MOA_CANDIDATES,'utf8'));
 const app=Fastify({logger:false});

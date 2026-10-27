@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { importSubtitles } from '../src/subtitle-upload.js';
+import { importSubtitles } from '../src/subtitles/upload.js';
 import { buildApp } from '../src/app.js';
 
 const srt = '1\n00:00:01,000 --> 00:00:03,000\n안녕하세요\n';

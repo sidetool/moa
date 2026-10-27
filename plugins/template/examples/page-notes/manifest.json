@@ -2,9 +2,10 @@
   "apiVersion": 1,
   "id": "page-notes",
   "name": "Page notes",
-  "version": "1.0.0",
-  "description": "Keep profile-specific notes for each MOA page and search from a custom tool.",
+  "version": "1.1.0",
+  "description": "Keep profile notes and open an existing title or search from a custom tool.",
   "placements": ["app"],
-  "permissions": ["app.context", "app.navigate", "ui", "storage"],
-  "connect": []
+  "permissions": ["app.context", "app.navigate", "ui", "storage", "metadata.read"],
+  "connect": [],
+  "minMoaVersion": "0.1.2"
 }

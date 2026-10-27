@@ -1,0 +1,110 @@
+:root {
+  color-scheme: dark;
+  /* Brand: the only saturated colour in the UI (progress, logo, focus). */
+  --accent: #7b61ff;
+  --accent-strong: #9884ff;
+  --accent-ink: #ffffff;
+
+  --bg: #09090b;
+  --bg-raised: #111114;
+  --surface-1: #17171b;
+  --surface-2: #202025;
+  --surface-3: #2a2a30;
+  --hairline: rgba(255, 255, 255, .08);
+  --hairline-strong: rgba(255, 255, 255, .16);
+
+  --text: #f5f5f7;
+  --text-2: #c7c7cf;
+  --text-3: #8e8e99;
+  --success: #3fcf8e;
+  --warning: #f5b84b;
+  --danger: #ff5a6a;
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+
+  --gutter: clamp(16px, 4vw, 56px);
+  --nav-h: 64px;
+  --tab-h: 60px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --poster-w: clamp(118px, 13vw, 184px);
+  --landscape-w: clamp(240px, 24vw, 340px);
+
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --shadow-pop: 0 18px 40px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .08);
+
+  --font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", system-ui, sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --control-height: 40px;
+  --control-height-lg: 48px;
+  --control-height-compact: 34px;
+  --control-padding: 18px;
+  --font-body: 1rem;
+  --font-small: .875rem;
+  --font-control: .95rem;
+  --font-heading: 1.2rem;
+  --font-large: 1.05rem;
+  --line-body: 1.6;
+  --line-control: 1.4;
+  --weight-label: 600;
+  --weight-heading: 750;
+  --weight-action: 650;
+  --weight-bold: 700;
+  --border-width: 1px;
+  --focus-width: 2px;
+  --focus-gap: 2px;
+  --focus-color: #ffffff;
+  --motion-fast: .15s;
+  --motion-normal: .24s;
+  --motion-slow: .3s;
+  --motion-spinner: .8s;
+  --motion-skeleton: 1.5s;
+  --primary-bg: #ffffff;
+  --primary-hover: #dededf;
+  --primary-text: #0b0b0d;
+  --secondary-bg: #3a3a42;
+  --secondary-hover: #4a4a53;
+  --disabled-opacity: .45;
+  --radius-pill: 999px;
+  --menu-inset: 5px;
+  --option-padding: 10px;
+  --option-padding-block: 9px;
+  --checkbox-size: 18px;
+  --switch-width: 46px;
+  --switch-height: 28px;
+  --switch-knob: 22px;
+  --switch-inset: 3px;
+  --switch-travel: 18px;
+  --dialog-width: 480px;
+  --dialog-shadow: 0 30px 80px #0009;
+  --backdrop: #000a;
+  --backdrop-blur: 4px;
+  --spinner-track: rgba(255,255,255,.18);
+  --skeleton-fill: linear-gradient(100deg, #17171b 30%, #222227 45%, #17171b 60%);
+  --progress-track: rgba(255,255,255,.25);
+  --letter-body: -.012em;
+  --letter-heading: -.035em;
+  --scrollbar: #33333a;
+  --skeleton-title-width: min(440px, 80%);
+  --skeleton-title-height: 56px;
+  --skeleton-button-width: 132px;
+  --empty-copy-width: 420px;
+  --focus-tv-width: 3px;
+  --focus-tv-margin: 100px 28px;
+  --focus-player-shadow: 0 0 0 6px rgba(123,97,255,.65);
+}
+
+/* Inline selection state overrides these safe defaults. */
+.segmented, .seg { --segments: 1; --selected: 0; }

@@ -1,4 +1,4 @@
-import { parseSeason } from '@moa/subtitles-ko';
+import { parseSeason } from './subtitles/korean/index.js';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';

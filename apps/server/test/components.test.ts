@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {Updates} from '../src/updates.js';
+import {Updates} from '../src/system/updates.js';
 import {buildApp} from '../src/app.js';
 test('component requests are admin-only, capability-gated and serialize only a bounded action', async()=>{
  const dir=await mkdtemp(path.join(tmpdir(),'moa-component-api-'));const before=process.env.MOA_UPDATER_DIR;process.env.MOA_UPDATER_DIR=dir;
@@ -35,7 +35,7 @@ test('component status preserves terminal results, ignores malformed data, and d
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 test('component preparation refuses busy work without queuing a host action',async()=>{
- const {default:Fastify}=await import('fastify');const {registerUpdates}=await import('../src/updates.js');const {ApiFailure}=await import('../src/util.js');
+ const {default:Fastify}=await import('fastify');const {registerUpdates}=await import('../src/system/updates.js');const {ApiFailure}=await import('../src/util.js');
  const dir=await mkdtemp(path.join(tmpdir(),'moa-component-busy-')),before=process.env.MOA_UPDATER_DIR;process.env.MOA_UPDATER_DIR=dir;
  const app=Fastify();let called=false;
  app.setErrorHandler((e,_req,reply)=>reply.code(e instanceof ApiFailure?e.statusCode:500).send({error:e.message}));

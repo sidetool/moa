@@ -23,6 +23,12 @@ const server = await createServer({
     name: 'translation-live-fixture',
     configureServer(vite) {
       vite.middlewares.use((req, res, next) => {
+        const subtitle = /^\/api\/playback\/(mock-[^/]+)\/subtitles\/s0\.vtt(?:\?.*)?$/.exec(req.url ?? '');
+        if (subtitle) {
+          res.writeHead(200, { 'Content-Type': 'text/vtt; charset=utf-8' });
+          res.end(`WEBVTT\n\n00:00:01.000 --> 00:00:30.000\n日本語字幕 ${subtitle[1].replace(/^mock-\d+-/, '')}\n`);
+          return;
+        }
         if (!req.url?.startsWith('/__fixture.mp4')) return next();
         const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range ?? '');
         const start = range ? Number(range[1]) : 0, end = range?.[2] ? Number(range[2]) : size - 1;
@@ -42,6 +48,27 @@ await context.addInitScript(() => {
   localStorage.setItem('moa.fullscreenOnPlay', '0');
   localStorage.setItem('moa.mockVideo', '/__fixture.mp4');
   localStorage.setItem('moa.mockTranslationBatchMs', '4000');
+  const withPreferences = delegate => async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+    const match = /^\/api\/episodes\/([^/]+)\/subtitles\/preference$/.exec(url.pathname);
+    if (!match) return delegate(input, init);
+    const request = input instanceof Request ? new Request(input, init) : new Request(url, init);
+    const profile = request.headers.get('x-profile-id') ?? localStorage.getItem('moa.profile');
+    const episode = decodeURIComponent(match[1]), media = episode.replace(/-(?:e\d+|m)$/, '');
+    const episodeKey = JSON.stringify([profile, episode]), titleKey = JSON.stringify([profile, media]);
+    const state = JSON.parse(sessionStorage.getItem('moa.verify.subtitlePreferences') ?? '{"episodes":{},"titles":{}}');
+    if (request.method === 'PUT') {
+      const { choice } = await request.json();
+      state.episodes[episodeKey] = choice;
+      state.titles[titleKey] = choice;
+      sessionStorage.setItem('moa.verify.subtitlePreferences', JSON.stringify(state));
+    }
+    const result = Object.hasOwn(state.episodes, episodeKey) ? { choice: state.episodes[episodeKey] }
+      : state.titles[titleKey] === null ? { choice: null } : {};
+    return Response.json(result);
+  };
+  let fetch = withPreferences(window.fetch.bind(window));
+  Object.defineProperty(window, 'fetch', { configurable: true, get: () => fetch, set: value => { fetch = withPreferences(value); } });
 });
 const page = await context.newPage();
 page.on('pageerror', error => errors.push(String(error)));
@@ -65,13 +92,20 @@ const subsPanel = async () => {
   await page.getByRole('button', { name: '자막 및 음성' }).dispatchEvent('click');
   await page.locator('.player-panel').waitFor();
 };
-const activeSubtitle = async () => { await subsPanel(); const text = await page.locator('.panel-cols .opt.is-active').first().innerText(); await page.getByRole('button', { name: '닫기' }).first().dispatchEvent('click'); return text; };
+const activeSubtitle = async () => {
+  await subsPanel();
+  const subtitles = page.locator('.panel-cols > section').filter({ has: page.getByRole('heading', { name: '자막', exact: true }) });
+  const text = await subtitles.locator('.opt.is-active').innerText();
+  await page.getByRole('button', { name: '닫기' }).first().dispatchEvent('click');
+  return text.replace(/\s+/g, ' ').trim();
+};
 const offer = page.locator('.translate-offer');
 
 let step = 'setup';
 try {
   /* ---------- setup: admin key, small batches so revisions are visible ---------- */
   await page.goto(`${base}/settings#subtitles`);
+  await page.getByRole('combobox', { name: 'AI 자막 번역 방식' }).waitFor();
   await api('/api/admin/translation/config', 'PATCH', { addKeys: ['AIza-live-key-0001'], enabled: true, batchSize: 25 });
   await settings({ autoFetchSubtitles: false, translationMode: 'manual', skipTranslationWithoutSubtitles: false });
 
@@ -132,13 +166,16 @@ try {
   cues = await shownCues();
   assert.ok(!cues.some(c => c.start > 360 && c.start < 500), 'the seek target was translated before the stretch in between');
   await page.locator('.player-notice', { hasText: 'AI 번역을 마쳤어요' }).waitFor({ timeout: 20000 });
-  assert.equal((await shownCues()).length, 60, 'final revision holds every cue');
+  const completedCues = await shownCues();
+  assert.equal(completedCues.length, 60, 'final revision holds every cue');
   assert.equal((await counters()).jobs, 1, 'one job for the episode');
 
   /* ---------- reload: the finished translation is reused, nothing new is charged ---------- */
   step = 'reuse'; console.log('STEP', step);
   await watch('anime', 3);
-  await page.locator('.player-notice', { hasText: '저장된 AI 번역 자막을 적용했어요' }).waitFor({ timeout: 10000 });
+  await page.waitForFunction(() => [...document.querySelector('video').textTracks].some(track => track.mode === 'showing' && track.cues?.length === 60 && [...track.cues].every(cue => cue.text.startsWith('[AI]'))), null, { timeout: 10000 });
+  assert.deepEqual(await shownCues(), completedCues, 'the saved translation restores the same complete cues');
+  assert.match(await activeSubtitle(), /한국어.*AI 번역/);
   assert.equal((await counters()).jobs, 0, 'reloading reuses the saved translation');
 
   /* ---------- subtitles off during an auto translation stops it ---------- */

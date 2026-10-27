@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/db.js';
-import { Recommendations } from '../src/recommendations.js';
+import { Recommendations } from '../src/profiles/recommendations.js';
 import type { MetadataCandidate } from '@moa/shared';
 
 const clock = Date.parse('2026-10-11T12:00:00.000Z');

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
-import { Casting, castSubtitle } from '../src/casting.js';
+import { Casting, castSubtitle } from '../src/playback/casting.js';
 
 test('cast capabilities serve only their session, preserve Range and rewrite HLS without account cookies', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moa-cast-')), mediaRoot = path.join(dir, 'media');

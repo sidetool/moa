@@ -76,7 +76,7 @@ try {
   await playing(page);
   assert.equal((await state(page)).fit, 'contain', 'desktop default shows the whole video');
   await page.goto(`${base}settings#experimental`);
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   const toggle = page.getByRole('switch', { name: '화면 맞춤' });
   assert.equal(await toggle.getAttribute('aria-checked'), 'false');
   await toggle.click();
@@ -101,7 +101,7 @@ try {
   await playing(page);
   assert.equal((await state(page)).fit, 'cover', 'phone default fills');
   await page.goto(`${base}settings#experimental`);
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   await page.getByRole('switch', { name: '화면 맞춤' }).click();
   await until(async () => (await devicePatchesOf(page)).at(-1)?.settings.shortsScreenFit === false, 'mobile off saved');
   await playing(page);
@@ -110,7 +110,7 @@ try {
   await playing(page);
   assert.equal((await state(page)).fit, 'contain', 'mobile off survives reload from server');
   await page.goto(`${base}settings#experimental`);
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   assert.equal(await page.getByRole('switch', { name: '화면 맞춤' }).getAttribute('aria-checked'), 'false');
   await page.getByRole('switch', { name: '화면 맞춤' }).click();
   await until(async () => (await devicePatchesOf(page)).at(-1)?.settings.shortsScreenFit === true, 'mobile on saved');

@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { kidsAllowed, certificationAge } from '../src/kids.js';
+import { kidsAllowed, certificationAge } from '../src/profiles/kids.js';
 
 // Run only against a copy. Never use Store: it runs migrations and enables WAL.
 const file = process.argv[2];

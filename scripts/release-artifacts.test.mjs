@@ -14,9 +14,9 @@ const source=fileURLToPath(new URL('../',import.meta.url));
 
 test('publisher creates only allowlisted public artifacts; signed bundle boots the updater probe',async t=>{
   const cwd=await mkdtemp(path.join(tmpdir(),'moa-release-artifacts-')); t.after(()=>rm(cwd,{recursive:true,force:true}));
-  for(const name of BUNDLE_FILES.filter(n=>n!=='trusted-key.pem')){
-    await mkdir(path.dirname(path.join(cwd,name)),{recursive:true});
-    await writeFile(path.join(cwd,name),await readFile(path.join(source,name)));
+  for(const file of BUNDLE_FILES.filter(n=>n!=='trusted-key.pem')){
+    await mkdir(path.dirname(path.join(cwd,file)),{recursive:true});
+    await writeFile(path.join(cwd,file),await readFile(path.join(source,file)));
   }
   await writeFile(path.join(cwd,'not-for-release.txt'),'synthetic excluded data');
   await mkdir(path.join(cwd,'release-digests'));

@@ -210,13 +210,13 @@ try {
   reset(); settings.shortsEnabled = true;
   let { context, page } = await open(390, 844);
   await page.goto(`${base}settings#experimental`);
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   const toggle = page.getByRole('switch', { name: '직접 재생' });
   await toggle.waitFor();
   assert.equal(await toggle.isDisabled(), true, 'disabled while unavailable');
   nativeAvailable = true;
   await page.reload();
-  await page.getByRole('button', { name: '세부 설정' }).click();
+  await page.locator('summary').filter({ hasText: '세부 설정' }).click();
   await toggle.click();
   await until(() => settings.shortsPlayback === 'native', 'native saved');
   await page.screenshot({ path: verificationPath('native-settings.png') });

@@ -43,7 +43,7 @@ try {
   await page.getByRole('heading', { name: '설정', exact: true }).waitFor();
   preferences.set('/api/episodes/server/subtitles/preference', null);
   const imported = await page.evaluate(async () => {
-    const module = await import('/src/player/subtitle-preference.ts');
+    const module = await import('/src/player/subtitles/subtitle-preference.ts');
     const load = id => module.loadSubtitlePreference(id, new AbortController().signal);
     const putLocal = (id, value) => localStorage.setItem(`moa.subtitleChoice:${JSON.stringify(['viewer', id])}`, JSON.stringify(value));
     const track = id => ({ id: 'extension-1', episodeId: id, label: 'English', lang: 'en', format: 'vtt', source: 'extension' });
@@ -54,7 +54,7 @@ try {
   assert.equal(imported.off, undefined); assert.equal(imported.selected, undefined); assert.equal(imported.server, null);
   assert.equal(writes.length, 0);
   preferences.delete('/api/episodes/track/subtitles/preference');
-  assert.equal(await page.evaluate(async () => (await import('/src/player/subtitle-preference.ts')).loadSubtitlePreference('track', new AbortController().signal)), undefined);
+  assert.equal(await page.evaluate(async () => (await import('/src/player/subtitles/subtitle-preference.ts')).loadSubtitlePreference('track', new AbortController().signal)), undefined);
   assert.equal(writes.length, 0);
   // The dialog must outlive closing the profile menu; management remains admin-only.
   await page.getByRole('button', { name: '프로필 메뉴', exact: true }).click();

@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { subtitleDocument, batches } from '../src/translation/subtitle.js';
-import { Gemini, ENDPOINTS, normalizeEndpoint } from '../src/translation/gemini.js';
+import { TranslationClient } from '../src/translation/client.js';
+import { ENDPOINTS, normalizeEndpoint } from '../src/translation/endpoint.js';
 import { Translations } from '../src/translation/service.js';
-import { Catalog } from '../src/catalog.js';
+import { Catalog } from '../src/catalog/service.js';
 import { Store } from '../src/db.js';
 import { buildApp } from '../src/app.js';
 import { ApiFailure } from '../src/util.js';
@@ -89,7 +90,7 @@ async function fixture(transport: typeof fetch = fake) {
   );
   db.run('INSERT INTO media VALUES(?,?,?,?,?,?)', 'm', null, 'A movie', 'movie', '{}', '2026');
   db.run('INSERT INTO episodes VALUES(?,?,?,?,?,?,?)', 'e', 'm', 1, 1, 'Movie', 100, null);
-  const create = () => new Translations(db, new Catalog(db), dir, new Gemini(transport));
+  const create = () => new Translations(db, new Catalog(db), dir, new TranslationClient(transport));
   const service = create();
   service.configure({ apiKey: secret, enabled: true, requestIntervalMs: 0, retryCount: 0 });
   return {
@@ -138,7 +139,7 @@ test('batch limits and input bounds', () => {
 });
 test('Gemini uses fixed URL, header secret and strict complete cue IDs', async () => {
   let seen = false;
-  const client = new Gemini(async (url, init) => {
+  const client = new TranslationClient(async (url, init) => {
     assert.equal(
       String(url),
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
@@ -164,7 +165,7 @@ test('Gemini uses fixed URL, header secret and strict complete cue IDs', async (
   assert.ok(seen);
   for (const lines of [[{ id: 4 }], [{ id: 4 }, { id: 4 }], [{ id: 4 }, { id: 10 }]]) {
     await assert.rejects(
-      new Gemini(async () => success(lines)).translate(
+      new TranslationClient(async () => success(lines)).translate(
         secret,
         'gemini-flash-latest',
         [
@@ -178,7 +179,7 @@ test('Gemini uses fixed URL, header secret and strict complete cue IDs', async (
     );
   }
   await assert.rejects(
-    new Gemini(async () => new Response(secret, { status: 429 })).models(secret, new AbortController().signal),
+    new TranslationClient(async () => new Response(secret, { status: 429 })).models(secret, new AbortController().signal),
     (error) => error instanceof ApiFailure && error.error === 'translation-quota' && !error.message.includes(secret),
   );
 });
@@ -526,9 +527,24 @@ test('configurable batch size and key-chain failover reuse the successful key', 
 
 
 test('Gemini classifies Google invalid-key 400 without exposing provider error details', async () => {
-  const client = new Gemini(async () => Response.json({error:{message:secret,details:[{reason:'API_KEY_INVALID'}]}},{status:400}));
+  const client = new TranslationClient(async () => Response.json({error:{message:secret,details:[{reason:'API_KEY_INVALID'}]}},{status:400}));
   await assert.rejects(client.models(secret,new AbortController().signal), (error: any) => error.error === 'translation-key-invalid' && !error.message.includes(secret));
-  await assert.rejects(new Gemini(async()=>Response.json({models:'bad'})).models(secret,new AbortController().signal), /translation-invalid-response/);
+  await assert.rejects(new TranslationClient(async()=>Response.json({models:'bad'})).models(secret,new AbortController().signal), /translation-invalid-response/);
+});
+
+test('translation providers reject missing or malformed generation content safely', async () => {
+  for (const provider of ['gemini', 'openai'] as const) {
+    const malformed = provider === 'gemini'
+      ? { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: secret }] } }] }
+      : { choices: [{ finish_reason: 'stop', message: { content: secret } }] };
+    for (const [body, expected] of [[null, 'translation-incomplete'], [malformed, 'translation-invalid-response']] as const) {
+      const client = new TranslationClient(async () => Response.json(body));
+      await assert.rejects(
+        client.translate(secret, 'model', [{ id: 0, text: 'Hello' }], { title: '', sourceLanguage: 'en' }, new AbortController().signal, { provider, baseUrl: ENDPOINTS[provider] }),
+        (error) => error instanceof ApiFailure && error.error === expected && !error.message.includes(secret),
+      );
+    }
+  }
 });
 
 test('translation retains permanent key failures without retrying exhausted credit', async () => {
@@ -558,7 +574,7 @@ test('translation retains permanent key failures without retrying exhausted cred
 test('cancellation while reading translation responses stays a cancellation', async () => {
   for (const status of [200, 403]) {
     const controller = new AbortController();
-    const client = new Gemini(async () => new Response(new ReadableStream({
+    const client = new TranslationClient(async () => new Response(new ReadableStream({
       start(stream) { stream.enqueue(new TextEncoder().encode('{')); },
       pull(stream) { controller.abort(); stream.error(controller.signal.reason); },
     }), { status }));
@@ -776,7 +792,7 @@ test('removing a key during an active request does not break the following batch
 
 test('OpenAI-compatible requests use the configured endpoint, bearer key and strict cue IDs', async () => {
   const endpoint = { provider: 'openai' as const, baseUrl: 'https://translate.example/v1' };
-  const client = new Gemini(async (url, init) => {
+  const client = new TranslationClient(async (url, init) => {
     assert.equal((init!.headers as Record<string, string>).Authorization, `Bearer ${secret}`);
     assert.equal((init!.headers as Record<string, string>)['x-goog-api-key'], undefined);
     assert.equal(init!.redirect, 'error');
@@ -794,10 +810,10 @@ test('OpenAI-compatible requests use the configured endpoint, bearer key and str
   assert.deepEqual(await client.models(secret, new AbortController().signal, endpoint), ['org/model:free']);
   assert.deepEqual(await client.translate(secret, 'org/model:free', [{ id: 7, text: 'Hello' }], { title: '', sourceLanguage: 'en' }, new AbortController().signal, endpoint), { '7': '번역' });
   for (const content of ['null', '{"lines":[null]}', '{"lines":[{"id":8,"text":"잘못된 줄"}]}']) {
-    const invalid = new Gemini(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] }));
+    const invalid = new TranslationClient(async () => Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] }));
     await assert.rejects(invalid.translate(secret, 'model', [{ id: 7, text: 'Hello' }], { title: '', sourceLanguage: '' }, new AbortController().signal, endpoint), /translation-incomplete/);
   }
-  await assert.rejects(new Gemini().models(secret, new AbortController().signal, { ...endpoint, baseUrl: 'https://127.0.0.1' }), /translation-unavailable/);
+  await assert.rejects(new TranslationClient().models(secret, new AbortController().signal, { ...endpoint, baseUrl: 'https://127.0.0.1' }), /translation-unavailable/);
   for (const url of ['http://api.example/v1', 'https://key:secret@api.example/v1', 'https://api.example/v1?key=secret', 'https://api.example/#key'])
     assert.throws(() => normalizeEndpoint(url), /translation-endpoint-invalid/);
 });
@@ -953,7 +969,7 @@ test('local HTTP endpoints use the normal model and translation transport withou
     assert.ok(address && typeof address !== 'string');
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const endpoint = { provider: 'openai' as const, baseUrl: baseUrl + '/v1' };
-    const client = new Gemini();
+    const client = new TranslationClient();
     assert.deepEqual(await client.models(secret, AbortSignal.timeout(5000), endpoint), ['local-model']);
     assert.deepEqual(await client.translate(secret, 'local-model', [{ id: 1, text: 'Hello' }], { title: '', sourceLanguage: 'en' }, AbortSignal.timeout(5000), endpoint), { '1': '안녕' });
     await assert.rejects(client.models(secret, AbortSignal.timeout(5000), { ...endpoint, baseUrl: baseUrl + '/redirect' }), /translation-unavailable/);

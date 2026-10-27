@@ -25,7 +25,7 @@ const server = await createServer({ root: webRoot, configFile: path.join(webRoot
 });
 await server.listen();
 const base = server.resolvedUrls.local[0].replace(/\/$/, '');
-const browser = await chromium.launch();
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
 const errors = [];
 
 try {

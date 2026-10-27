@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from '../src/app.js';
-import { unpackPlugin } from '../src/website-plugins.js';
+import { unpackPlugin } from '../src/plugins/service.js';
 const root=fileURLToPath(new URL('../../../',import.meta.url));
 const require=createRequire(new URL('../../web/package.json',import.meta.url));
 const {createServer}=await import(require.resolve('vite'));

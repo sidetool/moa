@@ -162,7 +162,7 @@ try {
     }
     if (width === 1280 && mode === 'direct') {
       assert.deepEqual(await page.evaluate(async () => {
-        const { resumeTarget } = await import('/src/lib/card-meta.ts');
+        const { resumeTarget } = await import('/src/features/catalog/card-meta.ts');
         return ['resume', 'next'].map(kind => resumeTarget({ resume: { episodeId: 'ep', label: '1화', position: kind === 'resume' ? 500 : 0, kind } }).path);
       }), ['/watch/ep?t=500&resume=1', '/watch/ep?t=0']);
       autoplayDelay = 30;

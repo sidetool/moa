@@ -4,10 +4,10 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ByeDpi } from '../src/byedpi.js';
-import { Sources } from '../src/sources.js';
+import { ByeDpi } from '../src/network/byedpi.js';
+import { Sources } from '../src/sources/service.js';
 import { Store } from '../src/db.js';
-import { Catalog } from '../src/catalog.js';
+import { Catalog } from '../src/catalog/service.js';
 
 test('helper starts on demand, coalesces startup, stops, and handles an invalid executable', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'moa-byedpi-'));

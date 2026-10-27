@@ -1,87 +1,62 @@
-import { AniListClient } from './anilist-client.js';
-import { AniListRecommendations } from './anilist-recommendations.js';
-import {PluginNews} from './plugin-news.js';
-import {PluginBoxOffice,type BoxOfficeOptions} from './plugin-boxoffice.js';
-import {PluginSchedule,type ScheduleOptions} from './plugin-schedule.js';
-import { PluginReviews, type ReviewOptions } from './plugin-reviews.js';
-import { Downloads } from './downloads.js';
-import { GeneralMarkers } from './general-markers.js';
-import { Recommendations } from './recommendations.js';
-import { PluginPeople } from './plugin-people.js';
-import { PluginDiscovery } from './plugin-discovery.js';
-import { registerWebsitePlugins } from './website-plugins.js';
-import { registerUpdates } from './updates.js';
-import { UpdateMaintenance } from './update-maintenance.js';
-import { Casting } from './casting.js';
-import { SubtitleLibrary } from './subtitle-library.js';
-import { RemoteAccess, connectorRpc } from './remote-access.js';
-import { readFile } from 'node:fs/promises';
-import { ImageCache, IMAGE_CACHE_TTL } from './image-cache.js';
-import { Franchises } from './franchise.js';
-import { Jimaku } from './translation/jimaku.js';
-import { Translations } from './translation/service.js';
-import { Gemini } from './translation/gemini.js';
-import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import { createReadStream } from 'node:fs';
-import { access, readdir, stat, rm } from 'node:fs/promises';
+import type { Account } from '@moa/shared';
+import { ACCOUNT_PERMISSIONS } from '@moa/shared';
+import Fastify from 'fastify';
+import { access, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import sharp from 'sharp';
-import { ACCOUNT_PERMISSIONS, DEFAULT_DEVICE_SETTINGS, TRANSLATION_MAX_KEYS } from '@moa/shared';
-import type { Account, Profile, Settings, MediaType, ClientCapabilities, NavigationTab, DefaultNavigationUpdate } from '@moa/shared';
+import { Franchises } from './catalog/franchise.js';
+import { registerCatalogRoutes } from './catalog/routes.js';
+import { Catalog } from './catalog/service.js';
+import { TitleGroups } from './catalog/title-groups.js';
 import { config as makeConfig, type Config } from './config.js';
-import { DEFAULT_SETTINGS, Store } from './db.js';
-import { TitleGroups } from './title-groups.js';
-import { Sources } from './sources.js';
-import { RemotePlayback } from './remote-playback.js';
-import { Catalog, episodeProgress } from './catalog.js';
-import { Library } from './library.js';
-import { Playback } from './playback.js';
-import { ApiFailure, safePath, hash, now, contained } from './util.js';
-import { completion } from './progress.js';
-import { randomUUID } from 'node:crypto';
-import { OnlineSubtitles, type OnlineClient } from './online.js';
-import { Enrichment, type EnrichmentOptions } from './enrichment.js';
-import { Tmdb } from './tmdb.js';
-import { Shorts } from './shorts.js';
-import { NativeShorts, ytDlpExtractor } from './shorts-native.js';
-import { YouTubeTrailers } from './youtube-trailers.js';
-import { ProfilePins, hashPin } from './profile-pin.js';
+import { Store } from './db.js';
+import { registerDownloadRoutes } from './downloads/routes.js';
+import { Downloads } from './downloads/service.js';
+import { params } from './http.js';
+import { registerLibraryRoutes } from './library/routes.js';
+import { Library } from './library/service.js';
+import { AniListClient } from './metadata/anilist-client.js';
+import { ImageCache } from './metadata/image-cache.js';
+import { registerMetadataRoutes } from './metadata/routes.js';
+import { Tmdb } from './metadata/tmdb.js';
+import { YouTubeTrailers } from './metadata/youtube-trailers.js';
+import { RemoteAccess, connectorRpc } from './network/remote-access.js';
+import { registerNetworkRoutes } from './network/routes.js';
+import { Casting } from './playback/casting.js';
+import { Enrichment, type EnrichmentOptions } from './playback/enrichment.js';
+import { GeneralMarkers } from './playback/general-markers.js';
+import { RemotePlayback } from './playback/remote.js';
+import { registerPlaybackRoutes } from './playback/routes.js';
+import { Playback } from './playback/service.js';
+import { PluginBoxOffice, type BoxOfficeOptions } from './plugins/boxoffice.js';
+import { PluginDiscovery } from './plugins/discovery.js';
+import { PluginNews } from './plugins/news.js';
+import { PluginPeople } from './plugins/people.js';
+import { PluginReviews, type ReviewOptions } from './plugins/reviews.js';
+import { PluginSchedule, type ScheduleOptions } from './plugins/schedule.js';
+import { registerWebsitePlugins } from './plugins/service.js';
+import { AniListRecommendations } from './profiles/anilist-recommendations.js';
+import { ProfilePins } from './profiles/pin.js';
+import { Recommendations } from './profiles/recommendations.js';
+import { registerProfileRoutes } from './profiles/routes.js';
+import { registerSettingsRoutes } from './profiles/settings.js';
+import { NativeShorts, ytDlpExtractor } from './shorts/native.js';
+import { registerShortsRoutes } from './shorts/routes.js';
+import { Shorts } from './shorts/service.js';
+import { registerSourceRoutes } from './sources/routes.js';
+import { Sources } from './sources/service.js';
+import { SubtitleLibrary } from './subtitles/library.js';
+import { OnlineSubtitles, type OnlineClient } from './subtitles/online.js';
+import { registerSubtitleRoutes } from './subtitles/routes.js';
+import { UpdateMaintenance } from './system/update-maintenance.js';
+import { registerUpdates } from './system/updates.js';
+import { TranslationClient } from './translation/client.js';
+import { Jimaku } from './translation/jimaku.js';
+import { registerTranslationRoutes } from './translation/routes.js';
+import { Translations } from './translation/service.js';
+import { ApiFailure } from './util.js';
 
-declare module 'fastify' { interface FastifyRequest { moaProfile?: string; moaAccount: Account } }
-const COLORS = ['red', 'blue', 'green', 'amber', 'violet', 'teal'];
-const TYPES = ['movie', 'series', 'anime'];
-const string = { type: 'string', minLength: 1, maxLength: 200 };
-const idParams = (key = 'id') => ({ type: 'object', required: [key], properties: { [key]: string } });
-const object = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', additionalProperties: false, properties, required });
-const profileFields = { pin: { type: ['string', 'null'], pattern: '^[0-9]{4,8}$' }, avatar: { type: ['string', 'null'], pattern: '^[a-z]+-[0-9]{1,2}$', maxLength: 64 }, name: { ...string, pattern: '\\S' }, color: { type: 'string', enum: COLORS }, kids: { type: 'boolean' } };
-const filterChange = object({ position: { type: 'integer', minimum: 0, maximum: 511 }, groupPosition: { type: 'integer', minimum: 0, maximum: 511 }, value: { type:['string','number','boolean','object'], maxLength:2000, additionalProperties:false, properties:{index:{type:'integer',minimum:0},ascending:{type:'boolean'}}, required:['index','ascending'] } }, ['position','value']);
-const browseSelection = object({ revision: {type:'string',maxLength:80}, filters: {type:'array',maxItems:512,items:filterChange} }, ['revision','filters']);
-const settingsFields = { shortsQuality: {type:'string',enum:['auto','360p','480p','720p']}, shortsPlayback: {type:'string',enum:['embed','native']}, shortsCategories: {type:'array',minItems:1,maxItems:3,uniqueItems:true,items:{type:'string',enum:['movie','series','anime']}}, shortsEnabled: {type:'boolean'}, shortsScreenFit: {type:'boolean'}, shortsMode: {type:'string',enum:['mixed','personal','popular']}, shortsHideWatched: {type:'boolean'}, shortsRepeatDays: {type:'integer',enum:[0,1,7,30]}, recommendationsEnabled: {type:'boolean'}, anilistRecommendationsEnabled: {type:'boolean'}, generalSkipEnabled: {type:'boolean'}, groupHistory: { type: 'boolean' }, navigation: { type: "array", minItems: 1, maxItems: 12, items: object({ id: { type: "string", pattern: "^[a-zA-Z0-9_-]{1,64}$" }, name: { type: "string", minLength: 1, maxLength: 24, pattern: "\\S" }, sourceIds: { type: "array", maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } }, sourceFilters: { type: "object", maxProperties:32, additionalProperties: browseSelection }, includeLocal: { type: "boolean" } }, ["id", "name", "sourceIds", "includeLocal"]) }, autoplayNext: { type: 'boolean' }, autoplayDelay: { type: 'number', minimum: 0 }, defaultSubtitleLang: { type: 'string', maxLength: 32 }, subtitleSize: { type: 'string', enum: ['small', 'medium', 'large', 'xlarge'] }, subtitleScale: { type: ['number', 'null'], minimum: 50, maximum: 250 }, subtitleBackground: { type: 'string', enum: ['original', 'none', 'soft', 'solid'] }, subtitleShadow: { type: ['number', 'null'], minimum: 0, maximum: 10 }, subtitleOutline: { type: ['number', 'null'], minimum: 0, maximum: 6 }, subtitleHeight: { type: 'number', minimum: 0, maximum: 40 }, subtitlePadding: { type: 'number', minimum: 0, maximum: 20 }, subtitlePreserveAss: { type: 'boolean' }, subtitleStep: { type: 'integer', enum: [1, 5, 10] }, preferredQuality: { type: 'string', enum: ['auto', '1080', '720', '480'] }, hardwareTranscoding: { type: 'boolean' }, autoFetchSubtitles: { type: 'boolean' }, experimentalSubtitleSync: { type: 'boolean' }, translationMode: { type: 'string', enum: ['manual','ask','auto'] }, translationSourcePriority: { type: 'string', enum: ['site','jimaku'] }, skipSubtitleSearchWithSiteTrack: { type: 'boolean' }, skipTranslationWithoutSubtitles: { type: 'boolean' } };
-const validateNavigation = (tabs: NavigationTab[] | null | undefined) => {
-  if (tabs && (tabs[0]?.id !== 'home' || new Set(tabs.map(t => t.id)).size !== tabs.length)) throw new ApiFailure(400, 'invalid-navigation');
-};
-const pageQuery = { type: 'integer', minimum: 1, maximum: 1_000_000, default: 1 };
-const typeQuery = { type: 'string', enum: TYPES };
-const toProfile = (p: Record<string, any>): Profile => ({ id: p.id, name: p.name, color: p.color, kids: Boolean(p.kids), createdAt: p.created_at, avatar: p.avatar ?? null, hasPin: Boolean(p.pin_hash) });
-const profile = (req: FastifyRequest) => req.moaProfile!;
-const params = (req: FastifyRequest) => req.params as Record<string, string>;
-const query = (req: FastifyRequest) => req.query as Record<string, any>;
-
-export async function sendFile(reply: FastifyReply, file: string, mime: string, range?: string) {
-  const info = await stat(file), size = info.size;
-  reply.type(mime).header('Accept-Ranges', 'bytes');
-  if (!range) return reply.header('Content-Length', size).send(createReadStream(file));
-  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-  const invalid = () => reply.code(416).header('Content-Range', `bytes */${size}`).send();
-  if (!match || !size || (!match[1] && !match[2])) return invalid();
-  let start: number, end: number;
-  if (!match[1]) { const suffix = Number(match[2]); if (!(suffix > 0)) return invalid(); start = Math.max(0, size - suffix); end = size - 1; }
-  else { start = Number(match[1]); end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1; }
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return invalid();
-  return reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1).send(createReadStream(file, { start, end }));
-}
-export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { reviews?: ReviewOptions; boxoffice?:BoxOfficeOptions; schedule?:ScheduleOptions; downloadTransport?: typeof import('@moa/extensions').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
+export async function buildApp(overrides: Partial<Config> = {}, logger = true, services: EnrichmentOptions & { reviews?: ReviewOptions; boxoffice?:BoxOfficeOptions; schedule?:ScheduleOptions; downloadTransport?: typeof import('./sources/extensions/index.js').publicStream; generalMarkerFetch?:typeof fetch; store?: Store; subtitleClient?: OnlineClient; translationFetch?: typeof fetch; jimakuFetch?: typeof fetch; youtube?: { apiKey?: string; fetch?: typeof fetch }; tmdb?: { token?: string; key?: string; fetch?: typeof fetch } } = {}) {
   const cfg = makeConfig(overrides);
   const app = Fastify({ logger: logger ? { serializers: { req: req => {
     let url: string;
@@ -119,7 +94,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   await rm(path.join(cfg.dataDir, 'sessions'), { recursive: true, force: true });
   const online = new OnlineSubtitles(db, value => app.log.info(value), services.subtitleClient, groups);
   const jimaku = new Jimaku(db, catalog, services.jimakuFetch);
-  const translations = new Translations(db, catalog, cfg.dataDir, new Gemini(services.translationFetch));
+  const translations = new Translations(db, catalog, cfg.dataDir, new TranslationClient(services.translationFetch));
   const subtitleLibrary = new SubtitleLibrary(db, catalog, translations, online, groups);
   const subtitleMemoryTimer = setInterval(() => subtitleLibrary.memory(), 60 * 60_000); subtitleMemoryTimer.unref();
   const remotePlayback = new RemotePlayback(db, catalog, sources, undefined, online);
@@ -135,13 +110,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
     Boolean(db.get("SELECT 1 FROM skip_analysis_jobs WHERE status='running' LIMIT 1")));
   updateMaintenance.register(app);
   app.addHook('onReady',async()=>{await updateMaintenance.tick();downloads.start(()=>!updateMaintenance.paused);});
-  /** Give TMDB a moment to link new titles so first visits already show its artwork. */
-  const withMetadata = async <T extends { items: { id: string }[] }>(page: T, profileId: string): Promise<T> => {
-    const unlinked = page.items.map(c => c.id).filter(id => !db.get('SELECT 1 FROM tmdb_links WHERE media_id=?', id));
-    if (!tmdb.enabled || !unlinked.length) return page;
-    await tmdb.ensure(unlinked, 1500);
-    return { ...page, items: page.items.map(c => { const row = db.get('SELECT * FROM media WHERE id=?', c.id); return row ? { ...catalog.card(row, profileId), ...('sourceCount' in c ? { sourceCount: c.sourceCount } : {}) } : c; }) };
-  };
   app.decorateRequest('moaProfile', undefined);
   app.decorateRequest('moaAccount');
   app.setErrorHandler((err, _request, reply) => {
@@ -197,499 +165,26 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       if (owner) pins.assert(owner, req);
     }
   });
-  app.get('/api/recommendations', async (req,reply) => reply.header('Cache-Control','private, no-store').send(recommendations.get(profile(req))));
-  app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
-  app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
-  app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
+  registerProfileRoutes(app, { db, cfg, pins, online, translations, remotePlayback, playback, recommendations, catalog, groups, sources });
   const discovery = new PluginDiscovery(db, tmdb);
   const shorts = new Shorts(db, tmdb, recommendations, youtube);
-  app.get('/api/shorts', {schema:{querystring:object({cursor:{type:'string',pattern:'^[0-9]{1,3}$'},replay:{type:'string',enum:['1']}})}}, async (req, reply) =>
-    reply.header('Cache-Control','private, no-store').send(await shorts.feed(profile(req),query(req).cursor,query(req).replay==='1')));
-  const shortsKey = object({key:{type:'string',pattern:'^(tv|movie):[1-9][0-9]{0,14}$'}},['key']);
-  app.get('/api/shorts/:key/trailers', {schema:{params:shortsKey}}, async (req,reply) =>
-    reply.header('Cache-Control','private, no-store').send(await shorts.trailers(profile(req),(req.params as {key:string}).key)));
-  app.get('/api/shorts/native',async (_req,reply)=>reply.header('Cache-Control','private, no-store').send({available:nativeShorts.available}));
-  app.post('/api/shorts/:key/native',{schema:{params:shortsKey,body:object({})}},async(req,reply)=>{
-    const owner=profile(req),abort=new AbortController();
-    if(!req.moaAccount.permissions.includes('video.watch'))throw new ApiFailure(403,'permission-denied');
-    if(db.settings(owner).shortsPlayback!=='native')throw new ApiFailure(403,'shorts-native-disabled');
-    if(!nativeShorts.available)throw new ApiFailure(503,'shorts-native-unconfigured');
-    const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};
-    req.raw.once('aborted',disconnect);reply.raw.once('close',disconnect);
-    let lease:string|undefined;
-    try{
-      const {trailers}=await shorts.trailers(owner,params(req).key);
-      abort.signal.throwIfAborted();
-      const prepared=await nativeShorts.prepare(owner,trailers,abort.signal,sources.proxy());lease=prepared.sessionId;
-      const row=db.get('SELECT kids,account_id FROM profiles WHERE id=?',owner),settings=db.settings(owner);
-      if(!row||row.kids||row.account_id!==req.moaAccount.id||!settings.shortsEnabled||settings.shortsPlayback!=='native')throw new ApiFailure(403,'shorts-native-disabled');
-      pins.assert(owner,req);abort.signal.throwIfAborted();
-      return reply.header('Cache-Control','private, no-store').send(prepared);
-    }catch(error){if(lease)nativeShorts.release(lease);throw error;}
-    finally{req.raw.off('aborted',disconnect);reply.raw.off('close',disconnect);}
-  });
-  const assertNativeShort=(req:FastifyRequest,id:string,scoped=true)=>{
-    const owner=nativeShorts.owner(id);
-    if(!owner)throw new ApiFailure(410,'shorts-native-expired');
-    if(scoped&&owner!==profile(req))throw new ApiFailure(403,'session-profile-mismatch');
-    if(!req.moaAccount.permissions.includes('video.watch'))throw new ApiFailure(403,'permission-denied');
-    const settings=db.settings(owner),row=db.get('SELECT kids FROM profiles WHERE id=?',owner);
-    if(!row||row.kids||!settings.shortsEnabled||settings.shortsPlayback!=='native'){nativeShorts.release(id);throw new ApiFailure(403,'shorts-native-disabled');}
-    return owner;
-  };
-  app.post('/api/shorts/native/:sessionId/warm',{schema:{body:object({})}},async(req,reply)=>{
-    const id=params(req).sessionId,owner=assertNativeShort(req,id),abort=new AbortController();
-    const disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
-    try{return reply.header('Cache-Control','private, no-store').send(await nativeShorts.warm(id,owner,abort.signal,db.settings(owner).shortsQuality??'auto'));}
-    finally{reply.raw.off('close',disconnect);}
-  });
-  app.get('/api/playback/:sessionId/shorts-captions/:trackId',async(req,reply)=>{
-    const id=params(req).sessionId,owner=assertNativeShort(req,id,false);
-    const result=await nativeShorts.caption(id,params(req).trackId,owner,AbortSignal.timeout(16_000));
-    return reply.header('Cache-Control','private, no-store').header('X-Content-Type-Options','nosniff').type('text/vtt; charset=utf-8').send(result.content);
-  });
-  app.post('/api/shorts/native/:sessionId/subtitles/:trackId/translate',{schema:{body:object({})}},async(req,reply)=>{
-    const id=params(req).sessionId,owner=assertNativeShort(req,id);
-    if(!req.moaAccount.permissions.includes('subtitles.translate'))throw new ApiFailure(403,'permission-denied');
-    const abort=new AbortController(),disconnect=()=>{if(!reply.raw.writableEnded)abort.abort();};reply.raw.once('close',disconnect);
-    try{
-      const source=await nativeShorts.caption(id,params(req).trackId,owner,abort.signal);
-      assertNativeShort(req,id);abort.signal.throwIfAborted();
-      const job=translations.startPreview(id,owner,source.title,source);
-      nativeShorts.onRelease(id,owner,job.id,()=>translations.cancel(job.id,owner));
-      return reply.header('Cache-Control','private, no-store').send(job);
-    }finally{reply.raw.off('close',disconnect);}
-  });
-  app.delete('/api/shorts/native/:sessionId',async req=>{nativeShorts.release(params(req).sessionId,profile(req));return {ok:true};});
-  app.get('/api/playback/:sessionId/shorts/:assetId',async(req,reply)=>{
-    const id=params(req).sessionId,owner=nativeShorts.owner(id);
-    if(!owner)throw new ApiFailure(410,'shorts-native-expired');
-    const settings=db.settings(owner),row=db.get('SELECT kids FROM profiles WHERE id=?',owner);
-    if(!row||row.kids||!settings.shortsEnabled||settings.shortsPlayback!=='native'){nativeShorts.release(id);throw new ApiFailure(403,'shorts-native-disabled');}
-    return nativeShorts.stream(req,reply,id,params(req).assetId);
-  });
-  app.post('/api/shorts/:key/seen', {schema:{params:shortsKey}}, async req => { shorts.seen(profile(req),(req.params as {key:string}).key); return {ok:true}; });
-  app.post('/api/shorts/:key/skip', {schema:{params:shortsKey}}, async req => { shorts.skip(profile(req),(req.params as {key:string}).key); return {ok:true}; });
-  app.post('/api/shorts/:key/failed', {schema:{params:shortsKey,body:object({reason:{type:'string',enum:['unavailable','temporary']}},['reason'])}}, async req => { shorts.failed(profile(req),params(req).key,(req.body as {reason:'unavailable'|'temporary'}).reason); return {ok:true}; });
-  app.delete('/api/shorts/seen', async req => { shorts.reset(profile(req)); return {ok:true}; });
-  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,{...services.reviews,anilist}));
+  registerShortsRoutes(app, { db, shorts, nativeShorts, sources, pins, translations });
+  registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb, Date.now, { catalog, groups }), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,{...services.reviews,anilist}),undefined,imageCache);
   registerUpdates(app, { prepareComponent:()=>{if(downloads.busy)throw new ApiFailure(409,'update-app-busy');return downloads.suspend();}, prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
-  app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
-  app.get('/api/admin/tmdb/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(tmdb.status()));
-  app.get('/api/admin/youtube/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.status()));
-  app.patch('/api/admin/youtube/config', { schema: { body: object({
-    apiKey: { type: 'string', minLength: 20, maxLength: 200, pattern: '^[A-Za-z0-9_-]+$' },
-    regionCode: { type: 'string', pattern: '^[A-Z]{2}$' }, clear: { type: 'boolean' }
-  }) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.configure(req.body as Parameters<YouTubeTrailers['configure']>[0])));
-  app.patch('/api/admin/tmdb/config', { schema: { body: object({
-    token: { type: 'string', minLength: 16, maxLength: 4096, pattern: '^[A-Za-z0-9._-]+$' },
-    apiKey: { type: 'string', pattern: '^[a-fA-F0-9]{32}$' }, clear: { type: 'boolean' }
-  }) } }, async (req, reply) => {
-    const status = tmdb.configure(req.body as Parameters<Tmdb['configure']>[0]);
-    catalog.metadata = tmdb.enabled;
-    return reply.header('Cache-Control', 'private, no-store').send(status);
-  });
-  app.get('/api/admin/remote-access', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(remoteAccess.status()));
-  const remoteConfigSchema = object({ mode: { type: 'string', enum: ['off', 'cloudflare-quick', 'cloudflare-token', 'tailscale'] }, publicHostname: { type: 'string', maxLength: 253 }, funnel: { type: 'boolean' }, cloudflareToken: { type: ['string', 'null'], minLength: 1, maxLength: 8192 }, tailscaleAuthKey: { type: ['string', 'null'], minLength: 1, maxLength: 1024 } }, ['mode']);
-  for (const action of ['configure', 'start', 'stop'] as const) {
-    app.post(`/api/admin/remote-access/${action}`, { schema: { body: action === 'configure' ? remoteConfigSchema : object({}) } }, async (req, reply) => {
-      // Require a JSON request and same-origin browser mutations; no form POST CSRF.
-      if (!req.headers['content-type']?.startsWith('application/json')) throw new ApiFailure(415, 'json-required');
-      if (req.headers.origin && req.headers.origin !== `${req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http'}://${req.headers.host}`) throw new ApiFailure(403, 'csrf-required');
-      return reply.header('Cache-Control', 'private, no-store').send(await remoteAccess.mutate(action, req.body as import('@moa/shared').RemoteAccessConfigure));
-    });
-  }
-  app.get('/api/admin/cache-stats', async (_req,reply) => reply.header('Cache-Control','private, no-store').send(sources.stats.snapshot()));
+  registerSourceRoutes(app, { db, cfg, sources, online, remotePlayback, playback, tmdb, catalog });
+  registerMetadataRoutes(app, { db, cfg, tmdb, youtube, catalog, imageCache, sources });
+  registerNetworkRoutes(app, { remoteAccess, sources });
   app.get('/api/me', async req => req.moaAccount);
-  app.get('/api/episodes/:id/subtitles/jimaku', { schema: { params: idParams(), querystring: object({ title: { type: 'string', minLength: 1, maxLength: 300 }, season: { type: 'integer', minimum: 1, maximum: 99 }, episode: { type: 'number', minimum: 0, maximum: 10000 } }) } }, async req => jimaku.search(params(req).id, profile(req), query(req)));
-  app.post('/api/episodes/:id/subtitles/jimaku/translate', { schema: { params: idParams(), body: object({ searchId: string, candidateId: string, startAt: {type: 'number', minimum: 0, maximum: 864000} }, ['searchId','candidateId']) } }, async req => { const body = req.body as { searchId: string; candidateId: string; startAt?: number }; return jimaku.translate(params(req).id, profile(req), body.searchId, body.candidateId, translations, body.startAt); });
-  app.get('/api/translation/config', async () => translations.config());
-  app.patch('/api/admin/translation/config', { schema: { body: object({ provider: { type: 'string', enum: ['gemini', 'openai'] }, baseUrl: { type: 'string', maxLength: 2048 }, apiKey: { type: 'string', minLength: 1, maxLength: 512 }, model: { type: 'string', maxLength: 200 }, enabled: { type: 'boolean' }, clearKey: { type: 'boolean' }, batchSize: { type: 'integer', minimum: 10, maximum: 300 }, requestIntervalMs: { type: 'integer', minimum: 0, maximum: 60000 }, retryCount: { type: 'integer', minimum: 0, maximum: 5 }, addKeys: { type: 'array', maxItems: TRANSLATION_MAX_KEYS, items: { type: 'string', minLength: 1, maxLength: 512 } }, removeKeyIds: { type: 'array', maxItems: TRANSLATION_MAX_KEYS, items: { type: 'string', pattern: '^[a-f0-9]{16}$' } } }) } }, async req => translations.configure(req.body as Parameters<Translations['configure']>[0]));
-  app.get('/api/admin/translation/models', async () => translations.models());
-  app.post('/api/admin/translation/keys/:id/test', { schema: { params: object({ id: { type: 'string', pattern: '^[a-f0-9]{16}$' } }, ['id']) } }, async req => translations.testKey(params(req).id));
-  app.post('/api/episodes/:id/subtitles/translate', { bodyLimit: 2 * 1024 * 1024, schema: { params: idParams(), body: object({ content: { type: 'string', minLength: 1, maxLength: 1024 * 1024 }, format: { type: 'string', enum: ['ass','vtt','srt','smi'] }, sourceLabel: { type: 'string', maxLength: 200 }, sourceLanguage: { type: 'string', maxLength: 32 }, startAt: {type: 'number', minimum: 0, maximum: 864000} }, ['content','format','sourceLabel']) } }, async req => translations.start(params(req).id, profile(req), req.body as Parameters<Translations['start']>[2]));
-  app.get('/api/episodes/:id/subtitles/translations', { schema: { params: idParams() } }, async req => subtitleLibrary.tracks(params(req).id, profile(req), 'translation'));
-  app.get('/api/translations/:id', { schema: { params: idParams() } }, async req => translations.get(params(req).id, profile(req)));
-  app.post('/api/translations/:id/priority', {schema: {params: idParams(), body: object({startAt: {type: 'number', minimum: 0, maximum: 864000}}, ['startAt'])}}, async (req, reply) => { translations.priority(params(req).id, profile(req), (req.body as {startAt: number}).startAt); return reply.code(204).send(); });
-  app.delete('/api/translations/:id', { schema: { params: idParams() } }, async (req, reply) => { translations.cancel(params(req).id, profile(req)); return reply.code(204).send(); });
+  registerTranslationRoutes(app, { jimaku, translations, subtitleLibrary });
 
-  async function removeProfile(id: string) {
-    pins.invalidate(id);
-    // Delete the ownership row before awaiting process cleanup so concurrent asset requests fail closed.
-    db.run('DELETE FROM profiles WHERE id=?', id);
-    online.removeProfile(id);
-    translations.removeProfile(id);
-    for (const [sid, s] of remotePlayback.sessions) if (s.profile === id) remotePlayback.remove(sid);
-    for (const [sid, s] of playback.sessions) if (s.profile === id) await playback.remove(sid);
-  }
-  app.delete('/api/admin/accounts/:id/data', { schema: { params: idParams() } }, async (req, reply) => {
-    for (const row of db.all('SELECT id FROM profiles WHERE account_id=?', params(req).id)) await removeProfile(row.id);
-    return reply.code(204).send();
-  });
   app.get('/api/health', async () => ({ ok: true, version: '0.1.0' }));
-  app.get('/api/profiles', async req => db.all('SELECT * FROM profiles WHERE account_id=? ORDER BY created_at,id', req.moaAccount.id).map(toProfile));
-  app.post('/api/profiles/lock', async (req, reply) => { pins.lock(req, reply); return reply.code(204).send(); });
-  app.post('/api/profiles/:id/unlock', { schema: { params: idParams(), body: object({ pin: { type: 'string', pattern: '^[0-9]{4,8}$' } }, ['pin']) } }, async (req, reply) => {
-    const id = params(req).id;
-    if (!db.get('SELECT id FROM profiles WHERE id=? AND account_id=?', id, req.moaAccount.id)) throw new ApiFailure(404, 'profile-not-found');
-    await pins.unlock(id, (req.body as { pin: string }).pin, req, reply);
-    return reply.code(204).send();
-  });
-  app.post('/api/profiles', { schema: { body: object(profileFields, ['name']) } }, async (req, reply) => {
-    const body = req.body as { name: string; color?: string; kids?: boolean; avatar?: string | null; pin?: string | null };
-    const pinHash = body.pin ? await hashPin(body.pin) : null;
-    const id = randomUUID();
-    db.transaction(() => {
-      const count = db.get('SELECT count(*) AS n FROM profiles WHERE account_id=?', req.moaAccount.id)!.n;
-      if (count >= 5) throw new ApiFailure(409, 'profile-limit');
-      db.run('INSERT INTO profiles(id,name,color,kids,created_at,account_id,avatar,pin_hash) VALUES(?,?,?,?,?,?,?,?)', id, body.name.trim(), body.color || COLORS[count % COLORS.length], body.kids ? 1 : 0, now(), req.moaAccount.id, body.avatar ?? null, pinHash);
-      const navigation = db.defaultNavigation();
-      if (navigation || cfg.shortsExtractor) db.run('INSERT INTO settings VALUES(?,?)', id, JSON.stringify({
-        ...(navigation ? { navigation: db.availableNavigation(navigation) } : {}),
-        ...(cfg.shortsExtractor ? { shortsPlayback: 'native' } : {}),
-      }));
-    });
-    if (pinHash) pins.grant(id, req, reply);
-    return reply.code(201).send(toProfile(db.get('SELECT * FROM profiles WHERE id=?', id)!));
-  });
-  app.patch('/api/profiles/:id', { schema: { params: idParams(), body: object(profileFields) } }, async (req, reply) => {
-    const id = params(req).id, old = db.get('SELECT * FROM profiles WHERE id=? AND account_id=?', id, req.moaAccount.id); if (!old) throw new ApiFailure(404, 'profile-not-found');
-    pins.assert(id, req);
-    const body = req.body as Partial<Profile> & { pin?: string | null };
-    const pinHash = body.pin === undefined ? old.pin_hash : body.pin === null ? null : await hashPin(body.pin);
-    pins.assert(id, req);
-    db.run('UPDATE profiles SET name=?,color=?,kids=?,avatar=?,pin_hash=? WHERE id=?', body.name?.trim() ?? old.name, body.color ?? old.color, body.kids !== undefined ? Number(body.kids) : old.kids, body.avatar === undefined ? old.avatar : body.avatar, pinHash, id);
-    if (body.pin !== undefined) { pins.invalidate(id); pins.grant(id, req, reply); }
-    return toProfile(db.get('SELECT * FROM profiles WHERE id=?', id)!);
-  });
-  app.delete('/api/profiles/:id', { schema: { params: idParams() } }, async (req, reply) => {
-    if (!db.get('SELECT 1 FROM profiles WHERE id=? AND account_id=?', params(req).id, req.moaAccount.id)) throw new ApiFailure(404, 'profile-not-found');
-    pins.assert(params(req).id, req);
-    await removeProfile(params(req).id);
-    return reply.code(204).send();
-  });
-  app.get('/api/admin/default-navigation', async () => ({ navigation: db.defaultNavigation() }));
-  app.put('/api/admin/default-navigation', { schema: { body: { oneOf: [
-    object({ navigation: { anyOf: [settingsFields.navigation, { type: 'null' }] } }, ['navigation']),
-    object({ fromProfile: { const: true } }, ['fromProfile'])
-  ] } } }, async req => {
-    const body = req.body as DefaultNavigationUpdate;
-    if ('fromProfile' in body && !req.moaProfile) throw new ApiFailure(401, 'profile-required');
-    const tabs = 'fromProfile' in body ? db.settings(profile(req)).navigation ?? null : body.navigation;
-    validateNavigation(tabs);
-    const navigation = tabs === null ? null : db.availableNavigation(tabs);
-    db.saveDefaultNavigation(navigation);
-    return { navigation };
-  });
-  app.get('/api/settings', async req => db.settings(profile(req)));
-  const deviceFields = { ...Object.fromEntries(Object.keys(DEFAULT_DEVICE_SETTINGS).filter(key => key in settingsFields).map(key => [key, settingsFields[key as keyof typeof settingsFields]])), shortsScreenFit: { type: ['boolean', 'null'] }, fullscreenOnPlay: { type: 'boolean' }, autoSkip: { type: 'boolean' }, seekStep: { type: 'integer', enum: [5, 10, 15, 30] }, holdSpeed: { type: 'number', enum: [1.25, 1.5, 2, 2.5, 3] }, videoFill: { type: 'boolean' }, seasonSwitcher: { type: 'boolean' }, titleGrouping: { type: 'boolean' } };
-  const deviceScope = (req: FastifyRequest) => {
-    const id = req.headers['x-moa-device'];
-    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new ApiFailure(400, 'invalid-device');
-    return [req.moaAccount.id, profile(req), id.toLowerCase()] as const;
-  };
-  app.get('/api/settings/device', async (req, reply) => {
-    const row = db.get('SELECT value FROM device_settings WHERE account_id=? AND profile_id=? AND device_id=?', ...deviceScope(req));
-    return reply.header('Cache-Control', 'private, no-store').send({ settings: row ? JSON.parse(row.value) : null });
-  });
-  app.patch('/api/settings/device', { schema: { body: object({ settings: object(deviceFields), migrate: { type: 'boolean' } }, ['settings']) } }, async (req, reply) => {
-    const scope = deviceScope(req), body = req.body as { settings: Partial<import('@moa/shared').DeviceSettings>; migrate?: boolean };
-    const row = db.get('SELECT value FROM device_settings WHERE account_id=? AND profile_id=? AND device_id=?', ...scope);
-    const settings = row && body.migrate ? JSON.parse(row.value) : { ...DEFAULT_DEVICE_SETTINGS, ...JSON.parse(row?.value || '{}'), ...body.settings };
-    db.run('INSERT OR REPLACE INTO device_settings VALUES(?,?,?,?)', ...scope, JSON.stringify(settings));
-    return reply.header('Cache-Control', 'private, no-store').send({ settings });
-  });
-  app.patch('/api/settings', { schema: { body: object(settingsFields) } }, async req => {
-    const tabs = (req.body as Partial<Settings>).navigation;
-    validateNavigation(tabs);
-    const updated: Settings = { ...db.settings(profile(req)), ...req.body as Partial<Settings> };
-    db.run('INSERT OR REPLACE INTO settings VALUES(?,?)', profile(req), JSON.stringify(updated)); return updated;
-  });
-  app.get('/api/home', { schema: { querystring: object({ type: typeQuery, providers: { type: 'string', maxLength: 4096 }, continueScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, watchlistScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, titleGrouping: { type: 'string', enum: ['true', 'false'], default: 'true' } }) } }, async req => { const homeForProfile = () => catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope, query(req).titleGrouping === 'false' ? undefined : (recent, candidates) => groups.continueWatching(recent, candidates, profile(req))); let home=homeForProfile();
-    const unlinked = [...new Set(home.rows.flatMap(r => r.items.map(c => c.id)))].filter(id => !db.get('SELECT 1 FROM tmdb_links WHERE media_id=?', id));
-    if (tmdb.enabled && unlinked.length) { await tmdb.ensure(unlinked, 1500); home = homeForProfile(); } return {...home,rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.resolve(row.items.map(c=>c.id),profile(req))} : row)}; });
-  app.get('/api/media', { schema: { querystring: object({ type: typeQuery, genre: string, provider: string, sort: { type: 'string', enum: ['recent', 'title', 'year'], default: 'recent' }, page: pageQuery }) } }, async req => {
-    const q = query(req); let cards = catalog.cards(profile(req), q.type);
-    if (q.genre) cards = cards.filter(c => c.genres?.includes(q.genre));
-    if (q.provider) cards = cards.filter(c => c.provider.id === q.provider);
-    if (q.sort === 'title') cards.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
-    if (q.sort === 'year') cards.sort((a, b) => (b.year || 0) - (a.year || 0) || a.title.localeCompare(b.title));
-    return catalog.page(cards, q.page);
-  });
-  app.post('/api/media/popular', {schema:{body:object({lists:{type:'array',maxItems:32,items:object({sourceId:{type:'string',minLength:1,maxLength:128},ids:{type:'array',maxItems:20,items:{type:'string',minLength:1,maxLength:512}}},['sourceId','ids'])}},['lists'])}}, async req=>groups.popular((req.body as {lists:{sourceId:string;ids:string[]}[]}).lists,profile(req)));
-  app.post('/api/media/groups/resolve', { schema: { body: object({ids:{type:'array',maxItems:1000,items:string},query:{type:'string',maxLength:500}},['ids']) } }, async req => groups.resolve((req.body as {ids:string[]}).ids,profile(req),(req.body as {query?:string}).query));
-  app.get('/api/media/groups/candidates', { schema: {querystring:object({q:{type:'string',maxLength:200,default:''}})} }, async req => groups.candidates(query(req).q,profile(req)));
-  app.get('/api/media/:id/group', {schema:{params:idParams()}}, async req => groups.group(params(req).id,profile(req)));
-  app.patch('/api/media/:id/group', {schema:{params:idParams(),body:object({action:{type:'string',enum:['merge','separate','reset']},otherId:string},['action'])}}, async req => {
-    const b = req.body as {action:string;otherId?:string}; return groups.change(params(req).id,profile(req),b.action,b.otherId);
-  });
-  app.get('/api/episodes/:id/context', {schema:{params:idParams()}}, async req=>{const e=db.get('SELECT media_id,season,number FROM episodes WHERE id=?',params(req).id);if(!e)throw new ApiFailure(404,'episode-not-found');return {mediaId:e.media_id,season:e.season,number:e.number};});
-  app.get('/api/media/:id/franchise', { schema: { params: idParams() } }, async req => franchises.get(params(req).id, profile(req)));
-  app.get('/api/media/:id', { schema: { params: idParams() } }, async req => { catalog.kids.assert(params(req).id, profile(req)); await sources.detail(params(req).id); await tmdb.ensureDetail(params(req).id, 5000); return catalog.detail(params(req).id, profile(req)); });
-  app.get('/api/media/:id/trailers', { schema: { params: idParams() } }, async (req, reply) => {
-    // Read existing metadata only; do not re-run source extraction or title matching for a precheck.
-    const detail = catalog.detail(params(req).id, profile(req));
-    return reply.header('Cache-Control', 'private, no-store').send(await youtube.check([...(detail.trailers ?? []), detail.trailer]));
-  });
-  app.get('/api/metadata/status', async () => ({ tmdb: tmdb.enabled }));
-  app.get('/api/media/:id/metadata/search', { schema: { params: idParams(), querystring: object({ q: { ...string } }, ['q']) } }, async req => catalog.kids.candidates(await tmdb.search(query(req).q), profile(req)));
-  app.patch('/api/media/:id/metadata', { schema: { params: idParams(), body: object({ action: { type: 'string', enum: ['link', 'off', 'auto'] }, kind: { type: 'string', enum: ['tv', 'movie'] }, tmdbId: { type: 'integer', minimum: 1 }, season: { type: 'integer', minimum: 1, maximum: 200 } }, ['action']) } }, async req => tmdb.change(params(req).id, req.body as any));
-  app.get('/api/genres', { schema: { querystring: object({ type: typeQuery }) } }, async req => [...new Set(catalog.cards(profile(req), query(req).type).flatMap(c => c.genres || []))].sort());
-  app.get('/api/search', { schema: { querystring: object({ q: { type: 'string', maxLength: 200, default: '' } }) } }, async req => {
-    const q = query(req).q, found = catalog.search(profile(req), q);
-    if (!tmdb.enabled || q.trim().length < 2 || found.groups.some(group => group.items.length)) return found;
-    return catalog.search(profile(req), q, await tmdb.search(q).catch(() => []));
-  });
-  app.get('/api/watchlist', async req => groups.resolve(catalog.watchlist(profile(req)).map(c=>c.id),profile(req)));
-  app.put('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
-    const id = params(req).mediaId; if (!db.get('SELECT id FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
-    db.run('INSERT OR IGNORE INTO watchlist VALUES(?,?,?)', profile(req), id, now()); return reply.code(204).send();
-  });
-  app.delete('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
-    db.run('DELETE FROM watchlist WHERE profile_id=? AND media_id=?', profile(req), params(req).mediaId); return reply.code(204).send();
-  });
-  app.get('/api/history', { schema: { querystring: object({ page: pageQuery }) } }, async req => catalog.history(profile(req), query(req).page));
-  app.delete('/api/history/media/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
-    db.run('DELETE FROM progress WHERE profile_id=? AND episode_id IN (SELECT id FROM episodes WHERE media_id=?)', profile(req), params(req).mediaId);
-    return reply.code(204).send();
-  });
-  app.delete('/api/history/:episodeId', { schema: { params: idParams('episodeId') } }, async (req, reply) => {
-    db.run('DELETE FROM progress WHERE profile_id=? AND episode_id=?', profile(req), params(req).episodeId); return reply.code(204).send();
-  });
-  app.post('/api/progress', { schema: { body: object({ episodeId: string, position: { type: 'number', minimum: 0 }, duration: { type: 'number', exclusiveMinimum: 0 } }, ['episodeId', 'position', 'duration']) } }, async req => {
-    const body = req.body as { episodeId: string; position: number; duration: number };
-    if (!db.get('SELECT id FROM episodes WHERE id=?', body.episodeId)) throw new ApiFailure(404, 'episode-not-found');
-    const remote = sources.remoteEpisode(body.episodeId);
-    if (remote && sources.row(remote.source_id).live) throw new ApiFailure(400, 'live-progress-unavailable');
-    const position = Math.min(body.position, body.duration);
-    db.run('INSERT OR REPLACE INTO progress VALUES(?,?,?,?,?,?)', profile(req), body.episodeId, position, body.duration, Number(completion(position, body.duration)), now());
-    return episodeProgress(db.get('SELECT * FROM progress WHERE profile_id=? AND episode_id=?', profile(req), body.episodeId)!);
-  });
-  app.get('/api/network', async () => sources.network());
-  app.patch('/api/network', { schema: { body: object({ defaultProxy: { type: 'string', maxLength: 2048 }, byedpiEnabled: { type: 'boolean' }, revision: { type: 'integer', minimum: 0 } }, ['defaultProxy','revision']) } }, async req => { const body = req.body as { defaultProxy: string; revision: number; byedpiEnabled?: boolean }; return sources.configureNetwork(body.defaultProxy,body.revision,body.byedpiEnabled); });
-  app.post('/api/network/test', { schema: { body: object({ defaultProxy: { type: 'string', maxLength: 2048 }, byedpiEnabled: { type: 'boolean' } }, ['defaultProxy']) } }, async req => { const b = req.body as { defaultProxy: string; byedpiEnabled?: boolean }; return sources.testNetwork(b.defaultProxy, b.byedpiEnabled); });
-  app.get('/api/sources', async () => sources.list());
-  const removeSources = (ids: string[]) => sources.remove(ids, async (episodeIds, imageIds) => {
-    online.removeEpisodes(episodeIds);
-    for (const [sid, s] of remotePlayback.sessions) if (episodeIds.has(s.response.episodeId)) remotePlayback.remove(sid);
-    await Promise.all([...playback.sessions].filter(([, s]) => episodeIds.has(s.response.episodeId)).map(([sid]) => playback.remove(sid)));
-    if (imageIds.size) {
-      const dir = path.join(cfg.dataDir, 'images');
-      const files = await readdir(dir).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return []; throw error; });
-      await Promise.all(files.filter(file => imageIds.has(file.replace(/-\d+\.webp$/, ''))).map(file => rm(path.join(dir, file), { force: true })));
-    }
-  });
-  app.get('/api/sources/:id/removal-impact', { schema: { params: idParams() } }, async req => sources.removalImpact([params(req).id]));
-  app.delete('/api/sources/:id', { schema: { params: idParams() } }, async req => removeSources([params(req).id]));
-  app.post('/api/sources/remove', { schema: { body: object({ ids: { type: 'array', minItems: 1, maxItems: 1000, items: string } }, ['ids']) } }, async req => removeSources((req.body as { ids: string[] }).ids));
-  app.get('/api/source-repositories',async()=>sources.repositories());
-  app.delete('/api/source-repositories',{schema:{body:object({url:{type:'string',maxLength:4096}},['url'])}},async req=>sources.removeRepository((req.body as {url:string}).url));
-  app.post('/api/sources/refresh', { schema: { body: object({ url: { type: 'string', maxLength: 4096 }, kind: { type:'string',enum:['mangayomi-js','aniyomi-apk'] } }, ['url']) } }, async req => sources.refresh((req.body as { url: string }).url,(req.body as {kind?:'mangayomi-js'|'aniyomi-apk'}).kind));
-  app.post('/api/sources/:id/install', { schema: { params: idParams() } }, async req => sources.install(params(req).id));
-  app.post('/api/sources/:id/rollback', {schema:{params:idParams()}},async req=>sources.rollback(params(req).id));
-  app.post('/api/sources/:id/check', {schema:{params:idParams()}},async req=>sources.diagnose(params(req).id,profile(req)));
-  app.patch('/api/sources/:id', { schema: { params: idParams(), body: object({ enabled: { type: 'boolean' }, type: typeQuery, live: { type: 'boolean' } }) } }, async req => sources.configure(params(req).id, req.body as any));
-  app.get('/api/sources/:id/preferences', { schema: { params: idParams() } }, async req => sources.preferences(params(req).id));
-  app.patch('/api/sources/:id/preferences', { schema: { params: idParams(), body: { type: 'object', maxProperties: 128 } } }, async req => sources.preferences(params(req).id, req.body as Record<string,unknown>));
-  app.get('/api/sources/:id/filters', { schema: { params: idParams() } }, async req => sources.capabilities(params(req).id));
-  app.get('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.preloadStatus(params(req).id));
-  app.post('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.preload(params(req).id));
-  app.delete('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.cancelPreload(params(req).id));
-  app.post('/api/sources/:id/browse', { schema: { params: idParams(), body: object({ mode: {type:'string',enum:['popular','latest','search'],default:'popular'}, page:pageQuery, q:{type:'string',maxLength:200,default:''}, selection:browseSelection }) } }, async req => {
-    const b = req.body as any; return withMetadata(await sources.browse(params(req).id, profile(req), b.mode, b.page, b.q, b.selection), profile(req));
-  });
-  app.get('/api/sources/:id/browse', { schema: { params: idParams(), querystring: object({ mode: { type: 'string', enum: ['popular','latest','search'], default: 'popular' }, page: pageQuery, q: { type: 'string', maxLength: 200, default: '' } }) } }, async req => {
-    const q = query(req); return withMetadata(await sources.browse(params(req).id, profile(req), q.mode, q.page, q.q), profile(req));
-  });
-  app.get('/api/library/folders', async () => library.folders());
-  app.post('/api/library/folders', { schema: { body: object({ path: { type: 'string', minLength: 1, maxLength: 4096 }, type: typeQuery, label: string }, ['path', 'type']) } }, async (req, reply) => {
-    const body = req.body as { path: string; type: MediaType; label?: string }, safe = await safePath(cfg.mediaRoot, body.path, true);
-    for (const folder of library.folders()) if (contained(folder.path, safe) || contained(safe, folder.path)) throw new ApiFailure(409, 'folder-overlap');
-    const id = randomUUID(); db.run('INSERT INTO folders(id,path,type,label) VALUES(?,?,?,?)', id, safe, body.type, body.label || path.basename(safe));
-    return reply.code(201).send(library.folders().find(f => f.id === id));
-  });
-  app.delete('/api/library/folders/:id', { schema: { params: idParams() } }, async (req, reply) => {
-    const files = new Set(db.all('SELECT f.path FROM files f JOIN episodes e ON e.id=f.episode_id JOIN media m ON m.id=e.media_id WHERE m.folder_id=?', params(req).id).map(f => f.path));
-    for (const [id, s] of playback.sessions) if (files.has(s.file)) await playback.remove(id);
-    db.run('DELETE FROM folders WHERE id=?', params(req).id); return reply.code(204).send();
-  });
-  app.get('/api/library/browse', { schema: { querystring: object({ path: { type: 'string', maxLength: 4096 } }) } }, async req => {
-    const safe = await safePath(cfg.mediaRoot, query(req).path || cfg.mediaRoot, true), dirs: string[] = [];
-    for (const dir of await readdir(safe, { withFileTypes: true })) {
-      if (dir.isDirectory() || dir.isSymbolicLink()) {
-        try { dirs.push(await safePath(cfg.mediaRoot, path.join(safe, dir.name), true)); } catch {}
-      }
-    }
-    return { path: safe, dirs: [...new Set(dirs)].sort() };
-  });
-  app.post('/api/library/scan', async () => library.start());
-  app.get('/api/library/status', async () => library.status);
-  app.get('/api/episodes/:id/markers', { schema: { params: idParams(), querystring: object({ duration: {type:'number',minimum:60,maximum:21600},sessionId:string }, ['duration']) } }, async (req,reply) => {
-    reply.header('Cache-Control','private, no-store');
-    const episode=db.get('SELECT e.media_id,m.type FROM episodes e JOIN media m ON m.id=e.media_id WHERE e.id=?',params(req).id);
-    if(!episode)throw new ApiFailure(404,'episode-not-found');
-    catalog.kids.assert(episode.media_id,profile(req));
-    const {duration,sessionId}=req.query as {duration:number;sessionId?:string};
-    if(sessionId){
-      const s=remotePlayback.sessions.has(sessionId)?remotePlayback.get(sessionId,profile(req)):playback.get(sessionId,profile(req));
-      if(s.response.episodeId!==params(req).id||s.response.live)throw new ApiFailure(400,'marker-session-mismatch');
-    }
-    if(episode.type==='anime')return enrichment.remoteMarkers(params(req).id,duration);
-    if(!sessionId||db.settings(profile(req)).generalSkipEnabled===false)return {markers:null,status:'unsupported'};
-    const markers=await generalMarkers.get(params(req).id,sessionId,duration);
-    return {markers,status:markers?'matched':'unavailable'};
-  });
-  app.post('/api/subtitles/import', { bodyLimit: 14 * 1024 * 1024, schema: { body: object({ episodeId: string, filename: { type: 'string', minLength: 1, maxLength: 255 }, data: { type: 'string', minLength: 4, maxLength: 14 * 1024 * 1024 } }, ['episodeId', 'filename', 'data']) } }, async req => {
-    const body = req.body as { episodeId: string; filename: string; data: string };
-    return subtitleLibrary.import(body.episodeId, profile(req), body.filename, body.data);
-  });
-  app.get('/api/episodes/:id/subtitles/uploads', { schema: { params: idParams() } }, async req => subtitleLibrary.tracks(params(req).id, profile(req), 'upload'));
-  app.get('/api/episodes/:id/subtitles/preference', { schema: { params: idParams() } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.preference(params(req).id, profile(req))));
-  app.put('/api/episodes/:id/subtitles/preference', { schema: { params: idParams(), body: object({ migrate: { type: 'boolean' }, choice: { anyOf: [{ type: 'null' }, object({
-    id: string, episodeId: string, label: { type: 'string', maxLength: 1000 }, lang: { type: 'string', maxLength: 32 },
-    format: { type: 'string', enum: ['ass', 'vtt'] }, source: { type: 'string', enum: ['embedded', 'local', 'extension', 'upload', 'online', 'translation'] },
-  }, ['id', 'episodeId', 'label', 'format'])] } }, ['choice']) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.remember(params(req).id, profile(req), (req.body as { choice: import('@moa/shared').SubtitlePreference | null }).choice, (req.body as { migrate?: boolean }).migrate)));
-  app.get('/api/admin/subtitles', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.list()));
-  app.get('/api/admin/subtitle-memory', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(subtitleLibrary.memory()));
-  app.patch('/api/admin/subtitle-memory', { schema: { body: object({ retentionDays: { type: 'integer', minimum: 1, maximum: 3650 } }, ['retentionDays']) } }, async req => subtitleLibrary.memory((req.body as { retentionDays: number }).retentionDays));
-  app.delete('/api/admin/subtitle-memory', async () => subtitleLibrary.memory(undefined, true));
-  const savedSubtitleParams = object({ kind: { type: 'string', enum: ['upload', 'translation', 'online'] }, id: string }, ['kind', 'id']);
-  app.get('/api/admin/subtitles/:kind/:id/content', { schema: { params: savedSubtitleParams } }, async (req, reply) => {
-    const row = subtitleLibrary.content(params(req).kind as 'upload' | 'translation' | 'online', params(req).id);
-    return reply.type(row.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.name.replace(/\.[^.]+$/, '') + '.' + row.format)}`).send(row.content);
-  });
-  app.delete('/api/admin/subtitles/:kind/:id', { schema: { params: savedSubtitleParams } }, async (req, reply) => {
-    subtitleLibrary.remove(params(req).kind as 'upload' | 'translation' | 'online', params(req).id);
-    return reply.code(204).send();
-  });
-  app.get('/api/episodes/:id/subtitles/online', { schema: { params: idParams(), querystring: object({ title: {type:'string',minLength:1,maxLength:500,pattern:'\\S'}, season: {type:'integer',minimum:1,maximum:99}, episode: {type:'number',minimum:0,maximum:10000}, episodeOffset: {type:'integer',minimum:0,maximum:10000}, refresh: {type:'boolean'} }) } }, async (req, reply) => {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    const close = () => { if (!reply.raw.writableEnded) abort(); };
-    req.raw.once('aborted', abort); reply.raw.once('close', close);
-    const { refresh, ...override } = req.query as Partial<import('@moa/shared').OnlineSubtitleQuery> & { refresh?: boolean };
-    try { return await online.search(params(req).id, profile(req), controller.signal, override, refresh); }
-    finally { req.raw.off('aborted', abort); reply.raw.off('close', close); }
-  });
-  app.post('/api/episodes/:id/subtitles/online', { schema: { params: idParams(), body: object({ searchId: string, candidateId: string }, ['searchId', 'candidateId']) } }, async req => {
-    const body = req.body as { searchId: string; candidateId: string };
-    return online.apply(params(req).id, profile(req), body.searchId, body.candidateId);
-  });
-  app.get('/api/episodes/:id/subtitles/:subtitleId/content', async (req, reply) => {
-    const row = online.content(params(req).id, params(req).subtitleId, query(req).token, req.moaProfile);
-    return reply.type(row.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').send(row.content);
-  });
-  app.delete('/api/episodes/:id/subtitles/:subtitleId', { schema: { params: object({ id: string, subtitleId: string }, ['id', 'subtitleId']) } }, async (req, reply) => {
-    online.remove(params(req).id, params(req).subtitleId);
-    for (const s of playback.sessions.values()) if (s.response.episodeId === params(req).id) {
-      s.subtitleSources.delete(params(req).subtitleId);
-      s.response.subtitles = s.response.subtitles.filter(t => t.id !== params(req).subtitleId);
-    }
-    return reply.code(204).send();
-  });
-  app.get('/api/admin/downloads',{schema:{querystring:object({cursor:{type:'string',maxLength:2048},mediaId:{type:'string',minLength:1,maxLength:512}})}},async (req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.status(query(req))));
-  app.put('/api/admin/downloads/config',{schema:{body:{...object({enabled:{type:'boolean'},quality:{type:'string',enum:['best','1080p','720p','480p']},quotaBytes:{type:'integer',minimum:1,maximum:1099511627776000}}),minProperties:1}}},async req=>{await downloads.configureSettings(req.body as {enabled?:boolean;quality?:import('@moa/shared').DownloadQuality;quotaBytes?:number});return downloads.status();});
-  app.get('/api/admin/downloads/choices',{schema:{querystring:object({episodeId:string},['episodeId'])}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(await downloads.choices(query(req).episodeId,profile(req))));
-  app.get('/api/admin/downloads/batch',{schema:{querystring:object({mediaId:{type:'string',minLength:1,maxLength:512},season:{type:'integer',minimum:0,maximum:10000}},['mediaId'])}},async(req,reply)=>{const q=req.query as {mediaId:string;season?:number};return reply.header('Cache-Control','private, no-store').send(downloads.previewBatch(q.mediaId,profile(req),q.season));});
-  app.post('/api/admin/downloads/batch',{schema:{body:object({mediaId:{type:'string',minLength:1,maxLength:512},season:{type:'integer',minimum:0,maximum:10000}},['mediaId'])}},async req=>{const b=req.body as {mediaId:string;season?:number};return downloads.createBatch(b.mediaId,profile(req),b.season);});
-  app.post('/api/admin/downloads',{schema:{body:{...object({episodeId:string,selectionToken:string,choiceId:string},['episodeId']),dependencies:{selectionToken:['choiceId'],choiceId:['selectionToken']}}}},async req=>{const b=req.body as {episodeId:string;selectionToken?:string;choiceId?:string};return b.selectionToken!==undefined?downloads.create(b.episodeId,profile(req),b.selectionToken,b.choiceId!):downloads.createPreferred(b.episodeId,profile(req));});
-  app.post('/api/admin/downloads/:id/cancel',{schema:{params:idParams()}},async req=>downloads.cancel(params(req).id));
-  app.post('/api/admin/downloads/:id/retry',{schema:{params:idParams()}},async req=>downloads.retry(params(req).id,profile(req)));
-  app.delete('/api/admin/downloads/:id',{schema:{params:idParams()}},async(req,reply)=>{await downloads.remove(params(req).id);return reply.code(204).send();});
-  app.get('/api/episodes/:id/download',{schema:{params:idParams()}},async(req,reply)=>reply.header('Cache-Control','private, no-store').send(downloads.episode(params(req).id,profile(req))));
-  app.post('/api/playback', { schema: { body: object({ episodeId: string, location: {type:'string',enum:['auto','saved','source']}, capabilities: object({ h264: { type: 'boolean' }, hevc: { type: 'boolean' }, av1: { type: 'boolean' }, vp9: { type: 'boolean' }, audioCodecs: { type: 'array', items: { type: 'string', maxLength: 32 }, maxItems: 32 }, maxHeight: { type: 'integer', minimum: 2 } }, ['h264', 'hevc', 'av1']), audioTrackId: string, streamId: string, startPosition: { type: 'number', minimum: 0 } }, ['episodeId', 'capabilities']) } }, async req => {
-    const body = req.body as { episodeId: string; capabilities: ClientCapabilities; location?:'auto'|'saved'|'source'; audioTrackId?: string; streamId?: string; startPosition?: number };
-    const episode = db.get('SELECT media_id FROM episodes WHERE id=?', body.episodeId);
-    if (episode) catalog.kids.assert(episode.media_id, profile(req));
-    const openSource=()=>sources.remoteEpisode(body.episodeId)
-      ? remotePlayback.create(profile(req), body.episodeId, body.startPosition, body.streamId)
-      : playback.create(profile(req), body.episodeId, body.capabilities, body.audioTrackId, body.startPosition);
-    const result=body.location==='source'?await openSource():await downloads.withSaved(body.episodeId,async asset=>{
-      if(asset)return playback.create(profile(req),body.episodeId,body.capabilities,body.audioTrackId,body.startPosition,asset);
-      if(body.location==='saved')throw new ApiFailure(404,'download-file-missing');
-      return openSource();
-    });
-    const saved = subtitleLibrary.tracks(body.episodeId, profile(req));
-    result.subtitles.push(...saved.filter(track => !result.subtitles.some(existing => existing.id === track.id)));
-    return result;
-  });
-  app.post('/api/playback/:sessionId/heartbeat', { schema: { params: idParams('sessionId') } }, async (req, reply) => {
-    remotePlayback.heartbeat(params(req).sessionId, profile(req));
-    return reply.code(204).send();
-  });
-  app.delete('/api/playback/:sessionId', { schema: { params: idParams('sessionId') } }, async (req, reply) => {
-    if (remotePlayback.sessions.has(params(req).sessionId)) { remotePlayback.get(params(req).sessionId, profile(req)); await remotePlayback.remove(params(req).sessionId); return reply.code(204).send(); }
-    if (online.removeAsset(params(req).sessionId, profile(req))) return reply.code(204).send();
-    playback.get(params(req).sessionId, profile(req)); await playback.remove(params(req).sessionId); return reply.code(204).send();
-  });
-  casting.asset(app, '/api/playback/:sessionId/remote/:asset', async (req, reply) => remotePlayback.proxy(req, reply, params(req).sessionId, params(req).asset));
-  const session = (req: FastifyRequest) => playback.get(params(req).sessionId, req.moaProfile);
-  app.get('/api/playback/:sessionId/preview', { schema: { params: idParams('sessionId'), querystring: object({ at: { type: 'number', minimum: 0, maximum: 864000 } }, ['at']) } }, async (req, reply) => {
-    return reply.type('image/jpeg').header('Cache-Control', 'private, max-age=1800').send(await playback.preview(session(req), query(req).at));
-  });
-  casting.asset(app, '/api/playback/:sessionId/index.m3u8', async (req, reply) => {
-    const s = session(req); if (s.response.mode === 'direct') throw new ApiFailure(404, 'not-hls');
-    return reply.type('application/vnd.apple.mpegurl').header('Cache-Control', 'no-store').send(playback.playlist(s));
-  });
-  casting.asset(app, '/api/playback/:sessionId/original', async (req, reply) => {
-    const s = session(req); if (s.response.mode !== 'direct') throw new ApiFailure(404, 'not-direct');
-    const safe = await safePath(s.root, s.file); return sendFile(reply, safe, s.response.mime, req.headers.range);
-  });
-  casting.asset(app, '/api/playback/:sessionId/:asset', async (req, reply) => {
-    const s = session(req), asset = params(req).asset, match = /^(seg-(\d+)\.m4s|init\.mp4)$/.exec(asset);
-    if (!match || s.response.mode === 'direct') throw new ApiFailure(404, 'not-found');
-    const file = asset === 'init.mp4' ? await playback.initialization(s) : await playback.segment(s, Number(match[2]));
-    return sendFile(reply.header('Cache-Control', 'private, max-age=1800'), file, 'video/mp4');
-  });
-  app.get('/api/playback/:sessionId/subtitles/:track', async (req, reply) => {
-    const uploaded = subtitleLibrary.asset(params(req).sessionId, params(req).track, req.moaProfile);
-    if (uploaded) return reply.type(uploaded.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').send(uploaded.content);
-    const translated = translations.asset(params(req).sessionId, params(req).track, req.moaProfile);
-    if (translated) return reply.type(translated.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').send(translated.content);
-    if (remotePlayback.sessions.has(params(req).sessionId)) {
-      const row = remotePlayback.savedSubtitle(params(req).sessionId,params(req).track,req.moaProfile);
-      return reply.type(row.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control','private, no-store').send(row.content);
-    }
-    const applied = online.asset(params(req).sessionId, params(req).track, req.moaProfile);
-    if (applied) return reply.type(applied.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').send(applied.content);
-    const s = session(req), track = params(req).track, source = s.subtitleSources.get(track.replace(/\.(ass|vtt)$/, ''));
-    if (!source || !track.endsWith(`.${source.format}`)) throw new ApiFailure(404, 'subtitle-not-found');
-    if (source.onlineId) {
-      const row = online.content(s.response.episodeId, source.onlineId, undefined, s.profile);
-      return reply.type(row.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8').header('Cache-Control', 'private, no-store').send(row.content);
-    }
-    const safe = await safePath(s.root, source.file);
-    // Preserve external ASS exactly, including styles, embedded drawings, and timing.
-    if (source.stream === undefined && source.format === 'ass') return sendFile(reply, safe, 'text/x-ssa; charset=utf-8');
-    if (source.stream === undefined && /\.vtt$/i.test(safe)) return sendFile(reply, safe, 'text/vtt; charset=utf-8');
-    const cached = await playback.subtitleCache.get(safe, source.stream, source.format);
-    return sendFile(reply, cached, source.format === 'ass' ? 'text/x-ssa; charset=utf-8' : 'text/vtt; charset=utf-8');
-  });
-  app.get('/api/playback/:sessionId/fonts/:font', async (req, reply) => {
-    const s = session(req), index = s.fontSources.get(params(req).font); if (index === undefined) throw new ApiFailure(404, 'font-not-found');
-    const file = await playback.subtitleCache.font(await safePath(s.root, s.file), index);
-    return sendFile(reply, file, 'application/octet-stream');
-  });
-  app.get('/api/images/:id', { schema: { params: idParams(), querystring: object({ w: { type: 'integer', minimum: 32, maximum: 1920 } }) } }, async (req, reply) => {
-    if (params(req).id.startsWith('source-')) {
-      if (!db.get('SELECT 1 FROM source_images WHERE id=?', params(req).id)) throw new ApiFailure(404, 'image-not-found');
-      const id = params(req).id, width = query(req).w || 960;
-      const bytes = await imageCache.get(`${id}-${width}.webp`,IMAGE_CACHE_TTL,async()=> {
-        const original = await imageCache.original(id,()=>sources.imageContent(id));
-        return sharp(original,{limitInputPixels:40_000_000}).resize({width,withoutEnlargement:true}).webp({quality:82}).toBuffer();
-      });
-      if (!db.get('SELECT 1 FROM source_images WHERE id=?',id)) { await rm(path.join(cfg.dataDir,'images',`${id}-${width}.webp`),{force:true}); throw new ApiFailure(404,'image-not-found'); }
-      return reply.header('Cache-Control','public, max-age=3600').type('image/webp').send(bytes);
-    }
-    const image = db.get('SELECT * FROM images WHERE id=?', params(req).id); if (!image) throw new ApiFailure(404, 'image-not-found');
-    const source = image.local ? await safePath(cfg.mediaRoot, image.path) : image.path, info = await stat(source);
-    const width = query(req).w || 960, etag = hash(`${image.id}:${info.mtimeMs}:${info.size}:${width}`);
-    reply.header('ETag', `"${etag}"`).header('Cache-Control', 'public, max-age=3600');
-    if (req.headers['if-none-match'] === `"${etag}"`) { await imageCache.touch(`${etag}.webp`); return reply.code(304).send(); }
-    const bytes = await imageCache.get(`${etag}.webp`,Infinity,()=>sharp(source).resize({width,withoutEnlargement:true}).webp({quality:82}).toBuffer());
-    return reply.type('image/webp').send(bytes);
-  });
+  registerSettingsRoutes(app, { db });
+  registerCatalogRoutes(app, { db, catalog, groups, tmdb, sources, franchises, youtube });
+  registerLibraryRoutes(app, { db, cfg, library, playback });
+  registerPlaybackRoutes(app, { db, catalog, sources, playback, remotePlayback, downloads, subtitleLibrary, online, translations, casting, enrichment, generalMarkers });
+  registerSubtitleRoutes(app, { subtitleLibrary, online, playback });
+  registerDownloadRoutes(app, { downloads });
   let web = false;
   try { await access(path.join(cfg.webDir, 'index.html')); web = true; } catch {}
   if (web) await app.register(fastifyStatic, { root: cfg.webDir, wildcard: false });

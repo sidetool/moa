@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SourceQueue } from '../src/source-queue.js';
+import { SourceQueue } from '../src/sources/queue.js';
 const gate = () => { let resolve!: () => void; const promise = new Promise<void>(r => {resolve=r;}); return {promise,resolve}; };
 
 test('reserved interactive lane bypasses lists, caps concurrency at two and respects management barriers',async()=>{

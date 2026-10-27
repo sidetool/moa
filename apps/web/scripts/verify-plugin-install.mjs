@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { createServer } from 'vite';
 import { buildApp } from '../../server/src/app.ts';
-import { fetchPluginPackage, unpackPlugin } from '../../server/src/website-plugins.ts';
+import { fetchPluginPackage, unpackPlugin } from '../../server/src/plugins/service.ts';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 const directory = await mkdtemp(path.join(tmpdir(), 'moa-plugin-install-'));

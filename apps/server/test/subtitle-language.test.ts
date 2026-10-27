@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { subtitleLanguage, isKorean, hasUnlabelledSiteSubtitle } from '../../web/src/player/subtitle-language.js';
+import { subtitleLanguage, isKorean, hasUnlabelledSiteSubtitle } from '../../web/src/player/subtitles/subtitle-language.js';
 const track = (label: string, lang?: string) => ({ id: 's', url: '/s', format: 'vtt' as const, source: 'extension' as const, label, lang });
 test('site labels recognize explicit foreign languages and protect unknown site subtitles', () => {
   for (const [label, lang] of [['English', 'en'], ['English CC', 'en'], ['사이트 자막 (ENG)', 'en'], ['日本語', 'ja'], ['Japanese', 'ja'], ['한국어', 'ko'], ['Korean', 'ko'], ['中文', 'zh'], ['Español', 'es'], ['영어 자막', 'en']]) {

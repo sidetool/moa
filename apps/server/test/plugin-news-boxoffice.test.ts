@@ -1,7 +1,7 @@
 import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import path from 'node:path';
-import {Store} from '../src/db.js';import {PluginNews,type NewsProvider} from '../src/plugin-news.js';import {PluginBoxOffice} from '../src/plugin-boxoffice.js';import {Tmdb} from '../src/tmdb.js';import {buildApp} from '../src/app.js';import {pluginPackage} from '../src/website-plugins.js';
+import {Store} from '../src/db.js';import {PluginNews,type NewsProvider} from '../src/plugins/news.js';import {PluginBoxOffice} from '../src/plugins/boxoffice.js';import {Tmdb} from '../src/metadata/tmdb.js';import {buildApp} from '../src/app.js';import {pluginPackage} from '../src/plugins/service.js';
 const now=()=>Date.parse('2026-10-13T16:00:00Z'); // Oct 14 in Korea
 const event={date:'2026-10-15',kind:'episode' as const,detail:'season 1 episode 2'};
 async function fixture(t:TestContext){const dir=await mkdtemp(path.join(tmpdir(),'moa-news-'));const db=new Store(dir);for(const id of ['p','q','kid'])db.run('INSERT INTO profiles(id,name,color,kids,created_at) VALUES(?,?,?,?,?)',id,id,'blue',Number(id==='kid'),'2026');

@@ -26,8 +26,10 @@ jobs:
         run: test -s "docs/releases/$RELEASE_TAG.md"
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install -y libarchive-tools
-      - run: pnpm --filter @moa/extensions --filter @moa/subtitles-ko --filter @moa/skip-markers build
+      - run: pnpm --filter @moa/server build
+      - run: pnpm build:auth:css
       - run: pnpm typecheck
+      - run: pnpm --filter @moa/server exec tsx --test test/extensions/*.test.ts test/subtitles-korean/*.test.ts test/skip-markers/*.test.ts
       - run: node --test scripts/update.test.mjs scripts/release.test.mjs scripts/release-updater.test.mjs scripts/components.test.mjs scripts/install-release.test.mjs scripts/install-defaults.test.mjs scripts/container-updater.test.mjs scripts/release-artifacts.test.mjs
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/components.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
       - name: Device settings, subtitles and sessions
@@ -40,7 +42,7 @@ jobs:
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Media features and plugin contracts
         run: |
-          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/recommendations.test.ts test/general-markers.test.ts test/downloads.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/website-plugins.test.ts
+          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/recommendations.test.ts test/general-markers.test.ts test/downloads.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/website-plugins.test.ts
           node --test plugins/title-people/test/plugin.test.mjs
   image:
     needs: check

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { RemoteAccess } from '../src/remote-access.js';
+import { RemoteAccess } from '../src/network/remote-access.js';
 test('desired state, masked credentials, safety, persistence, and external ownership', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'moa-remote-'));
   const calls: string[] = []; let safe = true;

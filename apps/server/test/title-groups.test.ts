@@ -4,9 +4,9 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {Store} from '../src/db.js';
-import {Catalog} from '../src/catalog.js';
-import {Sources} from '../src/sources.js';
-import {TitleGroups,titleIdentity,titleGroupSeason} from '../src/title-groups.js';
+import {Catalog} from '../src/catalog/service.js';
+import {Sources} from '../src/sources/service.js';
+import {TitleGroups,titleIdentity,titleGroupSeason} from '../src/catalog/title-groups.js';
 
 test('conservative identity retains season, edition, year and type',()=>{
   assert.equal(titleIdentity('작품 시즌 2!','anime'),titleIdentity('작품 2기','anime'));
