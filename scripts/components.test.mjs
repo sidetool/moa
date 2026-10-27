@@ -16,15 +16,15 @@ const template = {
   'moa-source-browser':{image,volumes:[{type:'volume',source:'browser-secret',target:'/run/moa-source-browser'}]}
  },volumes:{'apk-secret':{},'apk-data':{},'browser-secret':{}}
 };
-async function fixture(t) {
+async function fixture(t, releaseVersion = 'v1.0.0') {
  const cwd=await mkdtemp(path.join(tmpdir(),'moa-components-')),root=path.join(cwd,'.moa-release'),dir=path.join(cwd,'mailbox');
  await mkdir(root); await mkdir(dir);
- const previous={version:'v1.0.0',schemaEpoch:1,services:['moa'],compose:path.join(root,'original.json'),runtime:path.join(root,'runtime')};
+ const previous={version:releaseVersion,schemaEpoch:1,services:['moa'],compose:path.join(root,'original.json'),runtime:path.join(root,'runtime')};
  const original={services:{moa:{image,environment:{LITERAL:'a$$b'},networks:{default:{aliases:['custom-app']}},volumes:[{type:'volume',source:'data',target:'/data'}]}},networks:{default:{}},volumes:{data:{}}};
  await atomic(previous.compose,original); await atomic(path.join(root,'current.json'),previous);
  await atomic(path.join(root,'installation.json'),{format:1,project:'component-test',platform:'linux/amd64',repository:'fixture/moa'});
  await writeFile(path.join(root,'trusted-key.pem'),generateKeyPairSync('ed25519').publicKey.export({type:'spki',format:'pem'}));
- const calls=[], faults={pull:false,health:false,rollback:false}; let active=previous.compose, live=new Set(['moa']);
+ const calls=[], feedCalls=[], faults={pull:false,health:false,rollback:false}; let active=previous.compose, live=new Set(['moa']);
  const run=async(cmd,args)=>{
   calls.push([cmd,...args]);
   if(args[0]==='pull'){if(faults.pull)throw Error('pull');return '';}
@@ -43,11 +43,20 @@ async function fixture(t) {
  const host=new Updater({cwd,dir,mode:'release',run});await host.release.init();
  const manager=host.release;
  const manifest={version:previous.version,minimumUpdaterVersion:'1.0.0',minimumComposeVersion:'2.20.0',services:{'moa-apk':{image:'fixture',digest:'sha256:'+'a'.repeat(64),platforms:['linux/amd64']},'moa-source-browser':{image:'fixture',digest:'sha256:'+'a'.repeat(64),platforms:['linux/amd64']}}};
- manager.feed={releases:async()=>[{tag_name:previous.version}],manifest:async()=>({manifest,digest:'sealed'}),bundle:async()=>({format:1,files:Object.fromEntries(BUNDLE_FILES.map(n=>[n,'fixture']))})};
+ manager.feed={releases:async channel=>{feedCalls.push(channel);return channel===(releaseVersion.includes('-beta.')?'beta':'stable')?[{tag_name:previous.version}]:[];},manifest:async()=>({manifest,digest:'sealed'}),bundle:async()=>({format:1,files:Object.fromEntries(BUNDLE_FILES.map(n=>[n,'fixture']))})};
  manager.activity=async()=>({busy:false,heartbeat:Date.now(),leaseId:(await optionalJson(path.join(dir,'maintenance.json'),{})).id});
  t.after(async()=>{await manager.releaseLease();await rm(cwd,{recursive:true,force:true});});
- return {host,manager,previous,original,calls,faults,root,dir,live};
+ return {host,manager,previous,original,calls,feedCalls,faults,root,dir,live};
 }
+test('component installation looks up the installed version rather than the selected update channel',async t=>{
+ for(const [releaseVersion,channel] of [['v1.0.0','stable'],['v1.1.0-beta.1','beta']]){
+  const f=await fixture(t,releaseVersion);
+  await f.manager.configure({channel:channel==='stable'?'beta':'stable'});
+  await f.host.performComponent({id:'apk',enabled:true});
+  assert.equal(f.host.state.componentOperation.state,'complete');
+  assert.deepEqual(f.feedCalls,[channel]);assert.equal(f.manager.current.version,releaseVersion);
+ }
+});
 test('install, disable and re-enable preserve data, literal values and the other component',async t=>{
  const f=await fixture(t);
  await f.host.performComponent({id:'apk',enabled:true});

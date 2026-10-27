@@ -7,13 +7,13 @@ import { install, startUpdater } from './install-release.mjs';
 import { BUNDLE_FILES } from './release-bundle.mjs';
 import { SERVICES } from './release.mjs';
 
-for (const apk of [false, true]) test(`fresh release installation pins components and selects APK=${apk}`, async t => {
+for (const [releaseVersion, channel] of [['v1.0.0', 'stable'], ['v1.1.0-beta.1', 'beta']]) for (const apk of [false, true]) test(`fresh ${channel} release installation pins components and selects APK=${apk}`, async t => {
   const cwd = await mkdtemp(path.join(tmpdir(), 'moa-installer-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const key = path.join(cwd, 'fixture-key'); await writeFile(key, 'fixture');
   await writeFile(path.join(cwd, '.env'), 'PUBLIC_HOST=custom.example\n');
   const commands = [];
-  const manifest = { version: 'v1.0.0', schemaEpoch: 1, minimumUpdaterVersion: '1.0.0', minimumComposeVersion: '2.24.0', services: Object.fromEntries(SERVICES.map(n => [n,{image:`ghcr.io/sidetool/${n}`,digest:`sha256:${'a'.repeat(64)}`,platforms:['linux/amd64','linux/arm64']}])) };
+  const manifest = { version: releaseVersion, schemaEpoch: 1, minimumUpdaterVersion: '1.0.0', minimumComposeVersion: '2.24.0', services: Object.fromEntries(SERVICES.map(n => [n,{image:`ghcr.io/sidetool/${n}`,digest:`sha256:${'a'.repeat(64)}`,platforms:['linux/amd64','linux/arm64']}])) };
   const files = Object.fromEntries(BUNDLE_FILES.map(n => [n, n === '.env.example' ? 'PUBLIC_HOST=default\n' : 'synthetic public fixture\n']));
   const config = { name: 'moa-fixture', services: { moa: { image:'old',environment:{LITERAL:'cost$$5'},volumes:[{type:'volume',source:'synthetic-data',target:'/data'}] }, 'moa-auth':{ image:'old',volumes:[{type:'volume',source:'synthetic-auth',target:'/data'}]}, 'moa-gateway':{image:'nginx:fixture',volumes:[{type:'bind',source:'/incorrect/base/path',target:'/etc/nginx/templates/default.conf.template'}]}, 'moa-updater':{image:'updater:container'} } };
   const run = async (command,args) => {
@@ -27,9 +27,10 @@ for (const apk of [false, true]) test(`fresh release installation pins component
     }
     return '';
   };
-  const feed = { async releases(){return[{tag_name:'v1.0.0'}];},async manifest(){return{manifest};},async bundle(){return{format:1,files};} };
-  assert.deepEqual(await install(['install','--cwd',cwd,'--project','moa-fixture','--version','v1.0.0','--key',key,'--apk',String(apk)],{feed,run}), { started: true, error: null });
+  const feed = { async releases(requested){assert.equal(requested,channel);return[{tag_name:releaseVersion}];},async manifest(){return{manifest};},async bundle(){return{format:1,files};} };
+  assert.deepEqual(await install(['install','--cwd',cwd,'--project','moa-fixture','--version',releaseVersion,'--key',key,'--apk',String(apk)],{feed,run}), { started: true, error: null });
   const current=JSON.parse(await readFile(path.join(cwd,'.moa-release/current.json'),'utf8'));
+  assert.equal(current.version,releaseVersion);
   const resolved=JSON.parse(await readFile(current.compose,'utf8'));
   assert.deepEqual(current.services,apk?['moa','moa-auth','moa-apk']:['moa','moa-auth']);
   if(apk){assert.equal(resolved.services['moa-apk'].profiles,undefined);assert.equal(resolved.services.moa.environment.MOA_APK_URL,'http://moa-apk:8797');}
@@ -44,7 +45,7 @@ for (const apk of [false, true]) test(`fresh release installation pins component
   assert.ok(commands.some(c=>c.includes('pull')&&c.includes('nginx:fixture')));
   assert.ok(commands.every(c=>!c.includes('build')&&!c.includes('down')));
   assert.deepEqual(JSON.parse(await readFile(path.join(cwd,'.moa-release/policy.json'),'utf8')),{channel:'stable'});
-  await assert.rejects(install(['install','--cwd',cwd,'--version','v1.0.0','--key',key],{feed,run}),/update-already-installed/);
+  await assert.rejects(install(['install','--cwd',cwd,'--version',releaseVersion,'--key',key],{feed,run}),/update-already-installed/);
 });
 
 test('migration commands are not supported', async () => {

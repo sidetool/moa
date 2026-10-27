@@ -1,5 +1,5 @@
 {
-  "version": "v0.1.2",
+  "version": "v0.1.3-beta.1",
   "minimumVersion": "v0.1.1",
   "schemaEpoch": 1,
   "rollbackSafe": true

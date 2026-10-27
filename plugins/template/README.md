@@ -48,7 +48,7 @@ moa.on('ready', async context => {
 
 | 폴더 | 기능 |
 | --- | --- |
-| `examples/page-notes` | 프로필별 페이지 메모와 작품 찾기입니다. `metadata.lookup`으로 기존 작품 상세를 열고, 없거나 조회에 실패하면 검색합니다. `routechange`와 `moa.ui.open/close`도 사용합니다. MOA 0.1.2 이상이 필요합니다. |
+| `examples/page-notes` | 프로필별 페이지 메모와 작품 찾기입니다. `metadata.lookup`으로 기존 작품 상세를 열고, 없거나 조회에 실패하면 검색합니다. `routechange`와 `moa.ui.open/close`도 사용합니다. MOA 0.1.3-beta.1 이상이 필요합니다. |
 | `examples/catalog-labels` | API 2의 `catalog.transform`으로 기존 작품 배지를 바꾸고 상세 패널을 표시합니다. `catalog.modify`·`ui`만 필요하며 서버 DB는 바꾸지 않습니다. |
 | `examples/subtitle-helper` | 파일·텍스트 입력으로 자막을 가져오는 HTML 화면입니다. 재생 설정의 플러그인 메뉴에서 엽니다. |
 

@@ -7,5 +7,5 @@
   "placements": ["app"],
   "permissions": ["app.context", "app.navigate", "ui", "storage", "metadata.read"],
   "connect": [],
-  "minMoaVersion": "0.1.2"
+  "minMoaVersion": "0.1.3-beta.1"
 }

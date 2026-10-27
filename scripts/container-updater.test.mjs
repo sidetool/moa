@@ -7,7 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { adopt } from './container-updater.mjs';
 import { BUNDLE_FILES } from './release-bundle.mjs';
 
-async function fixture(t) {
+async function fixture(t, releaseVersion = 'v0.1.2-beta.2') {
   const cwd = await mkdtemp(path.join(tmpdir(), 'moa-container-updater-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const root = path.join(cwd, '.moa-release'), installation = '/installation', hostDirectory = '/srv/moa $safe', project = 'moa-fixture';
@@ -19,15 +19,15 @@ async function fixture(t) {
     'moa-gateway': { image: 'nginx:1.27-alpine', environment: { GATEWAY_CLIENT_IP: '$$remote_addr', FILTER: '^PUBLIC$$' }, volumes: [{ type: 'bind', source: '/installation/deploy/gateway/default.conf.template', target: '/etc/nginx/templates/default.conf.template' }] },
     'moa-source-browser': { image: 'browser:disabled', profiles: ['browser'], environment: { LITERAL: '$$untouched' }, volumes: [{ type: 'bind', source: '/installation/browser/cache$$key', target: '/cache' }] },
   }, volumes: { 'moa-data': {} }, networks: { default: { name: 'existing-network' } } };
-  const container = (name, env, mounts) => ({ Id: Buffer.from(name).toString('hex').padEnd(64, '0'), Config: { Image: `ghcr.io/sidetool/${name}:v0.1.2-beta.2`, Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': name }, Env: env }, Mounts: mounts, State: { Running: true } });
+  const container = (name, env, mounts) => ({ Id: Buffer.from(name).toString('hex').padEnd(64, '0'), Config: { Image: `ghcr.io/sidetool/${name}:${releaseVersion}`, Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': name }, Env: env }, Mounts: mounts, State: { Running: true } });
   const containers = [
-    container('moa', ['MOA_VERSION=v0.1.2-beta.2', 'TOKEN=secret$literal=value', 'MOA_REQUIRE_ACCOUNT=1'], [{ Type: 'bind', Source: '/storage/live$data', Destination: '/data', RW: true }, { Type: 'bind', Source: '/media/existing', Destination: '/media/library', RW: false }, { Type: 'volume', Name: 'existing_extra', Destination: '/custom', RW: false }]),
+    container('moa', [`MOA_VERSION=${releaseVersion}`, 'TOKEN=secret$literal=value', 'MOA_REQUIRE_ACCOUNT=1'], [{ Type: 'bind', Source: '/storage/live$data', Destination: '/data', RW: true }, { Type: 'bind', Source: '/media/existing', Destination: '/media/library', RW: false }, { Type: 'volume', Name: 'existing_extra', Destination: '/custom', RW: false }]),
     container('moa-auth', ['PUBLIC_ORIGIN=https://watch.example'], [{ Type: 'volume', Name: 'existing_auth', Destination: '/data', RW: true }]),
     container('moa-gateway', ['GATEWAY_CLIENT_IP=$remote_addr', 'FILTER=^PUBLIC$'], [{ Type: 'bind', Source: `${hostDirectory}/deploy/gateway/default.conf.template`, Destination: '/etc/nginx/templates/default.conf.template', RW: false }]),
   ];
   const calls = [], feedCalls = [], preference = {};
-  const manifest = { version: 'v0.1.2-beta.2', schemaEpoch: 1, services: Object.fromEntries(['moa', 'moa-auth'].map(name => [name, { platforms: ['linux/amd64', 'linux/arm64'] }])) };
-  const feed = { repository: 'sidetool/moa', async releases(channel) { feedCalls.push(['releases', channel]); return [{ tag_name: manifest.version }]; }, async manifest(release) { feedCalls.push(['manifest', release.tag_name]); return { manifest }; }, async bundle() { feedCalls.push(['bundle']); return { format: 1, files: Object.fromEntries(BUNDLE_FILES.map(file => [file, 'fixture'])) }; } };
+  const manifest = { version: releaseVersion, schemaEpoch: 1, services: Object.fromEntries(['moa', 'moa-auth'].map(name => [name, { platforms: ['linux/amd64', 'linux/arm64'] }])) };
+  const feed = { repository: 'sidetool/moa', async releases(channel) { feedCalls.push(['releases', channel]); return channel === (releaseVersion.includes('-beta.') ? 'beta' : 'stable') ? [{ tag_name: manifest.version }] : []; }, async manifest(release) { feedCalls.push(['manifest', release.tag_name]); return { manifest }; }, async bundle() { feedCalls.push(['bundle']); return { format: 1, files: Object.fromEntries(BUNDLE_FILES.map(file => [file, 'fixture'])) }; } };
   const run = async args => {
     calls.push(args);
     if (args[0] === 'inspect') return JSON.stringify(args[1] === 'updater-host' ? [self] : containers);
@@ -82,6 +82,17 @@ test('container adoption preserves running mounts, Compose scope, literal dollar
   assert.equal((await stat(f.root)).mode & 0o777, 0o700);
   assert.equal((await stat(current.compose)).mode & 0o777, 0o600);
   for (const file of await readdir(f.root)) if (file.endsWith('.json')) assert.ok(!(await readFile(path.join(f.root, file), 'utf8')).includes('secret'));
+});
+
+test('container adoption finds the installed release independently of the chosen update channel', async t => {
+  for (const [releaseVersion, channel] of [['v0.1.2', 'stable'], ['v0.1.3-beta.1', 'beta']]) {
+    const f = await fixture(t, releaseVersion), preference = channel === 'stable' ? 'beta' : 'stable';
+    f.preference.content = JSON.stringify({ channel: preference });
+    await adopt(f.options);
+    assert.deepEqual(f.feedCalls[0], ['releases', channel]);
+    assert.equal(JSON.parse(await readFile(path.join(f.root, 'current.json'), 'utf8')).version, releaseVersion);
+    assert.deepEqual(JSON.parse(await readFile(path.join(f.root, 'policy.json'), 'utf8')), { channel: preference });
+  }
 });
 
 test('container adoption resumes existing release state without Docker requests or reseeding', async t => {

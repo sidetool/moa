@@ -175,6 +175,16 @@ test('plugin packages validate permissions, sizes, origins and API versions', ()
   assert.equal(pluginCompatibility(pluginPackage({ ...hooked, minMoaVersion: '1.2.0+build.1' }), '1.2.0+build.2').supported, true);
 });
 
+test('metadata lookup examples require a host that provides the API', async () => {
+  for (const folder of ['anime-schedule', 'template/examples/page-notes']) {
+    const directory = new URL(`../../../plugins/${folder}/`, import.meta.url);
+    const manifest = JSON.parse(await readFile(new URL('manifest.json', directory), 'utf8'));
+    const plugin = pluginPackage({ ...manifest, script: await readFile(new URL('plugin.js', directory), 'utf8') });
+    assert.equal(pluginCompatibility(plugin, '0.1.2').supported, false, folder);
+    assert.equal(pluginCompatibility(plugin, '0.1.3-beta.1').supported, true, folder);
+  }
+});
+
 test('whole plugin folders and ZIPs select their root manifest and reject unsafe or incomplete packages', async () => {
   const { html, ...manifest } = template;
   const files = [{ name: 'root/manifest.json', content: '\uFEFF' + JSON.stringify(manifest) }, { name: 'root/index.html', content: html }, { name: 'root/examples/manifest.json', content: JSON.stringify({ ...manifest, id: 'example' }) }, { name: 'root/examples/index.html', content: '<p>Example</p>' }];
