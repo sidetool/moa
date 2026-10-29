@@ -444,6 +444,8 @@ export interface Settings {
   autoplayNext: boolean;
   /** Seconds before the next episode starts automatically. */
   autoplayDelay: number;
+  /** Start the next-episode countdown this many seconds before an unmarked video ends. Zero waits for EOF. */
+  nextEpisodeLeadSeconds?: number;
   defaultSubtitleLang: string;
   subtitleSize: "small" | "medium" | "large" | "xlarge";
   subtitleScale?: number | null;
@@ -452,6 +454,7 @@ export interface Settings {
   subtitleOutline?: number | null;
   subtitleHeight?: number;
   subtitlePadding?: number;
+  /** Explicit opt-in; older records without the flag keep their custom ASS appearance. */
   subtitlePreserveAss?: boolean;
   subtitleStep?: 1 | 5 | 10;
   preferredQuality: "auto" | "1080" | "720" | "480";
@@ -521,7 +524,7 @@ export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | '
   playerShortcuts: PlayerShortcuts;
   fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; holdSpeed: 1.25 | 1.5 | 2 | 2.5 | 3; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: true, subtitleStep: 5 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: false, subtitleStep: 5 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];

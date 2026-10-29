@@ -1,8 +1,11 @@
-import { DEFAULT_PLAYER_SHORTCUTS } from '@moa/shared';
+import { DEFAULT_PLAYER_SHORTCUTS, type Settings as ProfileSettings } from '@moa/shared';
+import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleControls';
+import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
+import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { useId, useRef, useState } from 'react';
 import { Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
-import { Button, ConfirmDialog, EmptyState, IconButton, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
+import { Button, ConfirmDialog, EmptyState, IconButton, NumberStepper, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
 
 export function ButtonsPreview() {
   const [message, setMessage] = useState('');
@@ -102,4 +105,39 @@ export function PlayerFeedbackPreview() {
 export function PlayerShortcutsPreview() {
   const [shortcuts, setShortcuts] = useState(DEFAULT_PLAYER_SHORTCUTS);
   return <div className="preview-shortcuts"><PlayerShortcutSettings shortcuts={shortcuts} save={async value => { setShortcuts(value); }} /></div>;
+}
+
+export function SubtitleCompatibilityPreview() {
+  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
+  return <SubtitleStyleControls format="ass" settings={settings} save={patch => setSettings(previous => ({ ...previous, ...patch }))} />;
+}
+
+export function DownloadVisibilityPreview() {
+  const [enabled, setEnabled] = useState(false), [message, setMessage] = useState('');
+  const entry = { pending: false };
+  return <div className="preview-stack">
+    <div className="preview-row"><span>서버 다운로드 사용</span><Toggle label="미리보기 서버 다운로드 사용" checked={enabled} onChange={value => { setEnabled(value); setMessage(''); }} /></div>
+    <div className="preview-row"><span>1화</span>{enabled && <EpisodeDownloadButton title="1화" entry={entry} onStart={() => setMessage('회차 다운로드 선택됨')} />}</div>
+    {enabled && <MovieDownloadButton entry={entry} onStart={() => setMessage('영화 다운로드 선택됨')} />}
+    <p className="preview-status" role="status">{message || '이 설정은 미리보기에만 적용됩니다.'}</p>
+  </div>;
+}
+
+export function NumberStepperPreview() {
+  const [seconds, setSeconds] = useState(90), [note, setNote] = useState('');
+  return <div className="preview-stack">
+    <div className="preview-row"><span>안내 시점</span><NumberStepper label="미리보기 안내 시점" unit="초" min={0} max={600} step={10} value={seconds} onChange={(value, { clamped }) => { setSeconds(value); setNote(clamped ? '범위에 맞춰 조정됨' : ''); }} /></div>
+    <div className="preview-row"><span>사용 불가</span><NumberStepper label="사용할 수 없는 시점" unit="초" min={0} max={600} value={30} disabled onChange={() => {}} /></div>
+    <p className="preview-status" role="status">{seconds}초{note && ` · ${note}`}</p>
+  </div>;
+}
+
+export function NextEpisodeLeadPattern() {
+  const [lead, setLead] = useState(90), [autoplay, setAutoplay] = useState(true), [fail, setFail] = useState(false);
+  const save = (value: number) => new Promise<void>((resolve, reject) => setTimeout(() => { if (fail) reject(new Error('preview')); else { setLead(value); resolve(); } }, 300));
+  return <div className="preview-stack">
+    <div className="preview-settings"><NextEpisodeLeadSetting value={lead} autoplay={autoplay} delay={5} save={save} /></div>
+    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="미리보기 다음 화 자동 재생" checked={autoplay} onChange={setAutoplay} /></div>
+    <div className="preview-row"><span>저장 실패 재현</span><Toggle label="미리보기 저장 실패 재현" checked={fail} onChange={setFail} /></div>
+  </div>;
 }

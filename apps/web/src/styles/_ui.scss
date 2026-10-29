@@ -26,6 +26,16 @@
 .input:focus-visible, .field input:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-gap); }
 .input[aria-invalid=true], .field input[aria-invalid=true] { border-color: var(--danger); }
 .input:disabled { opacity: var(--disabled-opacity); }
+.number-stepper { display: inline-flex; align-items: stretch; flex: none; min-height: var(--control-height); border: var(--border-width) solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-2); transition: border-color var(--motion-fast); }
+.number-stepper.is-invalid { border-color: var(--danger); }
+.number-stepper-button { display: grid; place-items: center; flex: none; width: var(--control-height); color: var(--text-2); border-radius: var(--radius-s); transition: color var(--motion-fast), background-color var(--motion-fast), opacity var(--motion-fast); }
+.number-stepper-button:hover:not(:disabled):not([aria-disabled=true]) { color: var(--text); background: var(--hairline); }
+.number-stepper-button:disabled, .number-stepper-button[aria-disabled=true] { opacity: var(--disabled-opacity); cursor: default; }
+.number-stepper-value { display: flex; align-items: center; justify-content: center; gap: var(--space-1); min-width: calc(var(--control-height) + var(--space-10)); padding-inline: var(--space-2); border-inline: var(--border-width) solid var(--hairline); color: var(--text-3); font-size: var(--font-small); cursor: text; }
+.number-stepper-value input { width: auto; min-width: 0; padding: 0; border: 0; background: none; color: var(--text); font-size: var(--font-control); font-weight: var(--weight-action); font-variant-numeric: tabular-nums; text-align: end; }
+.number-stepper-value input:focus-visible { outline: none; }
+.number-stepper:has(input:focus-visible) { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-gap); }
+.number-stepper-value input:disabled { opacity: var(--disabled-opacity); }
 .form-error { color: var(--danger); font-size: var(--font-small); }
 .password-field { position: relative; display: flex; width: 100%; min-width: 0; }
 .password-field input { padding-inline-end: calc(var(--control-height) + var(--space-1)) !important; }

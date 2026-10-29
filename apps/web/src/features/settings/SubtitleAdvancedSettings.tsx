@@ -1,7 +1,6 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useLocation } from 'react-router-dom';
-import { ChevronDown, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import type { Settings } from '@moa/shared';
 import { cx } from '../../lib/format';
 import {
@@ -10,6 +9,7 @@ import {
 } from '../../api/translation';
 import { SegmentedControl, Select, Toggle } from '../../components/ui';
 import { ApiError } from '../../lib/api';
+import { SettingsDisclosure } from './SettingsDisclosure';
 
 type Priority = Settings['translationSourcePriority'];
 const PRIORITY: Array<[Priority, string, string]> = [
@@ -23,16 +23,6 @@ const seconds = (ms: number) => `${Number((ms / 1000).toFixed(1))}초`;
  * and, for admins, the server-wide request pacing and retries.
  */
 export function SubtitleAdvancedSettings({ settings: s, admin, save }: { settings: Settings; admin: boolean; save: (patch: Partial<Settings>) => void }) {
-  const { hash } = useLocation();
-  const [open, setOpen] = useState(hash === '#subtitle-advanced');
-  const region = useId();
-  const anchor = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    if (hash !== '#subtitle-advanced') return;
-    setOpen(true);
-    requestAnimationFrame(() => anchor.current?.scrollIntoView({ block: 'start' }));
-  }, [hash]);
-
   const config = useTranslationConfig().data;
   const mode = translationModeOf(s);
   const translating = Boolean(config?.configured && config.enabled);
@@ -46,50 +36,43 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
   ].filter(Boolean).join(' · ');
 
   return (
-    <details className="subtitle-advanced" id="subtitle-advanced" ref={anchor} open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-      <summary className="setting setting-disclosure" aria-controls={region}>
-        <span className="setting-icon"><SlidersHorizontal size={20} /></span>
-        <div><b>자막 고급설정</b><small>{summary}</small></div>
-        <ChevronDown size={18} className={cx('disclosure-chevron', open && 'is-open')} aria-hidden="true" />
-      </summary>
-        <div id={region} className="settings-advanced" role="region" aria-label="자막 고급설정">
-          <div className="setting setting-stack">
-            <div>
-              <b>번역할 원문 순서</b>
-              <small>{PRIORITY.find(([value]) => value === s.translationSourcePriority)?.[2]}</small>
-              {translating && mode === 'manual' && <small className="is-muted">‘한국어 자막이 없을 때’가 번역할지 묻기·자동 번역일 때 쓰여요.</small>}
-            </div>
-            <SegmentedControl label="번역할 원문 순서" value={s.translationSourcePriority}
-              options={PRIORITY.map(([value, label]) => ({ value, label }))} onChange={translationSourcePriority => save({ translationSourcePriority })} />
-          </div>
-          <div className="setting">
-            <div>
-              <b>사이트 자막이 있으면 자동 검색 안 함</b>
-              <small>영상에 한국어 자막이나 언어를 알 수 없는 자막이 있으면 자동 찾기와 번역 제안을 건너뛰어요. 영어·일본어처럼 언어가 표시된 자막만 있으면 그대로 진행해요. 자막 메뉴에서 직접 찾고 번역하는 건 언제든 할 수 있어요.</small>
-            </div>
-            <Toggle label="사이트 자막이 있으면 자동 검색 안 함" checked={s.skipSubtitleSearchWithSiteTrack}
-              onChange={skipSubtitleSearchWithSiteTrack => save({ skipSubtitleSearchWithSiteTrack })} />
-          </div>
-          <div className="setting">
-            <div>
-              <b>자막이 없는 영상은 자동 번역 안 함</b>
-              <small>영상에 자막이 하나도 없으면 화면에 자막이 입혀져 있을 수 있어서, 번역 제안과 Jimaku 자동 검색·자동 번역을 건너뛰어요. 한국어 자막 자동 찾기는 따로 동작하고, 자막 메뉴에서 직접 찾고 번역하는 건 언제든 할 수 있어요.</small>
-            </div>
-            <Toggle label="자막이 없는 영상은 자동 번역 안 함" checked={s.skipTranslationWithoutSubtitles}
-              onChange={skipTranslationWithoutSubtitles => save({ skipTranslationWithoutSubtitles })} />
-          </div>
-          <p className="settings-advanced-label">한국어 온라인 자막</p>
-          <div className="setting">
-            <div>
-              <b>싱크 자동 맞춤 <span className="status-pill">실험</span></b>
-              <small>영상의 외국어 자막과 대사 시각을 비교해, 일정하게 어긋난 게 확실할 때만 시간을 맞춰요. 대사가 맞지 않아 보이는 자막은 자동으로 고르지 않고, 비교할 자막이 없거나 확실하지 않으면 그대로 둬요.</small>
-            </div>
-            <Toggle label="싱크 자동 맞춤" checked={s.experimentalSubtitleSync}
-              onChange={experimentalSubtitleSync => save({ experimentalSubtitleSync })} />
-          </div>
-          {admin && <RequestControls />}
+    <SettingsDisclosure id="subtitle-advanced" className="subtitle-advanced" title="자막 고급설정" summary={summary} icon={<SlidersHorizontal size={20} />}>
+      <div className="setting setting-stack">
+        <div>
+          <b>번역할 원문 순서</b>
+          <small>{PRIORITY.find(([value]) => value === s.translationSourcePriority)?.[2]}</small>
+          {translating && mode === 'manual' && <small className="is-muted">‘한국어 자막이 없을 때’가 번역할지 묻기·자동 번역일 때 쓰여요.</small>}
         </div>
-    </details>
+        <SegmentedControl label="번역할 원문 순서" value={s.translationSourcePriority}
+          options={PRIORITY.map(([value, label]) => ({ value, label }))} onChange={translationSourcePriority => save({ translationSourcePriority })} />
+      </div>
+      <div className="setting">
+        <div>
+          <b>사이트 자막이 있으면 자동 검색 안 함</b>
+          <small>영상에 한국어 자막이나 언어를 알 수 없는 자막이 있으면 자동 찾기와 번역 제안을 건너뛰어요. 영어·일본어처럼 언어가 표시된 자막만 있으면 그대로 진행해요. 자막 메뉴에서 직접 찾고 번역하는 건 언제든 할 수 있어요.</small>
+        </div>
+        <Toggle label="사이트 자막이 있으면 자동 검색 안 함" checked={s.skipSubtitleSearchWithSiteTrack}
+          onChange={skipSubtitleSearchWithSiteTrack => save({ skipSubtitleSearchWithSiteTrack })} />
+      </div>
+      <div className="setting">
+        <div>
+          <b>자막이 없는 영상은 자동 번역 안 함</b>
+          <small>영상에 자막이 하나도 없으면 화면에 자막이 입혀져 있을 수 있어서, 번역 제안과 Jimaku 자동 검색·자동 번역을 건너뛰어요. 한국어 자막 자동 찾기는 따로 동작하고, 자막 메뉴에서 직접 찾고 번역하는 건 언제든 할 수 있어요.</small>
+        </div>
+        <Toggle label="자막이 없는 영상은 자동 번역 안 함" checked={s.skipTranslationWithoutSubtitles}
+          onChange={skipTranslationWithoutSubtitles => save({ skipTranslationWithoutSubtitles })} />
+      </div>
+      <p className="settings-advanced-label">한국어 온라인 자막</p>
+      <div className="setting">
+        <div>
+          <b>싱크 자동 맞춤 <span className="status-pill">실험</span></b>
+          <small>영상의 외국어 자막과 대사 시각을 비교해, 일정하게 어긋난 게 확실할 때만 시간을 맞춰요. 대사가 맞지 않아 보이는 자막은 자동으로 고르지 않고, 비교할 자막이 없거나 확실하지 않으면 그대로 둬요.</small>
+        </div>
+        <Toggle label="싱크 자동 맞춤" checked={s.experimentalSubtitleSync}
+          onChange={experimentalSubtitleSync => save({ experimentalSubtitleSync })} />
+      </div>
+      {admin && <RequestControls />}
+    </SettingsDisclosure>
   );
 }
 

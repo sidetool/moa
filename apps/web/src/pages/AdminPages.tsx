@@ -22,6 +22,7 @@ import { ComponentSettings } from "../features/settings/ComponentSettings";
 import { SystemInfo } from "../features/settings/SystemInfo";
 import { SubtitleAdvancedSettings, RequestControls } from "../features/settings/SubtitleAdvancedSettings";
 import { ShortsSettings } from "../features/settings/ShortsSettings";
+import { PlaybackAdvancedSettings } from "../features/settings/PlaybackAdvancedSettings";
 import { translationModeOf, useTranslationConfig, type TranslationMode } from "../api/translation";
 import { keys, useFolders, useMe, useProfiles, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
 import { AccountSection, AccountsPage } from "./AccountsPage";
@@ -202,7 +203,7 @@ export function SettingsPage() {
     { value: "about", label: "정보", group: "", icon: <Info size={18} />, scope: "버전, 업데이트와 크레딧" }
   ];
   // Older addresses keep working after categories were merged.
-  const aliases: Record<string, string> = { "subtitle-advanced": "subtitles", updates: "about", device: "controls" };
+  const aliases: Record<string, string> = { "subtitle-advanced": "subtitles", "playback-advanced": "playback", updates: "about", device: "controls" };
   const requested = pathname === "/settings/tabs" ? "tabs" : aliases[hash.slice(1)] ?? hash.slice(1);
   // Narrow screens open on the category list; wide screens always show a category beside it.
   const chosen = categories.find(item => item.value === requested);
@@ -250,6 +251,7 @@ export function SettingsPage() {
           {row("영화·드라마 구간 건너뛰기", "외부 구간 정보가 있는 영화·드라마에서 오프닝·크레딧 건너뛰기 버튼을 보여줘요. 작품 정보만 조회하며 애니 구간은 이 설정과 관계없이 그대로예요.", <Toggle label="영화·드라마 구간 건너뛰기" checked={s.generalSkipEnabled !== false} onChange={value => void save({ generalSkipEnabled: value })} />)}
           {row("기본 화질", "네트워크가 느리면 낮은 화질이 끊김이 적어요.", select("preferredQuality", [["auto", "자동"], ["1080", "1080p"], ["720", "720p"], ["480", "480p"]]))}
           {row("하드웨어 변환", "브라우저가 재생할 수 없는 영상을 서버 GPU로 변환합니다.", <Toggle label="하드웨어 변환" checked={s.hardwareTranscoding} onChange={value => void save({ hardwareTranscoding: value })} />)}
+          <PlaybackAdvancedSettings settings={s} />
         </div>
       </section>}
       {category === "playback" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">

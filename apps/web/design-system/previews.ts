@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { AnimeSchedulePreview } from './anime-schedule-preview';
-import { ButtonsPreview, ConfirmationPreview, FeedbackPreview, FieldsPreview, FilterPattern, FormPattern, PlayerFeedbackPreview, PlayerShortcutsPreview, SegmentedPreview, SelectPreview, TogglePreview } from './preview-components';
+import { ButtonsPreview, ConfirmationPreview, DownloadVisibilityPreview, FeedbackPreview, FieldsPreview, FilterPattern, FormPattern, NextEpisodeLeadPattern, NumberStepperPreview, PlayerFeedbackPreview, PlayerShortcutsPreview, SegmentedPreview, SelectPreview, SubtitleCompatibilityPreview, TogglePreview } from './preview-components';
 
 // Markdown selects registered components without evaluating source code.
 export const previews: Record<string, ComponentType> = {
@@ -16,4 +16,8 @@ export const previews: Record<string, ComponentType> = {
   'anime-schedule': AnimeSchedulePreview,
   'player-feedback': PlayerFeedbackPreview,
   'player-shortcuts': PlayerShortcutsPreview,
+  'subtitle-compatibility': SubtitleCompatibilityPreview,
+  'download-visibility': DownloadVisibilityPreview,
+  'number-stepper': NumberStepperPreview,
+  'next-episode-lead': NextEpisodeLeadPattern,
 };

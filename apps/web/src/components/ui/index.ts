@@ -6,3 +6,4 @@ export * from "./Toggle";
 export * from "./Feedback";
 export * from "./ScrollLoader";
 export * from "./SegmentedControl";
+export * from "./NumberStepper";

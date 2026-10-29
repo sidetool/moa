@@ -1,4 +1,5 @@
 import { mergePlaybackMarkers } from '../player/playback/skip-markers';
+import { nextUpTiming } from '../player/playback/next-up';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
@@ -210,7 +211,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const subOutline = settings?.subtitleOutline ?? 'original';
   const subScale = settings?.subtitleScale ?? undefined;
   const subPadding = settings?.subtitlePadding ?? 6;
-  const subPreserveAss = settings?.subtitlePreserveAss !== false;
+  const subPreserveAss = settings?.subtitlePreserveAss === true;
   const originalSubAppearance = (subScale === undefined ? subSize === 'medium' : subScale === 100) && subBackground === 'original' && subShadow === 'original' && subOutline === 'original' && subHeight === 0;
   useEffect(() => { subs.current?.setHeight(subHeight); }, [subHeight, subtitle, session]);
   useEffect(() => { void subs.current?.setAppearance({ size: subSize, background: airplayMedia ? 'original' : subBackground, shadow: airplayMedia ? 'original' : subShadow, outline: airplayMedia ? 'original' : subOutline, scale: subScale, padding: subPadding, preserveAss: subPreserveAss }).catch(() => {}); }, [subSize, subBackground, subShadow, subOutline, subScale, subPadding, subPreserveAss, subtitle, session, airplayMedia]);
@@ -866,11 +867,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     { label: '엔딩', kind: 'credits', start: markers?.creditsStart, end: markers?.creditsEnd ?? total }
   ].filter((range): range is { label: string; kind: string; start: number; end: number } => Number.isFinite(range.start) && Number.isFinite(range.end))
     .map(range => ({ ...range, start: Math.max(0, Math.min(total, range.start)), end: Math.max(0, Math.min(total, range.end)) })).filter(range => range.end > range.start) : [];
-  const postCredits = Boolean(markers?.creditsEnd && total && total - markers.creditsEnd > 20);
-  const creditsEnd = Math.min(markers?.creditsEnd ?? total, total);
-  const fallbackCreditsAt = session?.mediaType === 'anime' && total >= 23 * 60 && total < 25 * 60 ? 22 * 60 : total ? Math.max(total - 30, total * .9) : Infinity;
-  const creditsAt = postCredits ? total - 15 : markers?.creditsStart ?? fallbackCreditsAt;
-  const inCredits = Boolean(markers?.creditsStart !== undefined && time >= markers.creditsStart && time < creditsEnd - .1);
+  const { hasCredits, creditsAt, creditsEnd, inCredits, postCredits } = nextUpTiming(total, time, markers, settings?.nextEpisodeLeadSeconds);
   const autoplay = Boolean(settings && settings.autoplayNext !== false);
   const markersPending = markerRequest && ['idle', 'loading'].includes(skipStatus);
   const showNext = Boolean(session?.next && !nextDismissed && total && (ended ? autoplay : time >= creditsAt && (!postCredits || !inCredits)));
@@ -879,21 +876,27 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const v = video.current;
     if (resumeNextChecked.current || !session || !settings || !duration || waiting || !v || v.readyState < 2 || v.seeking || (markerRequest && ['idle', 'loading', 'error'].includes(skipStatus))) return;
     resumeNextChecked.current = true;
-    if (session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextCancelled && !nextDismissed && (!postCredits || !inCredits)) goNext();
-  }, [session, settings, duration, waiting, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextCancelled, nextDismissed, postCredits, inCredits, goNext]);
+    if (hasCredits && session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextCancelled && !nextDismissed && (!postCredits || !inCredits)) goNext();
+  }, [session, settings, duration, waiting, hasCredits, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextCancelled, nextDismissed, postCredits, inCredits, goNext]);
   useEffect(() => {
     if (!showEnd) return;
     void recommendOther();
     return () => randomRequest.current?.abort();
   }, [showEnd, recommendOther]);
   const delay = settings?.autoplayDelay ?? 5;
+  // Crossing EOF must not restart a countdown that began just before the end.
+  const atEnd = ended || video.current?.ended === true;
+  const canCountDown = showNext && autoplay && (!markersPending || atEnd) && !nextCancelled && (playing || atEnd) && !waiting && !panel && !sourcePicker;
   useEffect(() => {
-    if (!showNext || !autoplay || markersPending || nextCancelled || (!playing && !ended) || waiting || panel || sourcePicker) { setCountdown(null); return; }
+    if (!canCountDown) { setCountdown(null); return; }
     setCountdown(delay);
     const timer = setInterval(() => setCountdown(value => (value === null ? null : value - 1)), 1000);
     return () => clearInterval(timer);
-  }, [showNext, autoplay, markersPending, nextCancelled, playing, ended, waiting, panel, sourcePicker, delay]);
+  }, [canCountDown, delay]);
   useEffect(() => { if (countdown !== null && countdown <= 0) goNext(); }, [countdown, goNext]);
+  const cancelNextCountdown = () => {
+    if (showNext) { setNextCancelled(true); setCountdown(null); }
+  };
 
   const intro = markers;
   const inIntro = Boolean(intro?.introStart !== undefined && intro?.introEnd && time >= intro.introStart && time < intro.introEnd - 1);
@@ -922,6 +925,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const onRemote = (raw: Event) => {
       const event = raw as RemotePlayerEvent, key = event.detail.key;
       if (event.defaultPrevented) return;
+      if (key.startsWith('Arrow') || key === 'Enter' || key === 'Back') cancelNextCountdown();
       const inOffer = Boolean(active()?.closest(".translate-offer"));
       const handled = () => event.preventDefault();
       if (key.startsWith("Media")) {
@@ -972,6 +976,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       const v = video.current;
       if (!v) return;
       const key = event.key.toLowerCase();
+      if (key.startsWith('arrow')) cancelNextCountdown();
       if (root.current?.querySelector("dialog[open], [aria-modal='true']")) return;
       if (panel && key !== 'escape') return;
       const binding = keyboardShortcutKey(event);
@@ -1238,7 +1243,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       onDragOver={event => { if (canAddSubtitles && event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDraggingSubtitle(true); } }}
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingSubtitle(false); }}
       onDrop={event => { event.preventDefault(); setDraggingSubtitle(false); void addSubtitleFiles(Array.from(event.dataTransfer.files)); }}
-      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); if (showNext) { setNextCancelled(true); setCountdown(null); } } }}
+      onPointerDownCapture={cancelNextCountdown}
+      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); } }}
     >
       {session && <PluginScripts player={pluginPlayer} />}
       <input ref={subtitleInput} type="file" accept={SUBTITLE_FILES} multiple hidden aria-label="자막 파일 선택" onChange={event => { void addSubtitleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
@@ -1377,7 +1383,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                   {countdown !== null && <i className="next-countdown" style={{ animationDuration: `${delay}s` }} />}
                 </Button>
                 {inCredits && <Button variant="ghost" onClick={() => seekTo(creditsEnd)}>엔딩 건너뛰기</Button>}
-                <Button variant="ghost" onClick={() => setNextDismissed(true)}>크레딧 보기</Button>
+                {/* Name what dismissing leads to: the ending only when it is known, otherwise the rest of the video. */}
+                <Button variant="ghost" onClick={() => setNextDismissed(true)}>{ended ? "닫기" : inCredits ? "엔딩 보기" : "계속 보기"}</Button>
               </div>
             </div>
           </div>
