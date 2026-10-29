@@ -12,7 +12,8 @@
 .opt-action svg { color: var(--accent-strong); }
 .pf-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 12px; }
 .pf-block { display: grid; gap: 10px; }
-.pf-block:has(> .seg-fill) { min-width: 0; overflow-x: auto; }
+/* Choice rows stay on one line; the block is the width reference for shrinking speed labels. */
+.pf-block:has(> .seg-fill) { min-width: 0; overflow-x: auto; container-type: inline-size; }
 .pf-block:has(> .seg-fill) > .pf-label { position: sticky; left: 0; width: max-content; }
 .pf-label { color: var(--text-3); font-size: .84rem; font-weight: 650; }
 .pf-value { color: var(--text-2); font-size: .94rem; }
@@ -27,3 +28,5 @@
 .seg button.is-active { color: #0b0b0d; }
 .seg-fill { min-width: max-content; }
 .seg-fill button { padding: 0 4px; }
+/* Up to six choices (the speed row) shrink their labels to stay visible; longer rows keep their size and scroll sideways as before. */
+.seg-fill:not(:has(> :nth-child(7))) button { padding: 0 2px; font-size: min(.88rem, calc(((100cqi - 2 * var(--switch-inset)) / var(--segments) - 4px) / 3.0)); }

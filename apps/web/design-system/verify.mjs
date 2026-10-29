@@ -109,6 +109,10 @@ try {
     await quality.getByRole('radio', { name: '해상도 정보 없음', exact: true }).click();
     assert.equal(await qualityButtons.count(), 0);
     await quality.getByText('원본 화질 · 1080p', { exact: true }).waitFor();
+    const sheet = page.locator('[data-preview="sheet"]');
+    assert.equal(await sheet.locator('.sheet').evaluate(element => element.scrollHeight > element.clientHeight && getComputedStyle(element).overflowY === 'auto'), true, `short sheet scrolls at ${width}`);
+    await sheet.getByRole('button', { name: '이 폴더 추가', exact: true }).click();
+    await sheet.getByText('media 폴더를 추가했어요.', { exact: true }).waitFor();
     const schedule = page.frameLocator('iframe[title="요일별 신작 미리보기"]');
     await schedule.locator('.poster img').first().waitFor();
     assert.equal(await schedule.locator('#schedule-list').evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight <= element.clientHeight + 1), true, `schedule must scroll horizontally at ${width}`);
@@ -124,7 +128,7 @@ try {
     await page.getByText(`이동 경로: /search?q=${encodeURIComponent('새로운 모험')}`, {exact:true}).waitFor();
     assert.equal(await schedule.locator('body').evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `schedule overflow at ${width}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `pattern overflow at ${width}`);
-    results.push({ width, navigation: true, fields: true, select: true, segmented: true, dialogFocus: true, sourceDownload: true, patterns: true, playerShortcuts: true, playerQuality: true });
+    results.push({ width, navigation: true, fields: true, select: true, segmented: true, dialogFocus: true, sourceDownload: true, patterns: true, playerShortcuts: true, playerQuality: true, sheet: true });
     await context.close();
   }
   assert.deepEqual(errors, []);

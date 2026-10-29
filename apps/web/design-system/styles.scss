@@ -6,6 +6,12 @@
 
 .preview-player-frame { position: relative; display: grid; place-items: center; width: 100%; min-width: 0; min-height: 240px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-m); background: var(--surface-2); color: var(--text-3); }
 .preview-player-frame .player-boost { color: var(--text); }
+.preview-sheet-screen { display: grid; place-items: center; height: 520px; padding: var(--space-3); border-radius: var(--radius-m); background: var(--backdrop); }
+.preview-sheet-screen.is-short { height: 320px; }
+.preview-sheet-screen .sheet { max-height: 100%; animation: none; }
+.preview-sheet-list { flex: 1; min-height: 160px; margin: 0; padding: 0 var(--space-3); list-style: none; overflow: auto; }
+.preview-sheet-list li { padding: var(--space-3); border-radius: var(--radius-s); color: var(--text-2); }
+.preview-sheet-fields { padding: var(--space-4) var(--space-6); border-top: var(--border-width) solid var(--hairline); }
 .preview-player-panel { width: min(100%, 380px); border-radius: var(--radius-l); background: var(--surface-1); }
 .preview-shortcuts .settings-group, .preview-shortcuts .settings-card { display: grid; gap: var(--space-3); }
 .preview-shortcuts .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding-block: var(--space-2); border-bottom: var(--border-width) solid var(--hairline); }

@@ -67,6 +67,24 @@ export function ConfirmationPreview() {
   return <div className="preview-stack"><div className="preview-row"><Button icon={<Trash2 size={18} />} onClick={() => setOpen(true)}>선택 항목 삭제</Button><Button onClick={() => setRemoved(false)} disabled={!removed}>초기화</Button></div><p role="status" className="preview-status">{removed ? '미리보기 항목을 삭제했어요.' : '선택 항목 1개'}</p>{open && <ConfirmDialog title="선택한 항목을 삭제할까요?" confirmLabel="삭제" onClose={() => setOpen(false)} onConfirm={() => { setRemoved(true); setOpen(false); }}>미리보기에서만 적용됩니다.</ConfirmDialog>}</div>;
 }
 
+// The real .sheet styles inside a frame as tall as the sheet on a 667×320 landscape phone.
+export function SheetPreview() {
+  const [height, setHeight] = useState<'normal' | 'short'>('short');
+  const [name, setName] = useState(''), [picked, setPicked] = useState('');
+  return <div className="preview-stack">
+    <SegmentedControl label="시트 미리보기 화면" value={height} options={[{ value: 'normal', label: '보통 화면' }, { value: 'short', label: '낮은 가로 화면' }]} onChange={setHeight} />
+    <div className={`preview-sheet-screen${height === 'short' ? ' is-short' : ''}`}>
+      <section className="sheet" aria-label="폴더 선택 미리보기">
+        <header className="sheet-head"><h2>폴더 선택</h2></header>
+        <ul className="preview-sheet-list">{['애니', '드라마', '영화', '다큐멘터리', '예능', '기타'].map(item => <li key={item}>{item}</li>)}</ul>
+        <div className="preview-sheet-fields"><label className="field"><span>이름 (선택)</span><input className="input" value={name} placeholder="media" onChange={event => setName(event.target.value)} /></label></div>
+        <footer className="sheet-foot"><span className="sheet-path">/media</span><Button variant="primary" onClick={() => setPicked(name.trim() || 'media')}>이 폴더 추가</Button></footer>
+      </section>
+    </div>
+    <p role="status" className="preview-status">{picked ? `${picked} 폴더를 추가했어요.` : '낮은 화면에서는 시트를 스크롤해 확인 버튼까지 이동합니다.'}</p>
+  </div>;
+}
+
 export function FormPattern() {
   const id = useId(), input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(''), [error, setError] = useState(false), [saved, setSaved] = useState('');
