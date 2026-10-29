@@ -1022,7 +1022,7 @@ p.remote-status-body { display: flex; align-items: center; gap: 10px; }
 .batch-result a { color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; }
 .batch-result a:hover { color: var(--text); }
 .settings-hint code { color: var(--text-2); }
-.pf-location { grid-template-columns: minmax(0, 1fr) auto; }
+.pf-row.pf-location { grid-template-columns: minmax(0, 1fr) auto; }
 .pf-location b { display: block; font-size: .97rem; }
 .pf-location small { color: var(--text-3); font-size: .84rem; line-height: 1.45; }
 @media (max-width: 760px) {

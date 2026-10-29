@@ -93,6 +93,22 @@ try {
     await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).click();
     assert.equal(await playKey.innerText(), 'K');
     assert.equal(await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).isDisabled(), true);
+    const quality = page.locator('[data-preview="player-quality"]');
+    const qualityButtons = quality.getByRole('group', { name: '화질', exact: true }).getByRole('button');
+    assert.deepEqual(await qualityButtons.allInnerTexts(), ['자동', '1080p', '720p', '360p'], 'HLS quality hides unknown heights');
+    assert.equal(await quality.getByRole('button', { name: '자동', exact: true }).getAttribute('aria-pressed'), 'true');
+    await quality.getByRole('button', { name: '1080p', exact: true }).click();
+    assert.equal(await quality.getByRole('button', { name: '1080p', exact: true }).getAttribute('aria-pressed'), 'true');
+    await quality.getByText('화질 · 지금 1080p', { exact: true }).waitFor();
+    await quality.getByRole('radio', { name: '서버별 해상도', exact: true }).click();
+    assert.deepEqual(await qualityButtons.allInnerTexts(), ['1080p', '720p'], 'server qualities group equal heights');
+    await quality.getByRole('button', { name: '720p', exact: true }).click();
+    assert.equal(await quality.locator('.opt.is-active').innerText(), '서버 A\n720p', 'quality picks the first server with that height');
+    assert.equal(await quality.locator('.opt').nth(2).locator('small').count(), 0, 'labels that already show the height get no tag');
+    assert.equal(await quality.locator('.opt').nth(3).locator('small').count(), 0, 'servers without a height get no tag');
+    await quality.getByRole('radio', { name: '해상도 정보 없음', exact: true }).click();
+    assert.equal(await qualityButtons.count(), 0);
+    await quality.getByText('원본 화질 · 1080p', { exact: true }).waitFor();
     const schedule = page.frameLocator('iframe[title="요일별 신작 미리보기"]');
     await schedule.locator('.poster img').first().waitFor();
     assert.equal(await schedule.locator('#schedule-list').evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight <= element.clientHeight + 1), true, `schedule must scroll horizontally at ${width}`);
@@ -108,7 +124,7 @@ try {
     await page.getByText(`이동 경로: /search?q=${encodeURIComponent('새로운 모험')}`, {exact:true}).waitFor();
     assert.equal(await schedule.locator('body').evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `schedule overflow at ${width}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `pattern overflow at ${width}`);
-    results.push({ width, navigation: true, fields: true, select: true, segmented: true, dialogFocus: true, sourceDownload: true, patterns: true, playerShortcuts: true });
+    results.push({ width, navigation: true, fields: true, select: true, segmented: true, dialogFocus: true, sourceDownload: true, patterns: true, playerShortcuts: true, playerQuality: true });
     await context.close();
   }
   assert.deepEqual(errors, []);

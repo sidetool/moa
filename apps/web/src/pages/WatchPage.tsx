@@ -41,6 +41,7 @@ import { api, ApiError } from "../lib/api";
 const KIDS_RESTRICTED = "어린이 프로필에서는 볼 수 없는 작품이에요";
 import { clock, cx, episodeTitle } from "../lib/format";
 import { attach, detectCapabilities, compatibilityPlayback, setCompatibilityPlayback, SubtitleController, type EngineHandle } from "../player/playback/engine";
+import { QualityControl, ServerControl, preferredHeight } from "../player/playback/QualityControl";
 
 type Panel = null | "subs" | "settings" | "episodes";
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -63,6 +64,7 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
   const [audioTrackId, setAudioTrackId] = useState<string | undefined>();
   const resumeAt = useRef<number | null>(startOverride);
   const initialSession = useRef(true);
+  const failedStreams = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -86,12 +88,24 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
     };
   }, [episodeId, audioTrackId, streamId, compatible, attempt, location]);
 
-  const switchAudio = (id: string, at: number) => { resumeAt.current = at; setSession(null); setAudioTrackId(id); };
-  const switchStream = (id: string, at: number) => { resumeAt.current = at; setSession(null); setStreamId(id); };
-  const switchCompatibility = (value: boolean, at: number) => { resumeAt.current = at; setCompatibilityPlayback(value); setSession(null); setCompatible(value); };
-  const retry = (at: number) => { resumeAt.current = at; setSession(null); setAttempt(n => n + 1); };
-  const switchLocation = (value: PlaybackLocation, at: number) => { resumeAt.current = at; setSession(null); setStreamId(undefined); setAudioTrackId(undefined); setLocation(value); };
-  return { retry, session, error, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location, switchLocation };
+  const switchAudio = (id: string, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setSession(null); setAudioTrackId(id); };
+  const switchStream = (id: string, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setSession(null); setStreamId(id); };
+  const advanceStream = (at: number) => {
+    if (!session?.streams?.length) return false;
+    const current = session.streamId ?? '0';
+    failedStreams.current.add(current);
+    const index = session.streams.findIndex(stream => stream.id === current);
+    // A preferred resolution can start in the middle. Visit earlier candidates too, once each.
+    const candidates = [...session.streams.slice(index + 1), ...session.streams.slice(0, index)];
+    const next = candidates.find(stream => !failedStreams.current.has(stream.id));
+    if (!next) return false;
+    resumeAt.current = at; setSession(null); setStreamId(next.id);
+    return true;
+  };
+  const switchCompatibility = (value: boolean, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setCompatibilityPlayback(value); setSession(null); setCompatible(value); };
+  const retry = (at: number, recovering = false) => { if (!recovering) failedStreams.current.clear(); resumeAt.current = at; setSession(null); setAttempt(n => n + 1); };
+  const switchLocation = (value: PlaybackLocation, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setSession(null); setStreamId(undefined); setAudioTrackId(undefined); setLocation(value); };
+  return { retry, session, error, switchAudio, audioTrackId, switchStream, advanceStream, compatible, switchCompatibility, location, switchLocation };
 }
 
 /** Page zoom never helps while watching and turns double-tap seeks into zoom toggles. */
@@ -131,7 +145,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const canTranslate = admin || Boolean(account?.permissions?.includes('subtitles.translate'));
   const carried = useLocation().state as { subtitle?: SubtitleTrack } | null;
   const t = params.get("t");
-  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto", params.get("resume") === "1");
+  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, advanceStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto", params.get("resume") === "1");
   // Only asked when the viewer chose the source over a saved copy, to offer the way back.
   const savedCopy = useEpisodeDownload(episodeId, playbackLocation === "source").data?.saved;
   const changeLocation = (value: PlaybackLocation) => {
@@ -194,7 +208,26 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   useEffect(() => () => randomRequest.current?.abort(), []);
   const [levels, setLevels] = useState<Array<{ index: number; height: number }>>([]);
   const [level, setLevel] = useState(-1);
-  const sortedLevels = useMemo(() => [...levels].sort((a, b) => b.height - a.height), [levels]);
+  const [playingHeight, setPlayingHeight] = useState(0);
+  // Settings may arrive after attach; the engine applies a late default unless the viewer already picked one.
+  const defaultHeight = preferredHeight(settings?.preferredQuality);
+  const defaultHeightRef = useRef(defaultHeight);
+  defaultHeightRef.current = defaultHeight;
+  useEffect(() => {
+    const handle = engine.current;
+    if (!handle) return;
+    handle.setPreferredHeight(defaultHeight);
+    setLevel(handle.level());
+  }, [defaultHeight]);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    // HLS switches variants mid-play; the element reports each new frame size with "resize".
+    const update = () => setPlayingHeight(v.videoHeight);
+    update();
+    for (const event of ["loadedmetadata", "resize", "emptied"]) v.addEventListener(event, update);
+    return () => { for (const event of ["loadedmetadata", "resize", "emptied"]) v.removeEventListener(event, update); };
+  }, [session]);
   const [manualSubOffset, setSubOffset] = useState(0);
   const [autoAlignment, setAutoAlignment] = useState<{key:string;offset:number} | null>(null);
   const alignmentKey = `${session?.sessionId}:${subtitle?.id}`;
@@ -266,20 +299,20 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         advancedStream = true; runtimeRecoveries.current++;
         resumePlaying.current = v.readyState === 0 || !v.paused;
         setNotice("재생 연결을 복구하고 있습니다.");
-        retry(session.live ? 0 : v.currentTime || start);
+        retry(session.live ? 0 : v.currentTime || start, true);
         return;
       }
-      const next = session.streams?.[Number(session.streamId ?? 0) + 1];
-      if (next) {
+      if (advanceStream(session.live ? 0 : v.currentTime || start)) {
         advancedStream = true;
         setNotice("다른 재생 서버에 연결하고 있습니다.");
-        switchStream(next.id, session.live ? 0 : v.currentTime || start);
       } else setFatal(message);
     };
     failPlayback.current = onFailure;
-    attach(v, session, start, onFailure).then(handle => {
+    setLevels([]); setLevel(-1);
+    attach(v, session, start, onFailure, false, { preferredHeight: defaultHeightRef.current }).then(handle => {
       if (disposed) { handle.destroy(); return; }
       engine.current = handle;
+      handle.setPreferredHeight(defaultHeightRef.current);
       v.volume = volume;
       v.playbackRate = speed;
       const shouldPlay = resumePlaying.current !== false; resumePlaying.current = null;
@@ -1230,6 +1263,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const shown = scrub !== null ? scrub * total : remoteSeek ?? time;
 
   const episodes = useMemo(() => media.data?.seasons.flatMap(season => season.episodes) ?? [], [media.data]);
+  const switchServer = (id: string) => { setPanel(null); switchStream(id, live ? 0 : video.current?.currentTime || 0); };
   const playbackSource = [session?.saved ? '저장한 영상' : media.data?.provider?.name, session?.streams?.find(stream => stream.id === session.streamId)?.label].filter(Boolean).join(' · ');
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const error = sessionError ?? fatal;
@@ -1274,7 +1308,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
         onCanPlay={() => setWaiting(false)}
-        onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); }}
+        onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); setLevel(engine.current?.level() ?? -1); }}
         onTimeUpdate={event => {
           const v = event.currentTarget;
           setTime(v.currentTime);
@@ -1438,7 +1472,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               if (!v) return;
               const position = v.currentTime, playing = !v.paused;
               engine.current?.destroy(); engine.current = null;
-              engine.current = await attach(v, target ? { ...session, url: target.url, mime: target.mime as PlaybackSession['mime'] } : session, position, message => setNotice(message), Boolean(target));
+              engine.current = await attach(v, target ? { ...session, url: target.url, mime: target.mime as PlaybackSession['mime'] } : session, position, message => setNotice(message), Boolean(target), { preferredHeight: defaultHeightRef.current });
               setAirplayMedia(target);
               if (playing) await v.play().catch(() => {});
             }} />}
@@ -1601,25 +1635,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                   ))}
                 </div>
               </div>
-              <div className="pf-block">
-                <span className="pf-label">화질</span>
-                {levels.length > 1 ? (
-                  <div className="seg seg-fill" role="group" aria-label="화질" style={{ "--segments": sortedLevels.length + 1, "--selected": level === -1 ? 0 : sortedLevels.findIndex(item => item.index === level) + 1 } as React.CSSProperties}>
-                    <button className={cx(level === -1 && "is-active")} aria-pressed={level === -1} onClick={() => { setLevel(-1); engine.current?.setLevel(-1); }}>자동</button>
-                    {sortedLevels.map(item => (
-                      <button key={item.index} className={cx(level === item.index && "is-active")} aria-pressed={level === item.index} onClick={() => { setLevel(item.index); engine.current?.setLevel(item.index); }}>{item.height}p</button>
-                    ))}
-                  </div>
-                ) : <p className="pf-value">{session.mode === "transcode" ? "서버 변환 · 기기에 맞춰 재생 중" : "원본 화질"}</p>}
-              </div>
-              {!!session.streams?.length && session.streams.length > 1 && (
-                <div className="pf-block">
-                  <span className="pf-label">재생 서버</span>
-                  <div className="pf-list">
-                    {session.streams.map(stream => <button className={cx("opt", session.streamId === stream.id && "is-active")} key={stream.id} onClick={() => { if (session.streamId !== stream.id) { setPanel(null); switchStream(stream.id, live ? 0 : video.current?.currentTime || 0); } }}><Check size={18} className="opt-check" /><span>{stream.label}</span></button>)}
-                  </div>
-                </div>
-              )}
+              <QualityControl levels={levels} level={level} onLevel={index => { setLevel(index); engine.current?.setLevel(index); }}
+                streams={session.streams} streamId={session.streamId} onStream={switchServer}
+                playingHeight={playingHeight} transcode={session.mode === "transcode"} />
+              <ServerControl streams={session.streams} streamId={session.streamId} onStream={switchServer} />
               {!!session.streams?.length && (
                 <button className="panel-link" onClick={() => { setPanel(null); setSourcePicker(true); }}><Shuffle size={18} /><span>다른 소스 선택</span><ChevronRight size={18} /></button>
               )}

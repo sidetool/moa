@@ -3,6 +3,7 @@ import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleCon
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
 import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
+import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
 import { useId, useRef, useState } from 'react';
 import { Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { Button, ConfirmDialog, EmptyState, IconButton, NumberStepper, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
@@ -139,5 +140,28 @@ export function NextEpisodeLeadPattern() {
     <div className="preview-settings"><NextEpisodeLeadSetting value={lead} autoplay={autoplay} delay={5} save={save} /></div>
     <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="미리보기 다음 화 자동 재생" checked={autoplay} onChange={setAutoplay} /></div>
     <div className="preview-row"><span>저장 실패 재현</span><Toggle label="미리보기 저장 실패 재현" checked={fail} onChange={setFail} /></div>
+  </div>;
+}
+
+// Sample server names only; real labels come from each source extension.
+const QUALITY_CASES = {
+  hls: { levels: [{ index: 0, height: 360 }, { index: 1, height: 720 }, { index: 2, height: 1080 }, { index: 3, height: 0 }], streams: undefined },
+  servers: { levels: [], streams: [{ id: '0', label: '서버 A', height: 1080 }, { id: '1', label: '서버 A', height: 720 }, { id: '2', label: '서버 B · 720p', height: 720 }, { id: '3', label: '서버 C' }] },
+  single: { levels: [], streams: [{ id: '0', label: '서버 A' }, { id: '1', label: '서버 B' }] },
+} as const;
+
+export function PlayerQualityPreview() {
+  const [scenario, setScenario] = useState<keyof typeof QUALITY_CASES>('hls');
+  const [level, setLevel] = useState(-1), [streamId, setStreamId] = useState('0');
+  const { levels, streams } = QUALITY_CASES[scenario];
+  const stream = streams?.find(item => item.id === streamId);
+  const playing = scenario === 'hls' ? levels.find(item => item.index === level)?.height ?? 720 : stream && 'height' in stream ? stream.height : 1080;
+  return <div className="preview-stack">
+    <SegmentedControl label="화질 미리보기 상황" value={scenario} options={[{ value: 'hls', label: 'HLS 화질' }, { value: 'servers', label: '서버별 해상도' }, { value: 'single', label: '해상도 정보 없음' }]}
+      onChange={value => { setScenario(value); setLevel(-1); setStreamId('0'); }} />
+    <div className="preview-player-panel panel-form">
+      <QualityControl levels={levels} level={level} onLevel={setLevel} streams={streams} streamId={streamId} onStream={setStreamId} playingHeight={playing} transcode={false} />
+      <ServerControl streams={streams} streamId={streamId} onStream={setStreamId} />
+    </div>
   </div>;
 }

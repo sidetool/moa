@@ -319,6 +319,16 @@ export interface OnlineSubtitleSearch {
 
 export interface AudioTrack { id: string; label: string; lang?: string; default?: boolean }
 
+/** Highest known height within a target, otherwise the lowest available. Source order breaks ties. */
+export function preferredResolutionIndex(heights: readonly (number | undefined)[], target?: number): number | undefined {
+  if (!Number.isFinite(target) || target! <= 0) return;
+  const known = heights.map((height, index) => ({ height, index }))
+    .filter((item): item is { height: number; index: number } => Number.isFinite(item.height) && item.height! > 0)
+    .sort((a, b) => b.height - a.height || a.index - b.index);
+  return known.find(item => item.height <= target!)?.index
+    ?? known.find(item => item.height === known.at(-1)?.height)?.index;
+}
+
 export interface PlaybackSession {
   saved?: boolean;
   /** APK process must stay alive; client sends heartbeats while paused and can recreate an expired session once. */
@@ -339,7 +349,7 @@ export interface PlaybackSession {
   mime: "video/mp4" | "video/webm" | "application/vnd.apple.mpegurl";
   duration: number;
   live?: boolean;
-  streams?: Array<{ id: string; label: string }>;
+  streams?: Array<{ id: string; label: string; /** Explicit source resolution; server names such as HD-1 are not resolutions. */ height?: number }>;
   streamId?: string;
   startPosition: number;
   subtitles: SubtitleTrack[];
