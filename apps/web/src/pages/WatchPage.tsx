@@ -190,6 +190,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [subtitle, setSubtitle] = useState<SubtitleTrack | null>(carried?.subtitle ?? null);
   const [resumeChip, setResumeChip] = useState(false);
   const [nextDismissed, setNextDismissed] = useState(false);
+  const [nextCancelled, setNextCancelled] = useState(false);
   const resumeNextChecked = useRef(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ key: number; side: "left" | "right" | "center"; label: string } | null>(null);
@@ -288,7 +289,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     castProgress.current = null;
     let disposed = false;
     let advancedStream = false;
-    setFatal(null); setEnded(false); setNextDismissed(false); setCountdown(null); setWaiting(true);
+    setFatal(null); setEnded(false); setNextDismissed(false); setNextCancelled(false); setCountdown(null); setWaiting(true);
 
     const start = session.startPosition;
     // Home resume links carry ?t= too; an explicit positive position still offers restart.
@@ -908,8 +909,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const v = video.current;
     if (resumeNextChecked.current || !session || !settings || !duration || waiting || !v || v.readyState < 2 || v.seeking || (markerRequest && ['idle', 'loading', 'error'].includes(skipStatus))) return;
     resumeNextChecked.current = true;
-    if (hasCredits && session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextDismissed && (!postCredits || !inCredits)) goNext();
-  }, [session, settings, duration, waiting, hasCredits, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextDismissed, postCredits, inCredits, goNext]);
+    if (hasCredits && session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextCancelled && !nextDismissed && (!postCredits || !inCredits)) goNext();
+  }, [session, settings, duration, waiting, hasCredits, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextCancelled, nextDismissed, postCredits, inCredits, goNext]);
   useEffect(() => {
     if (!showEnd) return;
     void recommendOther();
@@ -918,7 +919,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const delay = settings?.autoplayDelay ?? 5;
   // Crossing EOF must not restart a countdown that began just before the end.
   const atEnd = ended || video.current?.ended === true;
-  const canCountDown = showNext && autoplay && (!markersPending || atEnd) && (playing || atEnd) && !waiting && !panel && !sourcePicker;
+  const canCountDown = showNext && autoplay && (!markersPending || atEnd) && !nextCancelled && (playing || atEnd) && !waiting && !panel && !sourcePicker;
   useEffect(() => {
     if (!canCountDown) { setCountdown(null); return; }
     setCountdown(delay);
@@ -926,7 +927,11 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     return () => clearInterval(timer);
   }, [canCountDown, delay]);
   useEffect(() => { if (countdown !== null && countdown <= 0) goNext(); }, [countdown, goNext]);
-  // Mouse movement, a tap or a direction key means "keep watching": the card and its countdown go at once.
+  // Mouse movement only stops the countdown; the card stays and autoplay stays off for this playback session, even at EOF.
+  const cancelNextCountdown = () => {
+    if (showNext) { setNextCancelled(true); setCountdown(null); }
+  };
+  // A tap, a direction key or the card's close button means "keep watching": the card and its countdown go at once.
   const dismissNext = () => {
     if (!showNext) return;
     setNextDismissed(true); setCountdown(null);
@@ -1290,7 +1295,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingSubtitle(false); }}
       onDrop={event => { event.preventDefault(); setDraggingSubtitle(false); void addSubtitleFiles(Array.from(event.dataTransfer.files)); }}
       onPointerDownCapture={onPlayerPointerDown}
-      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); dismissNext(); } }}
+      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); } }}
     >
       {session && <PluginScripts player={pluginPlayer} />}
       <input ref={subtitleInput} type="file" accept={SUBTITLE_FILES} multiple hidden aria-label="자막 파일 선택" onChange={event => { void addSubtitleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
