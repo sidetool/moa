@@ -110,6 +110,7 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
 
 /** Page zoom never helps while watching and turns double-tap seeks into zoom toggles. */
 const SKIP_VISIBLE_MS = 5000;
+const NEXT_IDLE_MS = 5000;
 
 function useNoPageZoom() {
   useEffect(() => {
@@ -157,11 +158,19 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
   const root = useRef<HTMLDivElement>(null);
   const active = () => (root.current?.ownerDocument ?? document).activeElement;
+  // Remote or keyboard focus choosing a next-card button; a clicked or tapped button keeps focus but is not choosing.
+  const choosingNext = () => {
+    const el = active();
+    if (!el?.closest(".next-card")) return false;
+    if (isRemoteMode()) return true;
+    try { return el.matches(":focus-visible"); } catch { return false; }
+  };
   const video = useRef<HTMLVideoElement>(null);
   const engine = useRef<EngineHandle | null>(null);
   const [airplayMedia, setAirplayMedia] = useState<CastMedia | null>(null);
   const subs = useRef<SubtitleController | null>(null);
   const hideTimer = useRef<number>(0);
+  const nextHideTimer = useRef<number>(0);
   const lastSaved = useRef(0);
   const castProgress = useRef<{ position: number; duration: number } | null>(null);
 
@@ -289,6 +298,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     castProgress.current = null;
     let disposed = false;
     let advancedStream = false;
+    window.clearTimeout(nextHideTimer.current);
     setFatal(null); setEnded(false); setNextDismissed(false); setNextCancelled(false); setCountdown(null); setWaiting(true);
 
     const start = session.startPosition;
@@ -725,14 +735,15 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     setChrome(true);
     window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
-      if (!video.current?.paused && !root.current?.querySelector(".player-panel, dialog[open]")) {
+      // Hidden controls take the card out of remote navigation, so they stay while a card button is being chosen.
+      if (!video.current?.paused && !root.current?.querySelector(".player-panel, dialog[open]") && !choosingNext()) {
         if (isRemoteMode() && root.current?.contains(active()) && !active()?.closest(".translate-offer")) (active() as HTMLElement).blur();
         setChrome(false);
       }
     }, isRemoteMode() ? 6000 : HIDE_AFTER);
   }, []);
   useLayoutEffect(() => { if (!playing || panel) { setChrome(true); window.clearTimeout(hideTimer.current); } else poke(); }, [playing, panel, poke]);
-  useEffect(() => () => window.clearTimeout(hideTimer.current), []);
+  useEffect(() => () => { window.clearTimeout(hideTimer.current); window.clearTimeout(nextHideTimer.current); }, []);
 
   /* ---------- actions ---------- */
   const togglePlay = useCallback(() => {
@@ -927,18 +938,26 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     return () => clearInterval(timer);
   }, [canCountDown, delay]);
   useEffect(() => { if (countdown !== null && countdown <= 0) goNext(); }, [countdown, goNext]);
-  // Mouse movement only stops the countdown; the card stays and autoplay stays off for this playback session, even at EOF.
-  const cancelNextCountdown = () => {
-    if (showNext) { setNextCancelled(true); setCountdown(null); }
+  // Mouse movement, a tap or a direction key stops the countdown for this playback session, even at EOF.
+  // The card stays until five quiet seconds pass; it waits longer while focus is choosing one of its buttons.
+  const armNextHide = () => {
+    window.clearTimeout(nextHideTimer.current);
+    nextHideTimer.current = window.setTimeout(() => { if (choosingNext()) armNextHide(); else setNextDismissed(true); }, NEXT_IDLE_MS);
   };
-  // A tap, a direction key or the card's close button means "keep watching": the card and its countdown go at once.
+  const cancelNextCountdown = () => {
+    if (!showNext) return;
+    setNextCancelled(true); setCountdown(null); armNextHide();
+  };
+  // Back, Escape and the card's close button close the card at once.
   const dismissNext = () => {
     if (!showNext) return;
+    window.clearTimeout(nextHideTimer.current);
     setNextDismissed(true); setCountdown(null);
   };
   const onPlayerPointerDown = (event: React.PointerEvent) => {
-    // Card buttons act on click; dismissing on pointerdown would unmount them first.
-    if (!(event.target as Element).closest('.next-card button')) dismissNext();
+    // Card buttons act on click; pressing one only restarts an already cancelled card's idle time, so it cannot close under the finger.
+    if (!(event.target as Element).closest('.next-card button')) cancelNextCountdown();
+    else if (nextCancelled) armNextHide();
   };
 
   const intro = markers;
@@ -973,7 +992,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       // Enter on a focused card button is left to its click.
       if (showNext && !panel && !sourcePicker && !inOffer) {
         if (key === "Back") { dismissNext(); handled(); return; }
-        if (key.startsWith("Arrow") || (key === "Enter" && !active()?.closest(".next-card"))) dismissNext();
+        if (key.startsWith("Arrow") || (key === "Enter" && !active()?.closest(".next-card"))) cancelNextCountdown();
+        else if (nextCancelled) armNextHide();
       }
       if (key.startsWith("Media")) {
         const v=video.current;
@@ -1026,7 +1046,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       if (root.current?.querySelector("dialog[open], [aria-modal='true']")) return;
       if (showNext && !panel) {
         if (key === 'escape') { event.preventDefault(); dismissNext(); return; }
-        if (key.startsWith('arrow')) dismissNext();
+        if (key.startsWith('arrow')) cancelNextCountdown();
       }
       if (panel && key !== 'escape') return;
       const binding = keyboardShortcutKey(event);
@@ -1058,6 +1078,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         }
       } else return;
       event.preventDefault(); poke();
+      if (showNext && nextCancelled) armNextHide();
     };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code !== 'Space' && event.key !== ' ' || holdOrigin.current !== 'space') return;
@@ -1423,7 +1444,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       {sourcePicker && <PlaybackSources episodeId={episodeId} position={live?0:video.current?.currentTime || time || session?.startPosition || 0} onClose={()=>setSourcePicker(false)} onPlay={(id,at,sameEpisode)=>{saveProgress(true); handingOff.current = sameEpisode && isTranslationTrack(subtitle) && translation.handoff(id); const carry = sameEpisode && (isTranslationTrack(subtitle) || subtitle?.source === 'upload'); const remembered = subtitlePreference(episodeId); if (carry) saveSubtitle(id, subtitle, remembered?.episodeId ?? episodeId); else if (sameEpisode && remembered === null) saveSubtitle(id, null); navigate(`/watch/${encodeURIComponent(id)}?t=${Math.max(0,Math.floor(at))}`, { state: carry ? { subtitle } : null });}}/>}
       <footer className="player-bottom">
         {showNext && session?.next && (
-          <div className="next-card" role="dialog" aria-label="다음 화">
+          <div className="next-card" role="dialog" aria-label="다음 화" onBlur={event => { if (nextCancelled && !event.currentTarget.contains(event.relatedTarget as Node | null)) armNextHide(); }}>
             <Artwork src={session.next.thumb} title={session.next.title} ratio="landscape" width={480} labelFallback={false} />
             <div className="next-card-body">
               <small>다음 화 · {session.next.label}</small>

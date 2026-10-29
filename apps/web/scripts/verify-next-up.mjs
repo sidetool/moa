@@ -23,20 +23,28 @@ try {
     { name: 'a countdown crossing EOF is not restarted', at: 1439.1, lead: 1, auto: true, crossesEnd: true },
     { name: 'AniSkip ending keeps early autoplay', at: 1321, markers: ending, auto: true },
     { name: 'AniSkip timing overrides an unmarked lead setting', at: 1321, lead: 30, markers: ending, auto: true },
-    { name: 'PC mouse movement cancels autoplay but keeps the card through idle and reentry', at: 1351, lead: 90, cancel: 'mouse', width: 1280 },
+    { name: 'PC mouse cancellation hides after five idle seconds and resets on activity', at: 1351, lead: 90, cancel: 'mouse', repeat: true, width: 1280 },
     { name: 'PC mouse cancellation persists through AniSkip reentry', at: 1321, markers: ending, cancel: 'mouse', width: 1280 },
-    { name: 'mobile tap cancels countdown', at: 1351, lead: 90, cancel: 'touch' },
-    { name: 'mobile card body tap dismisses the card', at: 1351, lead: 90, cancel: 'card' },
-    { name: 'TV Up immediately dismisses the card', at: 1351, lead: 90, cancel: 'remote', width: 1280 },
-    { name: 'TV Left dismisses the card while seeking', at: 1351, lead: 90, cancel: 'remoteLeft', width: 1280 },
+    { name: 'mobile tap cancellation hides after five idle seconds and resets on activity', at: 1351, lead: 90, cancel: 'touch', repeat: true },
+    { name: 'mobile card body tap cancels before hiding', at: 1351, lead: 90, cancel: 'card' },
+    { name: 'TV direction cancellation hides after five idle seconds and resets on activity', at: 1400, lead: 90, cancel: 'remoteLeft', repeat: true, width: 1280 },
+    { name: 'TV card focus preserves cancelled card and leaving starts five idle seconds', at: 1351, lead: 90, cancel: 'remoteFocus', delay: 20, width: 1280 },
+    { name: 'TV Left cancels while seeking and hides after inactivity', at: 1370, lead: 90, cancel: 'remoteLeft', width: 1280 },
+    { name: 'PC click cancels before hiding', at: 1351, lead: 90, cancel: 'click', width: 1280 },
+    { name: 'PC arrow cancels before hiding', at: 1351, lead: 90, cancel: 'arrow', width: 1280 },
+    { name: 'PC Escape immediately dismisses the card', at: 1351, lead: 90, cancel: 'escape', width: 1280 },
+    { name: 'mobile cancellation at EOF still hides without advancing', at: 1439.6, cancel: 'touch', atEnd: true },
     { name: 'TV Back dismisses the card without leaving playback', at: 1351, lead: 90, cancel: 'remoteBack', width: 1280 },
     { name: 'PC focused next button still activates on Enter', at: 1351, lead: 90, action: 'next', keyboard: true, width: 1280 },
     { name: 'PC mouse can select next after cancelling the countdown', at: 1351, lead: 90, action: 'next', mouseCancel: true, width: 1280 },
+    { name: 'cancelled card timer cannot hide the next session card', at: 1351, lead: 90, action: 'next', mouseCancel: true, resetTimer: true, delay: 10, width: 1280 },
     { name: 'mobile next button still activates on tap', at: 1351, lead: 90, action: 'next' },
+    { name: 'mobile next button press refreshes the cancelled card timeout', at: 1351, lead: 90, action: 'next', touchHold: true },
     { name: 'TV focused next button still activates on Enter', at: 1351, lead: 90, action: 'next', remote: true, width: 1280 },
     { name: 'PC focused continue button dismisses the card', at: 1351, lead: 90, action: 'dismiss', keyboard: true, width: 1280 },
     { name: 'PC mouse can explicitly dismiss the cancelled card', at: 1351, lead: 90, action: 'dismiss', mouseCancel: true, width: 1280 },
     { name: 'mobile continue button dismisses the card', at: 1351, lead: 90, action: 'dismiss' },
+    { name: 'mobile continue button press refreshes the cancelled card timeout', at: 1351, lead: 90, action: 'dismiss', touchHold: true },
     { name: 'TV focused continue button dismisses the card', at: 1351, lead: 90, action: 'dismiss', remote: true, width: 1280 },
     { name: 'mobile close at EOF stays closed without autoplay', at: 1439.6, action: 'dismiss', atEnd: true },
     { name: 'EOF advances while marker lookup is pending', at: 1439.6, pending: true, auto: true },
@@ -59,7 +67,8 @@ try {
       const json = value => route.fulfill({ json: value });
       if (url.pathname === '/api/playback' && request.method() === 'POST') {
         const body = request.postDataJSON(); sessions.push(body.episodeId);
-        return json({ sessionId: `session-${sessions.length}`, episodeId: body.episodeId, episodeLabel: body.episodeId, mediaId: 'm', mediaTitle: 'Next-up fixture', mediaType: 'anime', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 1440, startPosition: body.startPosition ?? (body.episodeId === 'ep' ? scenario.resume ?? 0 : 0), resumeFromHistory: Boolean(scenario.resume), subtitles: [], audioTracks: [], next: body.episodeId === 'ep' ? { episodeId: 'ep2', label: '2화', title: '다음 회차' } : null, markers: scenario.markers });
+        const nextEpisode = body.episodeId === 'ep' ? 'ep2' : scenario.resetTimer && body.episodeId === 'ep2' ? 'ep3' : null;
+        return json({ sessionId: `session-${sessions.length}`, episodeId: body.episodeId, episodeLabel: body.episodeId, mediaId: 'm', mediaTitle: 'Next-up fixture', mediaType: 'anime', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 1440, startPosition: body.startPosition ?? (body.episodeId === 'ep' ? scenario.resume ?? 0 : 0), resumeFromHistory: Boolean(scenario.resume), subtitles: [], audioTracks: [], next: nextEpisode ? { episodeId: nextEpisode, label: nextEpisode, title: '다음 회차' } : null, markers: scenario.markers });
       }
       if (url.pathname === '/api/settings') return json({ autoFetchSubtitles: false, autoplayNext: !scenario.disabled, autoplayDelay: scenario.delay ?? 2, nextEpisodeLeadSeconds: scenario.lead ?? 0, defaultSubtitleLang: 'ko', subtitleSize: 'medium' });
       if (url.pathname === '/api/me') return json({ role: 'admin' });
@@ -87,18 +96,41 @@ try {
         await page.waitForURL('**/watch/ep2', scenario.crossesEnd ? { timeout: 2600 } : {});
       } else if (scenario.action) {
         await page.locator('.next-countdown').waitFor();
-        if (scenario.mouseCancel) {
-          await page.mouse.move(200, 200);
+        if (scenario.mouseCancel || scenario.touchHold) {
+          if (scenario.touchHold) await page.touchscreen.tap(180, 220);
+          else await page.mouse.move(200, 200);
           await page.locator('.next-countdown').waitFor({ state: 'detached' });
           await page.waitForTimeout(3500);
           assert.equal(await page.locator('.next-card').count(), 1, 'the cancelled card must remain available');
           assert.deepEqual(sessions, ['ep']);
         }
         const button = scenario.action === 'next' ? page.locator('.next-play') : page.locator('.next-card').getByRole('button', { name: scenario.atEnd ? '닫기' : '계속 보기', exact: true });
-        if (scenario.remote || scenario.keyboard) { await button.focus(); await page.keyboard.press('Enter'); }
+        if (scenario.touchHold) {
+          const bounds = await button.boundingBox();
+          assert.ok(bounds);
+          const cdp = await context.newCDPSession(page);
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2, id: 1 }] });
+          await page.waitForTimeout(2000);
+          assert.equal(await page.locator('.next-card').isVisible(), true, 'button pointerdown must refresh idle time before its click');
+          assert.deepEqual(sessions, ['ep']);
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+          await cdp.detach();
+        }
+        else if (scenario.remote || scenario.keyboard) { await button.focus(); await page.keyboard.press('Enter'); }
         else if (scenario.width) await button.click();
         else await button.tap();
-        if (scenario.action === 'next') await page.waitForURL('**/watch/ep2');
+        if (scenario.action === 'next') {
+          await page.waitForURL('**/watch/ep2');
+          if (scenario.resetTimer) {
+            await page.waitForFunction(() => { const video = document.querySelector('.player-video'); return document.querySelector('.player-title')?.textContent.includes('ep2') && video?.readyState >= 2 && !video.paused; });
+            await page.locator('.player-video').evaluate(video => { video.currentTime = 1351; });
+            await page.locator('.next-countdown').waitFor();
+            await page.waitForTimeout(5500);
+            assert.deepEqual(sessions, ['ep', 'ep2']);
+            assert.equal(await page.locator('.next-countdown').count(), 1, 'old hide timer must not affect the new session');
+            await page.waitForURL('**/watch/ep3');
+          }
+        }
         else {
           await page.waitForTimeout(2400);
           assert.deepEqual(sessions, ['ep']);
@@ -107,51 +139,78 @@ try {
         }
       } else if (scenario.cancel) {
         await page.locator('.next-countdown').waitFor();
-        if (scenario.cancel === 'mouse') await page.mouse.move(200, 200);
-        else if (scenario.cancel === 'touch') await page.touchscreen.tap(180, 220);
-        else if (scenario.cancel === 'card') await page.locator('.next-card b').tap();
-        else if (scenario.cancel === 'remoteBack') await page.keyboard.press('Backspace');
-        else if (scenario.cancel === 'remoteLeft') await page.keyboard.press('ArrowLeft');
-        else await page.keyboard.press('ArrowUp');
-        if (scenario.cancel === 'mouse') {
-          await page.locator('.next-countdown').waitFor({ state: 'detached', timeout: 750 });
-          await page.waitForTimeout(3500);
-          assert.equal(await page.locator('.player.is-idle').count(), 1, 'exercise the hidden-controls state');
-          assert.equal(await page.locator('.next-card').isVisible(), true, 'idle must not hide the cancelled card');
-          assert.deepEqual(sessions, ['ep']);
-          await page.locator('.player-video').evaluate((video, at) => { video.currentTime = at - 30; }, scenario.at);
-          await page.locator('.next-card').waitFor({ state: 'detached' });
-          await page.locator('.player-video').evaluate((video, at) => { video.currentTime = at; }, scenario.at);
-          await page.locator('.next-card').waitFor();
-          await page.waitForTimeout(2400);
-          assert.equal(await page.locator('.next-countdown').count(), 0, 'reentry must not restart cancelled autoplay');
-          assert.deepEqual(sessions, ['ep']);
-          assert.equal(await page.locator('.player-video').evaluate(video => video.paused), false);
-          await page.locator('.player-video').evaluate(video => { video.currentTime = video.duration - .3; });
-          await page.waitForFunction(() => document.querySelector('.player-video')?.ended);
-          await page.waitForTimeout(2400);
-          assert.equal(await page.locator('.next-card').isVisible(), true, 'beta.1 keeps the cancelled card at EOF');
-          assert.equal(await page.locator('.next-countdown').count(), 0);
-          assert.deepEqual(sessions, ['ep'], 'EOF must not restart cancelled autoplay');
-          await page.locator('.next-card').getByRole('button', { name: '닫기', exact: true }).click();
-          await page.getByRole('button', { name: '다시 보기', exact: true }).waitFor();
-          assert.equal(await page.locator('.next-card').count(), 0);
-        } else {
-          await page.locator('.next-card').waitFor({ state: 'detached', timeout: 750 });
-          await page.waitForTimeout(2400);
-          assert.deepEqual(sessions, ['ep']);
-          assert.equal(await page.locator('.next-countdown').count(), 0);
-          assert.equal(await page.locator('.next-card').count(), 0, 'cancelling must remove the card, not leave an inert prompt over the video');
-          await page.locator('.player-video').evaluate(video => { video.currentTime += 10; });
-          await page.waitForTimeout(600);
-          assert.equal(await page.locator('.next-card').count(), 0, 'the dismissed card must not reappear in the same ending');
-          assert.equal(await page.locator('.player-video').evaluate(video => video.paused), false, 'cancelling must leave playback running');
-          await page.locator('.player-video').evaluate(video => { video.currentTime = video.duration - .3; });
-          await page.getByRole('button', { name: '다시 보기', exact: true }).waitFor();
-          await page.waitForTimeout(2400);
-          assert.deepEqual(sessions, ['ep'], 'a cancelled transition must not restart at EOF');
-          assert.equal(await page.locator('.next-card').count(), 0);
+        const interact = async (repeat = false) => {
+          if (scenario.cancel === 'mouse') await page.mouse.move(repeat ? 220 : 200, 200);
+          else if (scenario.cancel === 'touch') await page.touchscreen.tap(180, 220);
+          else if (scenario.cancel === 'card') await page.locator('.next-card b').tap();
+          else if (scenario.cancel === 'click') await page.locator('.next-card b').click();
+          else if (scenario.cancel === 'escape') await page.keyboard.press('Escape');
+          else if (scenario.cancel === 'remoteBack') await page.keyboard.press('Backspace');
+          else if (scenario.cancel === 'remoteLeft') await page.keyboard.press('ArrowLeft');
+          else if (scenario.cancel === 'remoteFocus') await page.keyboard.press('ArrowDown');
+          else await page.keyboard.press('ArrowUp');
+        };
+        if (scenario.cancel === 'remoteFocus') {
+          // Enter the card using the real remote path from hidden controls.
+          await page.waitForFunction(() => document.querySelector('.player.is-idle'));
         }
+        await interact();
+        await page.locator('.next-countdown').waitFor({ state: 'detached', timeout: 750 });
+        if (['remoteBack', 'escape'].includes(scenario.cancel)) {
+          await page.locator('.next-card').waitFor({ state: 'detached', timeout: 750 });
+        } else if (scenario.cancel === 'remoteFocus') {
+          for (let move = 0; move < 3 && !(await page.locator('.next-card button:focus').count()); move++) {
+            await page.keyboard.press('ArrowDown');
+            await page.waitForTimeout(150);
+          }
+          await page.waitForFunction(() => document.activeElement?.closest('.next-card'));
+          await page.waitForTimeout(6500);
+          assert.equal(await page.locator('.next-card').isVisible(), true, 'card must survive both five-second idle and six-second chrome timers while choosing a button');
+          assert.equal(await page.locator('.next-card button:focus').count(), 1, 'remote focus must not be blurred by idle chrome');
+          assert.deepEqual(sessions, ['ep']);
+          // Move out using the remote, rather than forcing a DOM blur.
+          for (let move = 0; move < 3 && (await page.locator('.next-card button:focus').count()); move++) {
+            await page.keyboard.press('ArrowDown');
+            await page.waitForTimeout(150);
+          }
+          await page.waitForFunction(() => !document.activeElement?.closest('.next-card'));
+          const leftAt = Date.now();
+          await page.waitForTimeout(3500);
+          assert.equal(await page.locator('.next-card').isVisible(), true, 'focus leaving grants a fresh idle period');
+          await page.locator('.next-card').waitFor({ state: 'detached', timeout: 2500 });
+          assert.ok(Date.now() - leftAt >= 4700, 'focus leaving must not shorten the five-second timeout');
+        } else {
+          let lastInteraction = Date.now();
+          await page.waitForTimeout(3500);
+          assert.equal(await page.locator('.next-card').isVisible(), true, 'cancelling must leave the card available for five seconds');
+          assert.equal(await page.locator('.next-countdown').count(), 0);
+          assert.deepEqual(sessions, ['ep']);
+          if (scenario.repeat) {
+            await interact(true);
+            lastInteraction = Date.now();
+            await page.waitForTimeout(3500);
+            assert.equal(await page.locator('.next-card').isVisible(), true, 'new input restarts the idle timeout without restarting autoplay');
+            assert.equal(await page.locator('.next-countdown').count(), 0);
+          }
+          await page.locator('.next-card').waitFor({ state: 'detached', timeout: 2500 });
+          assert.ok(Date.now() - lastInteraction >= 4700, 'five-second idle timeout must not fire early');
+        }
+        assert.deepEqual(sessions, ['ep']);
+        assert.equal(await page.locator('.next-countdown').count(), 0);
+        if (!scenario.atEnd) {
+          assert.equal(await page.locator('.player-video').evaluate(video => video.paused), false, 'cancelling must leave playback running');
+          await page.locator('.player-video').evaluate((video, at) => { video.currentTime = at - 30; }, scenario.at);
+          await page.waitForTimeout(300);
+          await page.locator('.player-video').evaluate((video, at) => { video.currentTime = at; }, scenario.at);
+          await page.waitForTimeout(2400);
+          assert.equal(await page.locator('.next-card').count(), 0, 'hidden card must not return on seeking into the same ending');
+          assert.deepEqual(sessions, ['ep'], 'seek reentry must not resume cancelled autoplay');
+          await page.locator('.player-video').evaluate(video => { video.currentTime = video.duration - .3; });
+        }
+        await page.getByRole('button', { name: '다시 보기', exact: true }).waitFor();
+        await page.waitForTimeout(2400);
+        assert.deepEqual(sessions, ['ep'], 'a cancelled transition must not restart at EOF');
+        assert.equal(await page.locator('.next-card').count(), 0);
       } else {
         await page.waitForTimeout(2400);
         assert.deepEqual(sessions, ['ep']);
@@ -166,6 +225,12 @@ try {
       }
       assert.deepEqual(errors, []);
       console.log(`PASS: ${scenario.name}`);
+    } catch (error) {
+      console.error('FAILED:', scenario.name, { url: page.url(), sessions, state: await page.evaluate(() => {
+        const video = document.querySelector('.player-video');
+        return { title: document.querySelector('.player-title')?.textContent, time: video?.currentTime, paused: video?.paused, ended: video?.ended, card: document.querySelector('.next-card')?.textContent, focus: document.activeElement?.className };
+      }).catch(() => null) });
+      throw error;
     } finally { releaseMarkers(); await context.close(); }
   }
 } finally { await browser.close(); await web.close(); }
