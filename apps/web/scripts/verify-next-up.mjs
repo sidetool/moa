@@ -30,9 +30,11 @@ try {
     { name: 'TV direction cancellation hides after five idle seconds and resets on activity', at: 1400, lead: 90, cancel: 'remoteLeft', repeat: true, width: 1280 },
     { name: 'TV card focus preserves cancelled card and leaving starts five idle seconds', at: 1351, lead: 90, cancel: 'remoteFocus', delay: 20, width: 1280 },
     { name: 'TV Left cancels while seeking and hides after inactivity', at: 1370, lead: 90, cancel: 'remoteLeft', width: 1280 },
+    { name: 'TV volume range direction cancels autoplay without stealing volume input', at: 1351, lead: 90, cancel: 'remoteVolume', width: 1280 },
     { name: 'PC click cancels before hiding', at: 1351, lead: 90, cancel: 'click', width: 1280 },
     { name: 'PC arrow cancels before hiding', at: 1351, lead: 90, cancel: 'arrow', width: 1280 },
     { name: 'PC Escape immediately dismisses the card', at: 1351, lead: 90, cancel: 'escape', width: 1280 },
+    { name: 'PC Escape on the volume range immediately dismisses the card', at: 1351, lead: 90, cancel: 'volumeEscape', width: 1280 },
     { name: 'mobile cancellation at EOF still hides without advancing', at: 1439.6, cancel: 'touch', atEnd: true },
     { name: 'TV Back dismisses the card without leaving playback', at: 1351, lead: 90, cancel: 'remoteBack', width: 1280 },
     { name: 'PC focused next button still activates on Enter', at: 1351, lead: 90, action: 'next', keyboard: true, width: 1280 },
@@ -40,11 +42,14 @@ try {
     { name: 'cancelled card timer cannot hide the next session card', at: 1351, lead: 90, action: 'next', mouseCancel: true, resetTimer: true, delay: 10, width: 1280 },
     { name: 'mobile next button still activates on tap', at: 1351, lead: 90, action: 'next' },
     { name: 'mobile next button press refreshes the cancelled card timeout', at: 1351, lead: 90, action: 'next', touchHold: true },
+    { name: 'mobile next button press takes priority over the autoplay deadline', at: 1351, lead: 90, action: 'next', touchDeadline: true, delay: 5 },
     { name: 'TV focused next button still activates on Enter', at: 1351, lead: 90, action: 'next', remote: true, width: 1280 },
     { name: 'PC focused continue button dismisses the card', at: 1351, lead: 90, action: 'dismiss', keyboard: true, width: 1280 },
+    { name: 'keyboard Space press on continue takes priority over the autoplay deadline', at: 1351, lead: 90, action: 'dismiss', keyboardDeadline: true, delay: 5, width: 1280 },
     { name: 'PC mouse can explicitly dismiss the cancelled card', at: 1351, lead: 90, action: 'dismiss', mouseCancel: true, width: 1280 },
     { name: 'mobile continue button dismisses the card', at: 1351, lead: 90, action: 'dismiss' },
     { name: 'mobile continue button press refreshes the cancelled card timeout', at: 1351, lead: 90, action: 'dismiss', touchHold: true },
+    { name: 'mobile continue button press takes priority over the autoplay deadline', at: 1351, lead: 90, action: 'dismiss', touchDeadline: true, delay: 5 },
     { name: 'TV focused continue button dismisses the card', at: 1351, lead: 90, action: 'dismiss', remote: true, width: 1280 },
     { name: 'mobile close at EOF stays closed without autoplay', at: 1439.6, action: 'dismiss', atEnd: true },
     { name: 'EOF advances while marker lookup is pending', at: 1439.6, pending: true, auto: true },
@@ -85,6 +90,19 @@ try {
     try {
       await page.goto(`${base}/watch/ep${scenario.resume ? '' : '?t=0'}`);
       await page.waitForFunction(() => { const video = document.querySelector('.player-video'); return video?.readyState >= 2 && !video.paused; });
+      if (scenario.cancel === 'volumeEscape') {
+        for (let move = 0; move < 25 && !(await page.locator('.volume input:focus').count()); move++) await page.keyboard.press('Tab');
+        assert.equal(await page.locator('.volume input:focus').count(), 1, 'actual Tab navigation must reach volume');
+      }
+      if (scenario.cancel === 'remoteVolume') {
+        await page.locator('.center-play:focus').waitFor({ state: 'attached' });
+        for (const key of ['ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowDown', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight']) {
+          await page.keyboard.press(key);
+          await page.waitForTimeout(100);
+          if (await page.locator('.volume input:focus').count()) break;
+        }
+        assert.equal(await page.locator('.volume input:focus').count(), 1, 'real remote navigation must reach volume before the card appears');
+      }
       if (scenario.at) await page.locator('.player-video').evaluate((video, at) => { video.currentTime = at; }, scenario.at);
       if (scenario.auto) {
         if (!scenario.pending) {
@@ -105,14 +123,27 @@ try {
           assert.deepEqual(sessions, ['ep']);
         }
         const button = scenario.action === 'next' ? page.locator('.next-play') : page.locator('.next-card').getByRole('button', { name: scenario.atEnd ? '닫기' : '계속 보기', exact: true });
-        if (scenario.touchHold) {
+        if (scenario.keyboardDeadline) {
+          for (let move = 0; move < 25 && !(await button.evaluate(element => element === document.activeElement)); move++) await page.keyboard.press('Tab');
+          assert.equal(await button.evaluate(element => element.matches(':focus-visible')), true, 'actual Tab navigation must reach continue');
+          await page.waitForFunction(() => document.querySelector('.next-play')?.textContent.includes('1초'));
+          await page.keyboard.down('Space');
+          await page.waitForTimeout(1400);
+          assert.deepEqual(sessions, ['ep'], 'a held Space must prevent autoplay before its click on release');
+          assert.equal(await page.locator('.next-card').isVisible(), true);
+          assert.equal(await page.locator('.next-countdown').count(), 0);
+          await page.keyboard.up('Space');
+        }
+        else if (scenario.touchHold || scenario.touchDeadline) {
+          if (scenario.touchDeadline) await page.waitForFunction(() => document.querySelector('.next-play')?.textContent.includes('1초'));
           const bounds = await button.boundingBox();
           assert.ok(bounds);
           const cdp = await context.newCDPSession(page);
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2, id: 1 }] });
-          await page.waitForTimeout(2000);
+          await page.waitForTimeout(scenario.touchDeadline ? 1400 : 2000);
           assert.equal(await page.locator('.next-card').isVisible(), true, 'button pointerdown must refresh idle time before its click');
-          assert.deepEqual(sessions, ['ep']);
+          assert.deepEqual(sessions, ['ep'], 'autoplay must not take priority over an ongoing button press');
+          assert.equal(await page.locator('.next-countdown').count(), 0);
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
           await cdp.detach();
         }
@@ -144,9 +175,16 @@ try {
           else if (scenario.cancel === 'touch') await page.touchscreen.tap(180, 220);
           else if (scenario.cancel === 'card') await page.locator('.next-card b').tap();
           else if (scenario.cancel === 'click') await page.locator('.next-card b').click();
-          else if (scenario.cancel === 'escape') await page.keyboard.press('Escape');
+          else if (scenario.cancel === 'escape' || scenario.cancel === 'volumeEscape') await page.keyboard.press('Escape');
           else if (scenario.cancel === 'remoteBack') await page.keyboard.press('Backspace');
           else if (scenario.cancel === 'remoteLeft') await page.keyboard.press('ArrowLeft');
+          else if (scenario.cancel === 'remoteVolume') {
+            const before = await page.locator('.player-video').evaluate(video => ({ volume: video.volume, time: video.currentTime }));
+            await page.keyboard.press('ArrowLeft');
+            const after = await page.locator('.player-video').evaluate(video => ({ volume: video.volume, time: video.currentTime }));
+            assert.ok(after.volume < before.volume, 'volume range must retain its native adjustment');
+            assert.ok(Math.abs(after.time - before.time) < 1, 'volume input must not also seek the video');
+          }
           else if (scenario.cancel === 'remoteFocus') await page.keyboard.press('ArrowDown');
           else await page.keyboard.press('ArrowUp');
         };
@@ -156,7 +194,7 @@ try {
         }
         await interact();
         await page.locator('.next-countdown').waitFor({ state: 'detached', timeout: 750 });
-        if (['remoteBack', 'escape'].includes(scenario.cancel)) {
+        if (['remoteBack', 'escape', 'volumeEscape'].includes(scenario.cancel)) {
           await page.locator('.next-card').waitFor({ state: 'detached', timeout: 750 });
         } else if (scenario.cancel === 'remoteFocus') {
           for (let move = 0; move < 3 && !(await page.locator('.next-card button:focus').count()); move++) {

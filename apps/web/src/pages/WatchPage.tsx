@@ -171,6 +171,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const subs = useRef<SubtitleController | null>(null);
   const hideTimer = useRef<number>(0);
   const nextHideTimer = useRef<number>(0);
+  const nextPress = useRef<AbortController | null>(null);
   const lastSaved = useRef(0);
   const castProgress = useRef<{ position: number; duration: number } | null>(null);
 
@@ -298,7 +299,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     castProgress.current = null;
     let disposed = false;
     let advancedStream = false;
-    window.clearTimeout(nextHideTimer.current);
+    window.clearTimeout(nextHideTimer.current); nextPress.current?.abort();
     setFatal(null); setEnded(false); setNextDismissed(false); setNextCancelled(false); setCountdown(null); setWaiting(true);
 
     const start = session.startPosition;
@@ -743,7 +744,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     }, isRemoteMode() ? 6000 : HIDE_AFTER);
   }, []);
   useLayoutEffect(() => { if (!playing || panel) { setChrome(true); window.clearTimeout(hideTimer.current); } else poke(); }, [playing, panel, poke]);
-  useEffect(() => () => { window.clearTimeout(hideTimer.current); window.clearTimeout(nextHideTimer.current); }, []);
+  useEffect(() => () => { window.clearTimeout(hideTimer.current); window.clearTimeout(nextHideTimer.current); nextPress.current?.abort(); }, []);
 
   /* ---------- actions ---------- */
   const togglePlay = useCallback(() => {
@@ -942,7 +943,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   // The card stays until five quiet seconds pass; it waits longer while focus is choosing one of its buttons.
   const armNextHide = () => {
     window.clearTimeout(nextHideTimer.current);
-    nextHideTimer.current = window.setTimeout(() => { if (choosingNext()) armNextHide(); else setNextDismissed(true); }, NEXT_IDLE_MS);
+    nextHideTimer.current = window.setTimeout(() => { if (choosingNext() || nextPress.current?.signal.aborted === false) armNextHide(); else setNextDismissed(true); }, NEXT_IDLE_MS);
   };
   const cancelNextCountdown = () => {
     if (!showNext) return;
@@ -955,9 +956,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     setNextDismissed(true); setCountdown(null);
   };
   const onPlayerPointerDown = (event: React.PointerEvent) => {
-    // Card buttons act on click; pressing one only restarts an already cancelled card's idle time, so it cannot close under the finger.
-    if (!(event.target as Element).closest('.next-card button')) cancelNextCountdown();
-    else if (nextCancelled) armNextHide();
+    // Pressing a card button stops autoplay too, but the button still acts on click; the card waits until it is released.
+    if ((event.target as Element).closest('.next-card button')) {
+      nextPress.current?.abort();
+      const press = nextPress.current = new AbortController(), view = (event.target as Element).ownerDocument.defaultView ?? window;
+      for (const type of ['pointerup', 'pointercancel', 'blur']) view.addEventListener(type, () => press.abort(), { signal: press.signal });
+    }
+    cancelNextCountdown();
   };
 
   const intro = markers;
@@ -1038,6 +1043,12 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
       if(sourcePicker) { if(event.key === "Escape") {event.preventDefault();setSourcePicker(false);} return; }
       const target = event.target as HTMLElement;
+      // A held Space on a card button clicks on release, and arrows on a player slider such as volume stay with it; both still stop autoplay.
+      const playerSlider = target.matches("input[type='range']") && root.current?.contains(target);
+      if (showNext && !panel) {
+        if (event.key === "Escape" && playerSlider) { event.preventDefault(); dismissNext(); return; }
+        if ((event.key === " " && target.closest(".next-card button")) || (event.key.startsWith("Arrow") && playerSlider)) cancelNextCountdown();
+      }
       if (target.closest("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === " " && (panel || target.closest("button, a, summary, [role='button'], [role='slider']") || root.current?.querySelector("dialog[open]"))) return;
       const v = video.current;
