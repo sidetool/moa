@@ -23,12 +23,12 @@ try {
     { name: 'a countdown crossing EOF is not restarted', at: 1439.1, lead: 1, auto: true, crossesEnd: true },
     { name: 'AniSkip ending keeps early autoplay', at: 1321, markers: ending, auto: true },
     { name: 'AniSkip timing overrides an unmarked lead setting', at: 1321, lead: 30, markers: ending, auto: true },
-    { name: 'PC mouse cancellation hides after five idle seconds and resets on activity', at: 1351, lead: 90, cancel: 'mouse', repeat: true, width: 1280 },
+    { name: 'PC mouse cancellation hides after three idle seconds and resets on activity', at: 1351, lead: 90, cancel: 'mouse', repeat: true, width: 1280 },
     { name: 'PC mouse cancellation persists through AniSkip reentry', at: 1321, markers: ending, cancel: 'mouse', width: 1280 },
-    { name: 'mobile tap cancellation hides after five idle seconds and resets on activity', at: 1351, lead: 90, cancel: 'touch', repeat: true },
+    { name: 'mobile tap cancellation hides after three idle seconds and resets on activity', at: 1351, lead: 90, cancel: 'touch', repeat: true },
     { name: 'mobile card body tap cancels before hiding', at: 1351, lead: 90, cancel: 'card' },
-    { name: 'TV direction cancellation hides after five idle seconds and resets on activity', at: 1400, lead: 90, cancel: 'remoteLeft', repeat: true, width: 1280 },
-    { name: 'TV card focus preserves cancelled card and leaving starts five idle seconds', at: 1351, lead: 90, cancel: 'remoteFocus', delay: 20, width: 1280 },
+    { name: 'TV direction cancellation hides after three idle seconds and resets on activity', at: 1400, lead: 90, cancel: 'remoteLeft', repeat: true, width: 1280 },
+    { name: 'TV card focus preserves cancelled card and leaving starts three idle seconds', at: 1351, lead: 90, cancel: 'remoteFocus', delay: 20, width: 1280 },
     { name: 'TV Left cancels while seeking and hides after inactivity', at: 1370, lead: 90, cancel: 'remoteLeft', width: 1280 },
     { name: 'TV volume range direction cancels autoplay without stealing volume input', at: 1351, lead: 90, cancel: 'remoteVolume', width: 1280 },
     { name: 'PC click cancels before hiding', at: 1351, lead: 90, cancel: 'click', width: 1280 },
@@ -118,7 +118,7 @@ try {
           if (scenario.touchHold) await page.touchscreen.tap(180, 220);
           else await page.mouse.move(200, 200);
           await page.locator('.next-countdown').waitFor({ state: 'detached' });
-          await page.waitForTimeout(3500);
+          await page.waitForTimeout(1800);
           assert.equal(await page.locator('.next-card').count(), 1, 'the cancelled card must remain available');
           assert.deepEqual(sessions, ['ep']);
         }
@@ -203,7 +203,7 @@ try {
           }
           await page.waitForFunction(() => document.activeElement?.closest('.next-card'));
           await page.waitForTimeout(6500);
-          assert.equal(await page.locator('.next-card').isVisible(), true, 'card must survive both five-second idle and six-second chrome timers while choosing a button');
+          assert.equal(await page.locator('.next-card').isVisible(), true, 'card must survive both three-second idle and six-second chrome timers while choosing a button');
           assert.equal(await page.locator('.next-card button:focus').count(), 1, 'remote focus must not be blurred by idle chrome');
           assert.deepEqual(sessions, ['ep']);
           // Move out using the remote, rather than forcing a DOM blur.
@@ -213,25 +213,25 @@ try {
           }
           await page.waitForFunction(() => !document.activeElement?.closest('.next-card'));
           const leftAt = Date.now();
-          await page.waitForTimeout(3500);
+          await page.waitForTimeout(1800);
           assert.equal(await page.locator('.next-card').isVisible(), true, 'focus leaving grants a fresh idle period');
           await page.locator('.next-card').waitFor({ state: 'detached', timeout: 2500 });
-          assert.ok(Date.now() - leftAt >= 4700, 'focus leaving must not shorten the five-second timeout');
+          assert.ok(Date.now() - leftAt >= 2700, 'focus leaving must not shorten the three-second timeout');
         } else {
           let lastInteraction = Date.now();
-          await page.waitForTimeout(3500);
-          assert.equal(await page.locator('.next-card').isVisible(), true, 'cancelling must leave the card available for five seconds');
+          await page.waitForTimeout(1800);
+          assert.equal(await page.locator('.next-card').isVisible(), true, 'cancelling must leave the card available for three seconds');
           assert.equal(await page.locator('.next-countdown').count(), 0);
           assert.deepEqual(sessions, ['ep']);
           if (scenario.repeat) {
             await interact(true);
             lastInteraction = Date.now();
-            await page.waitForTimeout(3500);
+            await page.waitForTimeout(1800);
             assert.equal(await page.locator('.next-card').isVisible(), true, 'new input restarts the idle timeout without restarting autoplay');
             assert.equal(await page.locator('.next-countdown').count(), 0);
           }
           await page.locator('.next-card').waitFor({ state: 'detached', timeout: 2500 });
-          assert.ok(Date.now() - lastInteraction >= 4700, 'five-second idle timeout must not fire early');
+          assert.ok(Date.now() - lastInteraction >= 2700, 'three-second idle timeout must not fire early');
         }
         assert.deepEqual(sessions, ['ep']);
         assert.equal(await page.locator('.next-countdown').count(), 0);

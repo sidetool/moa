@@ -110,7 +110,7 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
 
 /** Page zoom never helps while watching and turns double-tap seeks into zoom toggles. */
 const SKIP_VISIBLE_MS = 5000;
-const NEXT_IDLE_MS = 5000;
+const NEXT_IDLE_MS = 3000;
 
 function useNoPageZoom() {
   useEffect(() => {
