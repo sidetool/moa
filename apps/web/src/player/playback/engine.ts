@@ -1,5 +1,6 @@
 import type Hls from "hls.js";
 import type { ClientCapabilities, PlaybackSession, SubtitleTrack } from "@moa/shared";
+import { preferredResolutionIndex } from "@moa/shared";
 
 export function compatibilityPlayback(): boolean {
   try { const saved = localStorage.getItem("moa.compatibility"); if (saved !== null) return saved === "1"; } catch { /* unavailable storage */ }
@@ -30,16 +31,20 @@ export interface EngineHandle {
   destroy(): void;
   /** HLS quality levels (empty for direct play). */
   levels(): Array<{ index: number; height: number }>;
+  /** Selected manual level, or -1 for adaptive/native playback. */
+  level(): number;
   setLevel(index: number): void;
+  /** A late profile preference never replaces a manual choice made in this session. */
+  setPreferredHeight(height?: number): void;
 }
 
 export type FatalHandler = (message: string) => void;
 
 /** Attach a playback session to a <video>. hls.js is loaded only when needed. */
-export async function attach(video: HTMLVideoElement, session: PlaybackSession, start: number, onFatal: FatalHandler, native = false): Promise<EngineHandle> {
+export async function attach(video: HTMLVideoElement, session: PlaybackSession, start: number, onFatal: FatalHandler, native = false, options: { preferredHeight?: number } = {}): Promise<EngineHandle> {
   const isHls = session.mime === "application/vnd.apple.mpegurl" || /\.m3u8(\?|$)/.test(session.url);
   const nativeError = () => onFatal("영상 데이터를 재생하지 못했습니다.");
-  const noop: EngineHandle = { destroy() { video.removeEventListener("error",nativeError); video.removeAttribute("src"); video.load(); }, levels: () => [], setLevel() {} };
+  const noop: EngineHandle = { destroy() { video.removeEventListener("error",nativeError); video.removeAttribute("src"); video.load(); }, levels: () => [], level: () => -1, setLevel() {}, setPreferredHeight() {} };
 
   if (native || !isHls || (!(await hlsSupported()) && video.canPlayType("application/vnd.apple.mpegurl"))) {
     video.addEventListener("error",nativeError);
@@ -57,6 +62,14 @@ export async function attach(video: HTMLVideoElement, session: PlaybackSession, 
     fragLoadPolicy: { default: { maxTimeToFirstByteMs: 20_000, maxLoadTimeMs: 60_000, timeoutRetry: { maxNumRetry: 4, retryDelayMs: 500, maxRetryDelayMs: 4000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 800, maxRetryDelayMs: 6000 } } }
   });
   let mediaRecoveries = 0;
+  let preferredHeight = options.preferredHeight, manualChoice = false, manifestReady = false;
+  const applyPreference = () => {
+    if (!manifestReady || manualChoice) return;
+    const index = preferredResolutionIndex(hls.levels.map(level => level.height), preferredHeight) ?? -1;
+    hls.startLevel = index;
+    hls.currentLevel = index;
+  };
+  hls.on(HlsClass.Events.MANIFEST_PARSED, () => { manifestReady = true; applyPreference(); });
   hls.on(HlsClass.Events.ERROR, (_event, data) => {
     if (!data.fatal) return;
     if (data.type === HlsClass.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) { mediaRecoveries++; hls.recoverMediaError(); return; }
@@ -68,7 +81,9 @@ export async function attach(video: HTMLVideoElement, session: PlaybackSession, 
   return {
     destroy() { hls.destroy(); },
     levels: () => hls.levels.map((level, index) => ({ index, height: level.height })),
-    setLevel(index) { hls.currentLevel = index; }
+    level: () => hls.manualLevel,
+    setLevel(index) { manualChoice = true; hls.currentLevel = index; },
+    setPreferredHeight(height) { if (preferredHeight !== height) { preferredHeight = height; applyPreference(); } }
   };
 }
 

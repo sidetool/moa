@@ -1,8 +1,12 @@
-import { DEFAULT_PLAYER_SHORTCUTS } from '@moa/shared';
+import { DEFAULT_PLAYER_SHORTCUTS, type Settings as ProfileSettings } from '@moa/shared';
+import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleControls';
+import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
+import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
+import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
 import { useId, useRef, useState } from 'react';
 import { Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
-import { Button, ConfirmDialog, EmptyState, IconButton, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
+import { Button, ConfirmDialog, EmptyState, IconButton, NumberStepper, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
 
 export function ButtonsPreview() {
   const [message, setMessage] = useState('');
@@ -63,6 +67,24 @@ export function ConfirmationPreview() {
   return <div className="preview-stack"><div className="preview-row"><Button icon={<Trash2 size={18} />} onClick={() => setOpen(true)}>선택 항목 삭제</Button><Button onClick={() => setRemoved(false)} disabled={!removed}>초기화</Button></div><p role="status" className="preview-status">{removed ? '미리보기 항목을 삭제했어요.' : '선택 항목 1개'}</p>{open && <ConfirmDialog title="선택한 항목을 삭제할까요?" confirmLabel="삭제" onClose={() => setOpen(false)} onConfirm={() => { setRemoved(true); setOpen(false); }}>미리보기에서만 적용됩니다.</ConfirmDialog>}</div>;
 }
 
+// The real .sheet styles inside a frame as tall as the sheet on a 667×320 landscape phone.
+export function SheetPreview() {
+  const [height, setHeight] = useState<'normal' | 'short'>('short');
+  const [name, setName] = useState(''), [picked, setPicked] = useState('');
+  return <div className="preview-stack">
+    <SegmentedControl label="시트 미리보기 화면" value={height} options={[{ value: 'normal', label: '보통 화면' }, { value: 'short', label: '낮은 가로 화면' }]} onChange={setHeight} />
+    <div className={`preview-sheet-screen${height === 'short' ? ' is-short' : ''}`}>
+      <section className="sheet" aria-label="폴더 선택 미리보기">
+        <header className="sheet-head"><h2>폴더 선택</h2></header>
+        <ul className="preview-sheet-list">{['애니', '드라마', '영화', '다큐멘터리', '예능', '기타'].map(item => <li key={item}>{item}</li>)}</ul>
+        <div className="preview-sheet-fields"><label className="field"><span>이름 (선택)</span><input className="input" value={name} placeholder="media" onChange={event => setName(event.target.value)} /></label></div>
+        <footer className="sheet-foot"><span className="sheet-path">/media</span><Button variant="primary" onClick={() => setPicked(name.trim() || 'media')}>이 폴더 추가</Button></footer>
+      </section>
+    </div>
+    <p role="status" className="preview-status">{picked ? `${picked} 폴더를 추가했어요.` : '낮은 화면에서는 시트를 스크롤해 확인 버튼까지 이동합니다.'}</p>
+  </div>;
+}
+
 export function FormPattern() {
   const id = useId(), input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(''), [error, setError] = useState(false), [saved, setSaved] = useState('');
@@ -102,4 +124,62 @@ export function PlayerFeedbackPreview() {
 export function PlayerShortcutsPreview() {
   const [shortcuts, setShortcuts] = useState(DEFAULT_PLAYER_SHORTCUTS);
   return <div className="preview-shortcuts"><PlayerShortcutSettings shortcuts={shortcuts} save={async value => { setShortcuts(value); }} /></div>;
+}
+
+export function SubtitleCompatibilityPreview() {
+  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
+  return <SubtitleStyleControls format="ass" settings={settings} save={patch => setSettings(previous => ({ ...previous, ...patch }))} />;
+}
+
+export function DownloadVisibilityPreview() {
+  const [enabled, setEnabled] = useState(false), [message, setMessage] = useState('');
+  const entry = { pending: false };
+  return <div className="preview-stack">
+    <div className="preview-row"><span>서버 다운로드 사용</span><Toggle label="미리보기 서버 다운로드 사용" checked={enabled} onChange={value => { setEnabled(value); setMessage(''); }} /></div>
+    <div className="preview-row"><span>1화</span>{enabled && <EpisodeDownloadButton title="1화" entry={entry} onStart={() => setMessage('회차 다운로드 선택됨')} />}</div>
+    {enabled && <MovieDownloadButton entry={entry} onStart={() => setMessage('영화 다운로드 선택됨')} />}
+    <p className="preview-status" role="status">{message || '이 설정은 미리보기에만 적용됩니다.'}</p>
+  </div>;
+}
+
+export function NumberStepperPreview() {
+  const [seconds, setSeconds] = useState(90), [note, setNote] = useState('');
+  return <div className="preview-stack">
+    <div className="preview-row"><span>안내 시점</span><NumberStepper label="미리보기 안내 시점" unit="초" min={0} max={600} step={10} value={seconds} onChange={(value, { clamped }) => { setSeconds(value); setNote(clamped ? '범위에 맞춰 조정됨' : ''); }} /></div>
+    <div className="preview-row"><span>사용 불가</span><NumberStepper label="사용할 수 없는 시점" unit="초" min={0} max={600} value={30} disabled onChange={() => {}} /></div>
+    <p className="preview-status" role="status">{seconds}초{note && ` · ${note}`}</p>
+  </div>;
+}
+
+export function NextEpisodeLeadPattern() {
+  const [lead, setLead] = useState(90), [autoplay, setAutoplay] = useState(true), [fail, setFail] = useState(false);
+  const save = (value: number) => new Promise<void>((resolve, reject) => setTimeout(() => { if (fail) reject(new Error('preview')); else { setLead(value); resolve(); } }, 300));
+  return <div className="preview-stack">
+    <div className="preview-settings"><NextEpisodeLeadSetting value={lead} autoplay={autoplay} delay={5} save={save} /></div>
+    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="미리보기 다음 화 자동 재생" checked={autoplay} onChange={setAutoplay} /></div>
+    <div className="preview-row"><span>저장 실패 재현</span><Toggle label="미리보기 저장 실패 재현" checked={fail} onChange={setFail} /></div>
+  </div>;
+}
+
+// Sample server names only; real labels come from each source extension.
+const QUALITY_CASES = {
+  hls: { levels: [{ index: 0, height: 360 }, { index: 1, height: 720 }, { index: 2, height: 1080 }, { index: 3, height: 0 }], streams: undefined },
+  servers: { levels: [], streams: [{ id: '0', label: '서버 A', height: 1080 }, { id: '1', label: '서버 A', height: 720 }, { id: '2', label: '서버 B · 720p', height: 720 }, { id: '3', label: '서버 C' }] },
+  single: { levels: [], streams: [{ id: '0', label: '서버 A' }, { id: '1', label: '서버 B' }] },
+} as const;
+
+export function PlayerQualityPreview() {
+  const [scenario, setScenario] = useState<keyof typeof QUALITY_CASES>('hls');
+  const [level, setLevel] = useState(-1), [streamId, setStreamId] = useState('0');
+  const { levels, streams } = QUALITY_CASES[scenario];
+  const stream = streams?.find(item => item.id === streamId);
+  const playing = scenario === 'hls' ? levels.find(item => item.index === level)?.height ?? 720 : stream && 'height' in stream ? stream.height : 1080;
+  return <div className="preview-stack">
+    <SegmentedControl label="화질 미리보기 상황" value={scenario} options={[{ value: 'hls', label: 'HLS 화질' }, { value: 'servers', label: '서버별 해상도' }, { value: 'single', label: '해상도 정보 없음' }]}
+      onChange={value => { setScenario(value); setLevel(-1); setStreamId('0'); }} />
+    <div className="preview-player-panel panel-form">
+      <QualityControl levels={levels} level={level} onLevel={setLevel} streams={streams} streamId={streamId} onStream={setStreamId} playingHeight={playing} transcode={false} />
+      <ServerControl streams={streams} streamId={streamId} onStream={setStreamId} />
+    </div>
+  </div>;
 }

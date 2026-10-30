@@ -41,6 +41,21 @@ segmented
 fields
 ```
 
+## 숫자 조절
+
+`NumberStepper`는 `value`, `onChange(value, { clamped })`, `min`, `max`, `label`과 선택적 `step`·`unit`·`disabled`·`invalid`·`aria-describedby`를 받습니다. 정수만 다루며 리모컨·터치에서는 −·+ 버튼으로, 키보드에서는 직접 입력과 위·아래 방향키·Page Up·Page Down·Home·End로 바꿉니다.
+
+입력은 Enter나 포커스를 옮길 때 반영하고 Escape로 되돌립니다. 범위를 벗어난 값은 가장 가까운 값으로 맞추고 `clamped`로 알리므로 기능 화면이 안내 문구를 보여 줍니다. 끝값에서도 버튼의 포커스를 유지하도록 `aria-disabled`를 사용합니다. 저장과 오류 표시는 기능 화면이 담당합니다.
+
+```tsx
+<NumberStepper label="다음 화 안내 시점" unit="초" min={0} max={600} step={10}
+  value={seconds} onChange={value => setSeconds(value)} />
+```
+
+```preview
+number-stepper
+```
+
 ## 드롭다운
 
 `Select`는 `options(value/label)`, `value`, `onChange`, 표준 버튼 속성을 받습니다. `multiple=true`에서는 값과 변경 결과가 문자열 배열입니다. `aria-label` 또는 `aria-labelledby`로 이름을 연결합니다.

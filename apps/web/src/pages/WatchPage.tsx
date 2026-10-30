@@ -1,4 +1,5 @@
 import { mergePlaybackMarkers } from '../player/playback/skip-markers';
+import { nextUpTiming } from '../player/playback/next-up';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
@@ -40,6 +41,7 @@ import { api, ApiError } from "../lib/api";
 const KIDS_RESTRICTED = "어린이 프로필에서는 볼 수 없는 작품이에요";
 import { clock, cx, episodeTitle } from "../lib/format";
 import { attach, detectCapabilities, compatibilityPlayback, setCompatibilityPlayback, SubtitleController, type EngineHandle } from "../player/playback/engine";
+import { QualityControl, ServerControl, preferredHeight } from "../player/playback/QualityControl";
 
 type Panel = null | "subs" | "settings" | "episodes";
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -62,6 +64,7 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
   const [audioTrackId, setAudioTrackId] = useState<string | undefined>();
   const resumeAt = useRef<number | null>(startOverride);
   const initialSession = useRef(true);
+  const failedStreams = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -85,16 +88,29 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
     };
   }, [episodeId, audioTrackId, streamId, compatible, attempt, location]);
 
-  const switchAudio = (id: string, at: number) => { resumeAt.current = at; setSession(null); setAudioTrackId(id); };
-  const switchStream = (id: string, at: number) => { resumeAt.current = at; setSession(null); setStreamId(id); };
-  const switchCompatibility = (value: boolean, at: number) => { resumeAt.current = at; setCompatibilityPlayback(value); setSession(null); setCompatible(value); };
-  const retry = (at: number) => { resumeAt.current = at; setSession(null); setAttempt(n => n + 1); };
-  const switchLocation = (value: PlaybackLocation, at: number) => { resumeAt.current = at; setSession(null); setStreamId(undefined); setAudioTrackId(undefined); setLocation(value); };
-  return { retry, session, error, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location, switchLocation };
+  const switchAudio = (id: string, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setSession(null); setAudioTrackId(id); };
+  const switchStream = (id: string, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setSession(null); setStreamId(id); };
+  const advanceStream = (at: number) => {
+    if (!session?.streams?.length) return false;
+    const current = session.streamId ?? '0';
+    failedStreams.current.add(current);
+    const index = session.streams.findIndex(stream => stream.id === current);
+    // A preferred resolution can start in the middle. Visit earlier candidates too, once each.
+    const candidates = [...session.streams.slice(index + 1), ...session.streams.slice(0, index)];
+    const next = candidates.find(stream => !failedStreams.current.has(stream.id));
+    if (!next) return false;
+    resumeAt.current = at; setSession(null); setStreamId(next.id);
+    return true;
+  };
+  const switchCompatibility = (value: boolean, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setCompatibilityPlayback(value); setSession(null); setCompatible(value); };
+  const retry = (at: number, recovering = false) => { if (!recovering) failedStreams.current.clear(); resumeAt.current = at; setSession(null); setAttempt(n => n + 1); };
+  const switchLocation = (value: PlaybackLocation, at: number) => { failedStreams.current.clear(); resumeAt.current = at; setSession(null); setStreamId(undefined); setAudioTrackId(undefined); setLocation(value); };
+  return { retry, session, error, switchAudio, audioTrackId, switchStream, advanceStream, compatible, switchCompatibility, location, switchLocation };
 }
 
 /** Page zoom never helps while watching and turns double-tap seeks into zoom toggles. */
 const SKIP_VISIBLE_MS = 5000;
+const NEXT_IDLE_MS = 3000;
 
 function useNoPageZoom() {
   useEffect(() => {
@@ -130,7 +146,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const canTranslate = admin || Boolean(account?.permissions?.includes('subtitles.translate'));
   const carried = useLocation().state as { subtitle?: SubtitleTrack } | null;
   const t = params.get("t");
-  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto", params.get("resume") === "1");
+  const { retry, session, error: sessionError, switchAudio, audioTrackId, switchStream, advanceStream, compatible, switchCompatibility, location: playbackLocation, switchLocation } = useSession(episodeId, t === null ? null : Number(t), params.get("location") === "source" ? "source" : "auto", params.get("resume") === "1");
   // Only asked when the viewer chose the source over a saved copy, to offer the way back.
   const savedCopy = useEpisodeDownload(episodeId, playbackLocation === "source").data?.saved;
   const changeLocation = (value: PlaybackLocation) => {
@@ -142,11 +158,20 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
   const root = useRef<HTMLDivElement>(null);
   const active = () => (root.current?.ownerDocument ?? document).activeElement;
+  // Remote or keyboard focus choosing a next-card button; a clicked or tapped button keeps focus but is not choosing.
+  const choosingNext = () => {
+    const el = active();
+    if (!el?.closest(".next-card")) return false;
+    if (isRemoteMode()) return true;
+    try { return el.matches(":focus-visible"); } catch { return false; }
+  };
   const video = useRef<HTMLVideoElement>(null);
   const engine = useRef<EngineHandle | null>(null);
   const [airplayMedia, setAirplayMedia] = useState<CastMedia | null>(null);
   const subs = useRef<SubtitleController | null>(null);
   const hideTimer = useRef<number>(0);
+  const nextHideTimer = useRef<number>(0);
+  const nextPress = useRef<AbortController | null>(null);
   const lastSaved = useRef(0);
   const castProgress = useRef<{ position: number; duration: number } | null>(null);
 
@@ -194,7 +219,26 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   useEffect(() => () => randomRequest.current?.abort(), []);
   const [levels, setLevels] = useState<Array<{ index: number; height: number }>>([]);
   const [level, setLevel] = useState(-1);
-  const sortedLevels = useMemo(() => [...levels].sort((a, b) => b.height - a.height), [levels]);
+  const [playingHeight, setPlayingHeight] = useState(0);
+  // Settings may arrive after attach; the engine applies a late default unless the viewer already picked one.
+  const defaultHeight = preferredHeight(settings?.preferredQuality);
+  const defaultHeightRef = useRef(defaultHeight);
+  defaultHeightRef.current = defaultHeight;
+  useEffect(() => {
+    const handle = engine.current;
+    if (!handle) return;
+    handle.setPreferredHeight(defaultHeight);
+    setLevel(handle.level());
+  }, [defaultHeight]);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    // HLS switches variants mid-play; the element reports each new frame size with "resize".
+    const update = () => setPlayingHeight(v.videoHeight);
+    update();
+    for (const event of ["loadedmetadata", "resize", "emptied"]) v.addEventListener(event, update);
+    return () => { for (const event of ["loadedmetadata", "resize", "emptied"]) v.removeEventListener(event, update); };
+  }, [session]);
   const [manualSubOffset, setSubOffset] = useState(0);
   const [autoAlignment, setAutoAlignment] = useState<{key:string;offset:number} | null>(null);
   const alignmentKey = `${session?.sessionId}:${subtitle?.id}`;
@@ -210,7 +254,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const subOutline = settings?.subtitleOutline ?? 'original';
   const subScale = settings?.subtitleScale ?? undefined;
   const subPadding = settings?.subtitlePadding ?? 6;
-  const subPreserveAss = settings?.subtitlePreserveAss !== false;
+  const subPreserveAss = settings?.subtitlePreserveAss === true;
   const originalSubAppearance = (subScale === undefined ? subSize === 'medium' : subScale === 100) && subBackground === 'original' && subShadow === 'original' && subOutline === 'original' && subHeight === 0;
   useEffect(() => { subs.current?.setHeight(subHeight); }, [subHeight, subtitle, session]);
   useEffect(() => { void subs.current?.setAppearance({ size: subSize, background: airplayMedia ? 'original' : subBackground, shadow: airplayMedia ? 'original' : subShadow, outline: airplayMedia ? 'original' : subOutline, scale: subScale, padding: subPadding, preserveAss: subPreserveAss }).catch(() => {}); }, [subSize, subBackground, subShadow, subOutline, subScale, subPadding, subPreserveAss, subtitle, session, airplayMedia]);
@@ -255,6 +299,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     castProgress.current = null;
     let disposed = false;
     let advancedStream = false;
+    window.clearTimeout(nextHideTimer.current); nextPress.current?.abort();
     setFatal(null); setEnded(false); setNextDismissed(false); setNextCancelled(false); setCountdown(null); setWaiting(true);
 
     const start = session.startPosition;
@@ -266,20 +311,20 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         advancedStream = true; runtimeRecoveries.current++;
         resumePlaying.current = v.readyState === 0 || !v.paused;
         setNotice("재생 연결을 복구하고 있습니다.");
-        retry(session.live ? 0 : v.currentTime || start);
+        retry(session.live ? 0 : v.currentTime || start, true);
         return;
       }
-      const next = session.streams?.[Number(session.streamId ?? 0) + 1];
-      if (next) {
+      if (advanceStream(session.live ? 0 : v.currentTime || start)) {
         advancedStream = true;
         setNotice("다른 재생 서버에 연결하고 있습니다.");
-        switchStream(next.id, session.live ? 0 : v.currentTime || start);
       } else setFatal(message);
     };
     failPlayback.current = onFailure;
-    attach(v, session, start, onFailure).then(handle => {
+    setLevels([]); setLevel(-1);
+    attach(v, session, start, onFailure, false, { preferredHeight: defaultHeightRef.current }).then(handle => {
       if (disposed) { handle.destroy(); return; }
       engine.current = handle;
+      handle.setPreferredHeight(defaultHeightRef.current);
       v.volume = volume;
       v.playbackRate = speed;
       const shouldPlay = resumePlaying.current !== false; resumePlaying.current = null;
@@ -691,14 +736,15 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     setChrome(true);
     window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
-      if (!video.current?.paused && !root.current?.querySelector(".player-panel, dialog[open]")) {
+      // Hidden controls take the card out of remote navigation, so they stay while a card button is being chosen.
+      if (!video.current?.paused && !root.current?.querySelector(".player-panel, dialog[open]") && !choosingNext()) {
         if (isRemoteMode() && root.current?.contains(active()) && !active()?.closest(".translate-offer")) (active() as HTMLElement).blur();
         setChrome(false);
       }
     }, isRemoteMode() ? 6000 : HIDE_AFTER);
   }, []);
   useLayoutEffect(() => { if (!playing || panel) { setChrome(true); window.clearTimeout(hideTimer.current); } else poke(); }, [playing, panel, poke]);
-  useEffect(() => () => window.clearTimeout(hideTimer.current), []);
+  useEffect(() => () => { window.clearTimeout(hideTimer.current); window.clearTimeout(nextHideTimer.current); nextPress.current?.abort(); }, []);
 
   /* ---------- actions ---------- */
   const togglePlay = useCallback(() => {
@@ -866,11 +912,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     { label: '엔딩', kind: 'credits', start: markers?.creditsStart, end: markers?.creditsEnd ?? total }
   ].filter((range): range is { label: string; kind: string; start: number; end: number } => Number.isFinite(range.start) && Number.isFinite(range.end))
     .map(range => ({ ...range, start: Math.max(0, Math.min(total, range.start)), end: Math.max(0, Math.min(total, range.end)) })).filter(range => range.end > range.start) : [];
-  const postCredits = Boolean(markers?.creditsEnd && total && total - markers.creditsEnd > 20);
-  const creditsEnd = Math.min(markers?.creditsEnd ?? total, total);
-  const fallbackCreditsAt = session?.mediaType === 'anime' && total >= 23 * 60 && total < 25 * 60 ? 22 * 60 : total ? Math.max(total - 30, total * .9) : Infinity;
-  const creditsAt = postCredits ? total - 15 : markers?.creditsStart ?? fallbackCreditsAt;
-  const inCredits = Boolean(markers?.creditsStart !== undefined && time >= markers.creditsStart && time < creditsEnd - .1);
+  const { hasCredits, creditsAt, creditsEnd, inCredits, postCredits } = nextUpTiming(total, time, markers, settings?.nextEpisodeLeadSeconds);
   const autoplay = Boolean(settings && settings.autoplayNext !== false);
   const markersPending = markerRequest && ['idle', 'loading'].includes(skipStatus);
   const showNext = Boolean(session?.next && !nextDismissed && total && (ended ? autoplay : time >= creditsAt && (!postCredits || !inCredits)));
@@ -879,21 +921,49 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const v = video.current;
     if (resumeNextChecked.current || !session || !settings || !duration || waiting || !v || v.readyState < 2 || v.seeking || (markerRequest && ['idle', 'loading', 'error'].includes(skipStatus))) return;
     resumeNextChecked.current = true;
-    if (session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextCancelled && !nextDismissed && (!postCredits || !inCredits)) goNext();
-  }, [session, settings, duration, waiting, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextCancelled, nextDismissed, postCredits, inCredits, goNext]);
+    if (hasCredits && session.resumeFromHistory && session.startPosition > 0 && session.startPosition >= creditsAt && v.currentTime >= creditsAt && autoplay && !nextCancelled && !nextDismissed && (!postCredits || !inCredits)) goNext();
+  }, [session, settings, duration, waiting, hasCredits, markers?.creditsStart, markerRequest, skipStatus, creditsAt, autoplay, nextCancelled, nextDismissed, postCredits, inCredits, goNext]);
   useEffect(() => {
     if (!showEnd) return;
     void recommendOther();
     return () => randomRequest.current?.abort();
   }, [showEnd, recommendOther]);
   const delay = settings?.autoplayDelay ?? 5;
+  // Crossing EOF must not restart a countdown that began just before the end.
+  const atEnd = ended || video.current?.ended === true;
+  const canCountDown = showNext && autoplay && (!markersPending || atEnd) && !nextCancelled && (playing || atEnd) && !waiting && !panel && !sourcePicker;
   useEffect(() => {
-    if (!showNext || !autoplay || markersPending || nextCancelled || (!playing && !ended) || waiting || panel || sourcePicker) { setCountdown(null); return; }
+    if (!canCountDown) { setCountdown(null); return; }
     setCountdown(delay);
     const timer = setInterval(() => setCountdown(value => (value === null ? null : value - 1)), 1000);
     return () => clearInterval(timer);
-  }, [showNext, autoplay, markersPending, nextCancelled, playing, ended, waiting, panel, sourcePicker, delay]);
+  }, [canCountDown, delay]);
   useEffect(() => { if (countdown !== null && countdown <= 0) goNext(); }, [countdown, goNext]);
+  // Mouse movement, a tap or a direction key stops the countdown for this playback session, even at EOF.
+  // The card stays until five quiet seconds pass; it waits longer while focus is choosing one of its buttons.
+  const armNextHide = () => {
+    window.clearTimeout(nextHideTimer.current);
+    nextHideTimer.current = window.setTimeout(() => { if (choosingNext() || nextPress.current?.signal.aborted === false) armNextHide(); else setNextDismissed(true); }, NEXT_IDLE_MS);
+  };
+  const cancelNextCountdown = () => {
+    if (!showNext) return;
+    setNextCancelled(true); setCountdown(null); armNextHide();
+  };
+  // Back, Escape and the card's close button close the card at once.
+  const dismissNext = () => {
+    if (!showNext) return;
+    window.clearTimeout(nextHideTimer.current);
+    setNextDismissed(true); setCountdown(null);
+  };
+  const onPlayerPointerDown = (event: React.PointerEvent) => {
+    // Pressing a card button stops autoplay too, but the button still acts on click; the card waits until it is released.
+    if ((event.target as Element).closest('.next-card button')) {
+      nextPress.current?.abort();
+      const press = nextPress.current = new AbortController(), view = (event.target as Element).ownerDocument.defaultView ?? window;
+      for (const type of ['pointerup', 'pointercancel', 'blur']) view.addEventListener(type, () => press.abort(), { signal: press.signal });
+    }
+    cancelNextCountdown();
+  };
 
   const intro = markers;
   const inIntro = Boolean(intro?.introStart !== undefined && intro?.introEnd && time >= intro.introStart && time < intro.introEnd - 1);
@@ -924,6 +994,12 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       if (event.defaultPrevented) return;
       const inOffer = Boolean(active()?.closest(".translate-offer"));
       const handled = () => event.preventDefault();
+      // Enter on a focused card button is left to its click.
+      if (showNext && !panel && !sourcePicker && !inOffer) {
+        if (key === "Back") { dismissNext(); handled(); return; }
+        if (key.startsWith("Arrow") || (key === "Enter" && !active()?.closest(".next-card"))) cancelNextCountdown();
+        else if (nextCancelled) armNextHide();
+      }
       if (key.startsWith("Media")) {
         const v=video.current;
         if (key === "MediaPlay") void v?.play().catch(()=>{});
@@ -967,12 +1043,22 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
       if(sourcePicker) { if(event.key === "Escape") {event.preventDefault();setSourcePicker(false);} return; }
       const target = event.target as HTMLElement;
+      // A held Space on a card button clicks on release, and arrows on a player slider such as volume stay with it; both still stop autoplay.
+      const playerSlider = target.matches("input[type='range']") && root.current?.contains(target);
+      if (showNext && !panel) {
+        if (event.key === "Escape" && playerSlider) { event.preventDefault(); dismissNext(); return; }
+        if ((event.key === " " && target.closest(".next-card button")) || (event.key.startsWith("Arrow") && playerSlider)) cancelNextCountdown();
+      }
       if (target.closest("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === " " && (panel || target.closest("button, a, summary, [role='button'], [role='slider']") || root.current?.querySelector("dialog[open]"))) return;
       const v = video.current;
       if (!v) return;
       const key = event.key.toLowerCase();
       if (root.current?.querySelector("dialog[open], [aria-modal='true']")) return;
+      if (showNext && !panel) {
+        if (key === 'escape') { event.preventDefault(); dismissNext(); return; }
+        if (key.startsWith('arrow')) cancelNextCountdown();
+      }
       if (panel && key !== 'escape') return;
       const binding = keyboardShortcutKey(event);
       const action = binding && Object.entries(prefs.playerShortcuts).find(([, value]) => value === binding)?.[0];
@@ -1003,6 +1089,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         }
       } else return;
       event.preventDefault(); poke();
+      if (showNext && nextCancelled) armNextHide();
     };
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.code !== 'Space' && event.key !== ' ' || holdOrigin.current !== 'space') return;
@@ -1213,6 +1300,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const shown = scrub !== null ? scrub * total : remoteSeek ?? time;
 
   const episodes = useMemo(() => media.data?.seasons.flatMap(season => season.episodes) ?? [], [media.data]);
+  const switchServer = (id: string) => { setPanel(null); switchStream(id, live ? 0 : video.current?.currentTime || 0); };
   const playbackSource = [session?.saved ? '저장한 영상' : media.data?.provider?.name, session?.streams?.find(stream => stream.id === session.streamId)?.label].filter(Boolean).join(' · ');
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const error = sessionError ?? fatal;
@@ -1238,7 +1326,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       onDragOver={event => { if (canAddSubtitles && event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; setDraggingSubtitle(true); } }}
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingSubtitle(false); }}
       onDrop={event => { event.preventDefault(); setDraggingSubtitle(false); void addSubtitleFiles(Array.from(event.dataTransfer.files)); }}
-      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); if (showNext) { setNextCancelled(true); setCountdown(null); } } }}
+      onPointerDownCapture={onPlayerPointerDown}
+      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); } }}
     >
       {session && <PluginScripts player={pluginPlayer} />}
       <input ref={subtitleInput} type="file" accept={SUBTITLE_FILES} multiple hidden aria-label="자막 파일 선택" onChange={event => { void addSubtitleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
@@ -1256,7 +1345,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
         onCanPlay={() => setWaiting(false)}
-        onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); }}
+        onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); setLevel(engine.current?.level() ?? -1); }}
         onTimeUpdate={event => {
           const v = event.currentTarget;
           setTime(v.currentTime);
@@ -1366,7 +1455,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       {sourcePicker && <PlaybackSources episodeId={episodeId} position={live?0:video.current?.currentTime || time || session?.startPosition || 0} onClose={()=>setSourcePicker(false)} onPlay={(id,at,sameEpisode)=>{saveProgress(true); handingOff.current = sameEpisode && isTranslationTrack(subtitle) && translation.handoff(id); const carry = sameEpisode && (isTranslationTrack(subtitle) || subtitle?.source === 'upload'); const remembered = subtitlePreference(episodeId); if (carry) saveSubtitle(id, subtitle, remembered?.episodeId ?? episodeId); else if (sameEpisode && remembered === null) saveSubtitle(id, null); navigate(`/watch/${encodeURIComponent(id)}?t=${Math.max(0,Math.floor(at))}`, { state: carry ? { subtitle } : null });}}/>}
       <footer className="player-bottom">
         {showNext && session?.next && (
-          <div className="next-card" role="dialog" aria-label="다음 화">
+          <div className="next-card" role="dialog" aria-label="다음 화" onBlur={event => { if (nextCancelled && !event.currentTarget.contains(event.relatedTarget as Node | null)) armNextHide(); }}>
             <Artwork src={session.next.thumb} title={session.next.title} ratio="landscape" width={480} labelFallback={false} />
             <div className="next-card-body">
               <small>다음 화 · {session.next.label}</small>
@@ -1377,7 +1466,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                   {countdown !== null && <i className="next-countdown" style={{ animationDuration: `${delay}s` }} />}
                 </Button>
                 {inCredits && <Button variant="ghost" onClick={() => seekTo(creditsEnd)}>엔딩 건너뛰기</Button>}
-                <Button variant="ghost" onClick={() => setNextDismissed(true)}>크레딧 보기</Button>
+                {/* Name what dismissing leads to: the ending only when it is known, otherwise the rest of the video. */}
+                <Button variant="ghost" onClick={dismissNext}>{ended ? "닫기" : inCredits ? "엔딩 보기" : "계속 보기"}</Button>
               </div>
             </div>
           </div>
@@ -1419,7 +1509,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               if (!v) return;
               const position = v.currentTime, playing = !v.paused;
               engine.current?.destroy(); engine.current = null;
-              engine.current = await attach(v, target ? { ...session, url: target.url, mime: target.mime as PlaybackSession['mime'] } : session, position, message => setNotice(message), Boolean(target));
+              engine.current = await attach(v, target ? { ...session, url: target.url, mime: target.mime as PlaybackSession['mime'] } : session, position, message => setNotice(message), Boolean(target), { preferredHeight: defaultHeightRef.current });
               setAirplayMedia(target);
               if (playing) await v.play().catch(() => {});
             }} />}
@@ -1582,25 +1672,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
                   ))}
                 </div>
               </div>
-              <div className="pf-block">
-                <span className="pf-label">화질</span>
-                {levels.length > 1 ? (
-                  <div className="seg seg-fill" role="group" aria-label="화질" style={{ "--segments": sortedLevels.length + 1, "--selected": level === -1 ? 0 : sortedLevels.findIndex(item => item.index === level) + 1 } as React.CSSProperties}>
-                    <button className={cx(level === -1 && "is-active")} aria-pressed={level === -1} onClick={() => { setLevel(-1); engine.current?.setLevel(-1); }}>자동</button>
-                    {sortedLevels.map(item => (
-                      <button key={item.index} className={cx(level === item.index && "is-active")} aria-pressed={level === item.index} onClick={() => { setLevel(item.index); engine.current?.setLevel(item.index); }}>{item.height}p</button>
-                    ))}
-                  </div>
-                ) : <p className="pf-value">{session.mode === "transcode" ? "서버 변환 · 기기에 맞춰 재생 중" : "원본 화질"}</p>}
-              </div>
-              {!!session.streams?.length && session.streams.length > 1 && (
-                <div className="pf-block">
-                  <span className="pf-label">재생 서버</span>
-                  <div className="pf-list">
-                    {session.streams.map(stream => <button className={cx("opt", session.streamId === stream.id && "is-active")} key={stream.id} onClick={() => { if (session.streamId !== stream.id) { setPanel(null); switchStream(stream.id, live ? 0 : video.current?.currentTime || 0); } }}><Check size={18} className="opt-check" /><span>{stream.label}</span></button>)}
-                  </div>
-                </div>
-              )}
+              <QualityControl levels={levels} level={level} onLevel={index => { setLevel(index); engine.current?.setLevel(index); }}
+                streams={session.streams} streamId={session.streamId} onStream={switchServer}
+                playingHeight={playingHeight} transcode={session.mode === "transcode"} />
+              <ServerControl streams={session.streams} streamId={session.streamId} onStream={switchServer} />
               {!!session.streams?.length && (
                 <button className="panel-link" onClick={() => { setPanel(null); setSourcePicker(true); }}><Shuffle size={18} /><span>다른 소스 선택</span><ChevronRight size={18} /></button>
               )}
