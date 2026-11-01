@@ -4,7 +4,7 @@
 
 ## 버튼
 
-`Button`은 `secondary`·`primary`·`ghost`·`accent`, `m`·`l` 크기, 아이콘, 표준 버튼 속성과 `ref`를 지원합니다. 최소 높이는 40px이며 `l`은 48px입니다. 폼에서는 `type`을 지정하고 저장 중에는 `disabled`·`aria-busy`를 사용합니다.
+`Button`은 `secondary`·`primary`·`ghost`·`accent`, `m`·`l` 크기, 아이콘, 표준 버튼 속성과 `ref`를 지원합니다. 최소 높이는 40px이며 `l`은 48px입니다. 폼에서는 `type`을 지정하고 저장 중에는 `disabled`·`aria-busy`를 사용합니다. 아이콘은 `icon`으로 넘기며, 문구 안에 넣은 아이콘도 문구와 같은 줄에 맞춥니다.
 
 `ButtonLink`는 앱 내부 경로로 이동합니다. `IconButton`에는 이름을 알리는 `label`이 필요합니다. 값 선택에는 `SegmentedControl`을 사용합니다.
 
@@ -39,6 +39,21 @@ segmented
 
 ```preview
 fields
+```
+
+## 숫자 조절
+
+`NumberStepper`는 `value`, `onChange(value, { clamped })`, `min`, `max`, `label`과 선택적 `step`·`unit`·`disabled`·`invalid`·`aria-describedby`를 받습니다. 정수만 다루며 리모컨·터치에서는 −·+ 버튼으로, 키보드에서는 직접 입력과 위·아래 방향키·Page Up·Page Down·Home·End로 바꿉니다.
+
+입력은 Enter나 포커스를 옮길 때 반영하고 Escape로 되돌립니다. 범위를 벗어난 값은 가장 가까운 값으로 맞추고 `clamped`로 알리므로 기능 화면이 안내 문구를 보여 줍니다. 끝값에서도 버튼의 포커스를 유지하도록 `aria-disabled`를 사용합니다. 숫자 칸은 보이는 자릿수만큼만 넓어져 숫자와 단위가 함께 가운데에 놓입니다. 저장과 오류 표시는 기능 화면이 담당합니다.
+
+```tsx
+<NumberStepper label="다음 화 안내 시점" unit="초" min={0} max={600} step={10}
+  value={seconds} onChange={value => setSeconds(value)} />
+```
+
+```preview
+number-stepper
 ```
 
 ## 드롭다운

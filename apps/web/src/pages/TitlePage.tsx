@@ -1,7 +1,7 @@
 import { TitleReviews } from '../features/title/TitleReviews';
 import { TitleSources } from '../features/title/TitleSources';
 import { InlinePlugins } from '../features/plugins/WebsitePlugins';
-import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Download, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
+import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { DownloadBatchResult, DownloadQuality, Episode, MediaDetail } from "@moa/shared";
@@ -22,7 +22,7 @@ import { useDevicePrefs } from "../lib/device-prefs";
 import { SeasonPicker, type SeasonChoice } from "../features/title/SeasonPicker";
 import { TYPE_LABEL, cx, fileSize, humanDuration, episodeTitle } from "../lib/format";
 
-type ServerSaves = { configured: boolean; entry: (episodeId: string) => DownloadEntry; start: (episodeId: string) => void; quality?: DownloadQuality };
+type ServerSaves = { entry: (episodeId: string) => DownloadEntry; start: (episodeId: string) => void; quality?: DownloadQuality };
 
 const watchPath = (episodeId: string, position?: number) =>
   `/watch/${encodeURIComponent(episodeId)}${position !== undefined ? `?t=${Math.floor(position)}` : ""}`;
@@ -133,7 +133,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
           {episodes.length > 1 && (
             <button className="icon-btn" aria-label={descending ? "1화부터 보기" : "최신화부터 보기"} title={descending ? "1화부터" : "최신화부터"} onClick={() => { const next = !descending; setDescending(next); if (long) setRange(next ? rangeCount - 1 : 0); }}><ArrowDownUp size={18} /></button>
           )}
-          {saves?.configured && episodes.length > 1 && (
+          {saves && episodes.length > 1 && (
             // Only this title's shown season; without season splits the server takes the whole title.
             <BatchDownload key={`${media.id}:${season.number}`} mediaId={media.id} season={media.seasons.length > 1 ? season.number : undefined}
               label={media.seasons.length > 1 ? `${season.title} 전체` : "전체 회차"} quality={saves.quality} onDone={setBatchResult} />
@@ -141,8 +141,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
           <SeasonPicker choices={choices} count={episodes.length} onPick={pick} />
         </div>
       </header>
-      {saves && !saves.configured && <p className="source-muted">회차를 다운로드하려면 <Link to="/settings#downloads">서버 저장소와 다운로드를 설정해 주세요.</Link></p>}
-      {batchResult && <BatchDownloadResultLine result={batchResult} />}
+      {saves && batchResult && <BatchDownloadResultLine result={batchResult} />}
       {long && (
         <div className="range-tabs no-scrollbar" role="tablist" aria-label="회차 구간">
           {ranges.map(i => {
@@ -154,8 +153,8 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
       )}
       <ol className="episode-list" ref={list}>
         {shown.map(episode => <EpisodeItem key={episode.id} episode={episode} highlight={episode.id === highlight}
-          save={saves && (saves.configured ? <EpisodeDownloadButton entry={saves.entry(episode.id)} title={episode.name ? `${episode.number}화 ${episode.name}` : episodeTitle(episode.title)} onStart={() => saves.start(episode.id)} /> : <Link to="/settings#downloads" className="icon-btn icon-btn-s episode-save" aria-label={`${episode.number}화 다운로드 설정`} title="다운로드 설정"><Download size={20} /></Link>)}
-          status={saves?.configured && <DownloadStatusLine entry={saves.entry(episode.id)} />} />)}
+          save={saves && <EpisodeDownloadButton entry={saves.entry(episode.id)} title={episode.name ? `${episode.number}화 ${episode.name}` : episodeTitle(episode.title)} onStart={() => saves.start(episode.id)} />}
+          status={saves && <DownloadStatusLine entry={saves.entry(episode.id)} />} />)}
       </ol>
     </section>
   );
@@ -225,8 +224,8 @@ export function TitlePage() {
   const resuming = Boolean(target && target.position > 30);
   const ratio = resuming && targetEpisode?.duration ? target!.position / targetEpisode.duration : 0;
   const jobs = jobsByEpisode(downloads.data?.jobs ?? []);
-  const saves: ServerSaves | undefined = admin && m.badge !== "LIVE" && sourceMedia && downloads.data
-    ? { configured: downloads.data.configured, quality: downloads.data.quality, entry: episodeId => oneTap.entry(episodeId, jobs.get(episodeId)), start: episodeId => void oneTap.start(episodeId) }
+  const saves: ServerSaves | undefined = admin && m.badge !== "LIVE" && sourceMedia && downloads.data?.configured
+    ? { quality: downloads.data.quality, entry: episodeId => oneTap.entry(episodeId, jobs.get(episodeId)), start: episodeId => void oneTap.start(episodeId) }
     : undefined;
   const meta = [
     m.year,
@@ -269,7 +268,7 @@ export function TitlePage() {
               aria-pressed={Boolean(m.inWatchlist)}
               onClick={() => toggle.mutate({ id: m.id, add: !m.inWatchlist })}
             >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
-            {isMovie && saves && episodes[0] && (saves.configured ? <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} /> : <ButtonLink to="/settings#downloads" variant="secondary" size="l" icon={<Download size={20} />}>다운로드 설정</ButtonLink>)}
+            {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}

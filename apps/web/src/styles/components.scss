@@ -352,7 +352,8 @@ html[data-tv] .password-toggle:focus { outline-offset: -3px !important; }
 }
 
 .sheet-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .66); backdrop-filter: blur(4px); animation: fade .2s; }
-.sheet { width: min(560px, 100%); max-height: min(720px, 90dvh); display: flex; flex-direction: column; border: 1px solid var(--hairline-strong); border-radius: var(--radius-l); background: var(--bg-raised); box-shadow: 0 30px 80px rgba(0, 0, 0, .6); animation: pop .22s var(--ease); }
+/* Sheets scroll as a whole when a short landscape screen cannot fit their fixed rows; scrolling bodies inside keep working. */
+.sheet { width: min(560px, 100%); max-height: min(720px, 90dvh); display: flex; flex-direction: column; border: 1px solid var(--hairline-strong); border-radius: var(--radius-l); background: var(--bg-raised); box-shadow: 0 30px 80px rgba(0, 0, 0, .6); overflow-y: auto; overscroll-behavior: contain; animation: pop .22s var(--ease); }
 .sheet-path { min-width: 0; color: var(--text-3); font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Phone ---------- */

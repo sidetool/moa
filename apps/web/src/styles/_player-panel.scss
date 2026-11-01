@@ -1,0 +1,32 @@
+/* Option rows, labelled blocks and segmented choices inside player panels; the design-system preview reuses them. */
+.opt { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: var(--radius-m); color: var(--text-2); font-size: .97rem; text-align: left; transition: background-color .12s, color .12s; }
+.opt > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opt > .spinner { flex: none; }
+.opt small { flex: none; padding: 2px 6px; border-radius: 4px; background: rgba(255, 255, 255, .1); color: var(--text-3); font-size: .68rem; font-weight: 700; }
+.opt:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+.opt:disabled { opacity: .6; }
+.opt .opt-check { visibility: hidden; color: #fff; }
+.opt.is-active { color: #fff; font-weight: 700; }
+.opt.is-active .opt-check { visibility: visible; }
+.opt-action { color: #fff; font-weight: 600; }
+.opt-action svg { color: var(--accent-strong); }
+.pf-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 12px; }
+.pf-block { display: grid; gap: 10px; }
+/* Choice rows stay on one line; the block is the width reference for shrinking speed labels. */
+.pf-block:has(> .seg-fill) { min-width: 0; overflow-x: auto; container-type: inline-size; }
+.pf-block:has(> .seg-fill) > .pf-label { position: sticky; left: 0; width: max-content; }
+.pf-label { color: var(--text-3); font-size: .84rem; font-weight: 650; }
+.pf-value { color: var(--text-2); font-size: .94rem; }
+.pf-list { margin: 0 -12px; }
+.pf-switch { grid-template-columns: minmax(0, 1fr) auto; }
+.pf-switch b { display: block; font-size: .97rem; }
+.pf-switch small { color: var(--text-3); font-size: .84rem; line-height: 1.45; }
+.seg { display: grid; border-radius: 10px; background: rgba(255, 255, 255, .07); }
+.seg::before { border-radius: 8px; }
+.seg button { min-width: 0; height: 34px; padding: 0 8px; border-radius: 8px; color: var(--text-2); font-size: .88rem; font-weight: 600; white-space: nowrap; transition: color .24s var(--ease); }
+.seg button:hover { color: #fff; }
+.seg button.is-active { color: #0b0b0d; }
+.seg-fill { min-width: max-content; }
+.seg-fill button { padding: 0 4px; }
+/* Up to six choices (the speed row) shrink their labels to stay visible; longer rows keep their size and scroll sideways as before. */
+.seg-fill:not(:has(> :nth-child(7))) button { padding: 0 2px; font-size: min(.88rem, calc(((100cqi - 2 * var(--switch-inset)) / var(--segments) - 4px) / 3.0)); }

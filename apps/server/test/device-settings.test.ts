@@ -17,7 +17,7 @@ test('device settings persist by account, profile and device with validated valu
     const get = (h = headers) => server.app.inject({ url: '/api/settings/device', headers: h });
     const patch = (settings: unknown, h = headers, migrate = false) => server.app.inject({ method: 'PATCH', url: '/api/settings/device', headers: h, payload: { settings, migrate } });
     assert.deepEqual((await get()).json(), { settings: null });
-    const saved = await patch({ subtitleScale: 127, subtitleShadow: 2.3, subtitlePreserveAss: false, autoSkip: true, seekStep: 30 });
+    const saved = await patch({ subtitleScale: 127, subtitleShadow: 2.3, autoSkip: true, seekStep: 30 });
     assert.equal(saved.statusCode, 200, saved.body);
     assert.equal(saved.json().settings.subtitleScale, 127);
     assert.equal(saved.json().settings.subtitlePreserveAss, false);
@@ -62,6 +62,14 @@ test('device settings persist by account, profile and device with validated valu
     assert.equal((await get(secondHeaders)).json().settings.holdSpeed, 2.5);
     assert.equal((await patch({ shortsScreenFit: null }, secondHeaders)).json().settings.shortsScreenFit, null);
     assert.deepEqual((await patch({ playerShortcuts: DEFAULT_PLAYER_SHORTCUTS })).json().settings.playerShortcuts, DEFAULT_PLAYER_SHORTCUTS);
+    // Older device records lack this flag: unrelated edits must preserve their ASS appearance.
+    server.db.run('UPDATE device_settings SET value=? WHERE profile_id=? AND device_id=?', JSON.stringify({ subtitleScale: 150, subtitleShadow: 3 }), owner, device);
+    const legacy = await patch({ seekStep: 15 });
+    assert.equal(legacy.json().settings.subtitlePreserveAss, false);
+    assert.equal(legacy.json().settings.subtitleScale, 150);
+    assert.equal(legacy.json().settings.subtitleShadow, 3);
+    assert.equal((await patch({ subtitlePreserveAss: true })).json().settings.subtitlePreserveAss, true);
+    assert.equal((await patch({ seekStep: 10 })).json().settings.subtitlePreserveAss, true);
     await server.app.inject({ method: 'DELETE', url: `/api/profiles/${owner}` });
     assert.equal(server.db.get('SELECT count(*) AS count FROM device_settings')!.count, 0);
   } finally { await server.app.close(); await rm(directory, { recursive: true, force: true }); }
@@ -73,4 +81,27 @@ test('player shortcut keys use physical codes and reject reserved or modified br
   assert.equal(keyboardShortcutKey({ ...key, shiftKey: true, code: 'BracketRight' }), 'Shift+BracketRight');
   for (const code of ['Space', 'Escape', 'Tab', 'Digit1', 'ArrowLeft', 'ArrowRight', 'F1', 'ShiftLeft']) assert.equal(keyboardShortcutKey({ ...key, code }), null);
   for (const flag of ['altKey', 'ctrlKey', 'metaKey', 'isComposing']) assert.equal(keyboardShortcutKey({ ...key, [flag]: true }), null);
+});
+
+test('unmarked next-episode lead time validates, persists and remains profile scoped', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'moa-next-up-settings-'));
+  let server = await buildApp({ dataDir: directory, mediaRoot: directory }, false);
+  try {
+    const first = (await server.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'First' } })).json().id;
+    const second = (await server.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Second' } })).json().id;
+    const get = (id = first) => server.app.inject({ url: '/api/settings', headers: { 'x-moa-profile': id } });
+    const patch = (nextEpisodeLeadSeconds: unknown) => server.app.inject({ method: 'PATCH', url: '/api/settings', headers: { 'x-moa-profile': first }, payload: { nextEpisodeLeadSeconds } });
+    assert.equal((await get()).json().nextEpisodeLeadSeconds, 0);
+    for (const value of [-1, 601, 1.5, '90', 'invalid', null]) assert.equal((await patch(value)).statusCode, 400);
+    for (const value of [0, 600, 90]) {
+      const saved = await patch(value);
+      assert.equal(saved.statusCode, 200);
+      assert.equal(saved.json().nextEpisodeLeadSeconds, value);
+    }
+    assert.equal((await get(second)).json().nextEpisodeLeadSeconds, 0);
+    await server.app.close();
+    server = await buildApp({ dataDir: directory, mediaRoot: directory }, false);
+    assert.equal((await get()).json().nextEpisodeLeadSeconds, 90);
+    assert.equal((await get(second)).json().nextEpisodeLeadSeconds, 0);
+  } finally { await server.app.close(); await rm(directory, { recursive: true, force: true }); }
 });

@@ -141,8 +141,8 @@ export function SubtitleStyleControls({ settings, save, variant = 'page', format
         <SubtitlePreview look={look} size={settings.subtitleScale == null ? settings.subtitleSize : undefined} />
         {anyChanged && <button type="button" className="sub-style-reset-all" onClick={() => change(DEFAULT)}>모두 기본값</button>}
       </div>}
-      <div className="sub-style-toolbar"><span>ASS 원본 효과 유지</span><Toggle label="ASS 원본 효과 유지" checked={settings.subtitlePreserveAss !== false} onChange={subtitlePreserveAss => save({ subtitlePreserveAss })} /></div>
-      <fieldset className="sub-style-custom" disabled={format === 'ass' && settings.subtitlePreserveAss !== false}>
+      <div className="sub-style-toolbar"><span>ASS 원본 효과 유지</span><Toggle label="ASS 원본 효과 유지" checked={settings.subtitlePreserveAss === true} onChange={subtitlePreserveAss => save({ subtitlePreserveAss })} /></div>
+      <fieldset className="sub-style-custom" disabled={format === 'ass' && settings.subtitlePreserveAss === true}>
       <div className="sub-style-toolbar"><span>조절 간격</span><Select aria-label="슬라이더 간격" value={String(step)} onChange={value => save({ subtitleStep: Number(value) as Settings['subtitleStep'] })} options={[{ value: '1', label: '1% · 0.1px' }, { value: '5', label: '5% · 0.5px' }, { value: '10', label: '10% · 1px' }]} /></div>
       <div className="sub-style-rows">
         {row('background', '배경', <SegmentedControl className="seg" label="자막 배경" value={look.background}

@@ -1,4 +1,5 @@
 import { parseInlineHls } from './inline-hls.js';
+import { preferredSourceIndex, sourceVideoHeight } from './quality.js';
 import { APK_RELAY } from '../sources/apk-bridge.js';
 import { playbackMediaType } from '../metadata/tmdb.js';
 import { parseEdl, edlPlaylist, edlMaster } from './edl.js';
@@ -126,7 +127,8 @@ export class RemotePlayback {
     const videos = await this.sources.videos(episodeId);
     try {
     if (!videos.length) throw new ApiFailure(502, 'no-streams');
-    const index = requestedStream === undefined ? 0 : Number(requestedStream);
+    const heights = videos.map(video => sourceVideoHeight(video.quality));
+    const index = requestedStream === undefined ? preferredSourceIndex(heights, this.db.settings(profile).preferredQuality) : Number(requestedStream);
     if (!Number.isInteger(index) || index < 0 || index >= videos.length) throw new ApiFailure(400, 'invalid-stream');
     const item: SourceVideo = videos[index];
     const detail = this.catalog.detail(mapping.media_id, profile), source = this.sources.row(mapping.source_id);
@@ -157,7 +159,7 @@ export class RemotePlayback {
     });
     const saved = this.online?.saved(episodeId) || [];
     subtitles.unshift(...saved.map((row,i) => ({ ...this.online!.track(row, `/api/playback/${id}/subtitles/${row.id}.${row.format}`), default: i === 0 })));
-    state.response = { ...(videos.apkLease ? { runtimeDependent: true } : {}), sessionId: id, episodeId, mediaId: detail.id, mediaTitle: detail.title, mediaType: playbackMediaType(this.db, detail.id, detail.type), episodeTitle: ep.title, ...(live || detail.type === 'movie' ? {} : { episodeLabel: `S${ep.season}:E${ep.number}` }), live, streams: videos.map((v,i) => ({ id: String(i), label: v.quality || `서버 ${i+1}` })), streamId: String(index), mode: 'direct', mime, url: item.url.startsWith('data:') ? this.inlineHls(id,state,item) : item.url.startsWith('edl://') ? this.edl(id,state,item) : this.asset(id,state,{ url: item.url, headers }), duration: ep.duration || 0, startPosition: live ? 0 : startOverride ?? (ep.progress?.completed ? 0 : ep.progress?.position || 0), subtitles, audioTracks: [], next: !live && next ? { episodeId: next.id, title: detail.title, label: next.title, thumb: next.thumb } : null };
+    state.response = { ...(videos.apkLease ? { runtimeDependent: true } : {}), sessionId: id, episodeId, mediaId: detail.id, mediaTitle: detail.title, mediaType: playbackMediaType(this.db, detail.id, detail.type), episodeTitle: ep.title, ...(live || detail.type === 'movie' ? {} : { episodeLabel: `S${ep.season}:E${ep.number}` }), live, streams: videos.map((v,i) => ({ id: String(i), label: v.quality || `서버 ${i+1}`, ...(heights[i] === undefined ? {} : { height: heights[i] }) })), streamId: String(index), mode: 'direct', mime, url: item.url.startsWith('data:') ? this.inlineHls(id,state,item) : item.url.startsWith('edl://') ? this.edl(id,state,item) : this.asset(id,state,{ url: item.url, headers }), duration: ep.duration || 0, startPosition: live ? 0 : startOverride ?? (ep.progress?.completed ? 0 : ep.progress?.position || 0), subtitles, audioTracks: [], next: !live && next ? { episodeId: next.id, title: detail.title, label: next.title, thumb: next.thumb } : null };
     this.sessions.set(id,state); return state.response;
     } catch(error) { this.sources.apk?.release(videos.apkLease); throw error; }
   }

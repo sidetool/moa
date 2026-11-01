@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { verificationPath } from './verification-path.mjs';
+import { iconBesideLabel, stepperCentered } from './alignment-checks.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 const server = await createServer({ configFile: fileURLToPath(new URL('../design-system/vite.config.ts', import.meta.url)), logLevel: 'error', server: { port: 0, strictPort: false } });
@@ -100,6 +101,20 @@ try {
       ...contrast(`${select}:not(:disabled) > span`),
       { selector: `${select}:disabled`, states: { disabled: true } },
     ]);
+    for (const button of await page.locator('[data-preview="buttons"] .btn:has(svg):not(.btn-icon-only)').all()) {
+      const placed = await iconBesideLabel(button);
+      assert.ok(placed.ok, `${scenario.name}: button icon beside label ${JSON.stringify(placed)}`);
+    }
+    // An icon passed inside the label instead of `icon` still stays on the label's line.
+    const misplaced = page.locator('[data-preview="buttons"] .btn-l:has(svg)');
+    await misplaced.evaluate(button => button.querySelector(':scope > span').prepend(button.querySelector(':scope > svg')));
+    const inLabel = await iconBesideLabel(misplaced);
+    assert.ok(inLabel.ok, `${scenario.name}: icon inside the label ${JSON.stringify(inLabel)}`);
+    await misplaced.evaluate(button => button.prepend(button.querySelector(':scope > span > svg')));
+    for (const stepper of await page.locator('[data-preview="number-stepper"] .number-stepper').all()) {
+      const centered = await stepperCentered(stepper);
+      assert.ok(centered.ok, `${scenario.name}: stepper value centered ${JSON.stringify(centered)}`);
+    }
     const trigger = page.getByRole('combobox', { name: '긴 항목', exact: true });
     await visibleFocus(page, trigger, `${scenario.name}:select-focus`);
     await audit(page, `${scenario.name}:focused`, [{ selector: `${select}[aria-label="긴 항목"]`, states: { focused: true } }]);

@@ -88,6 +88,7 @@ async function openSubs(page) {
   await page.getByRole('dialog', { name: '자막 및 음성', exact: true }).waitFor();
 }
 try {
+  if (!process.argv.includes('--subtitles-only')) {
   for (const width of [1280, 390, 320]) {
     const f = await fixture({ interactive: true, width, qualities: [240, 360, 480, 720, 1080, 1440, 2160] }), page = f.page;
     await page.getByRole('button', { name: '재생 설정', exact: true }).dispatchEvent('click');
@@ -380,6 +381,7 @@ try {
     assert.ok(f.calls.searches[1].includes('/e2/'));
     await f.close(); results.push('Fresh episode independently searches');
   }
+  }
   for (const width of [1280, 390, 320]) {
     const f = await fixture({ ass: true, width });
     await f.page.waitForFunction(width => document.querySelector('canvas.JASSUB')?.getBoundingClientRect().width === width, width);
@@ -401,11 +403,9 @@ try {
     await f.page.getByRole('button', { name: /^자막 설정/ }).click();
     const style = f.page.locator('.sub-style');
     const preserve = style.getByRole('switch', { name: 'ASS 원본 효과 유지' });
-    assert.equal(await preserve.getAttribute('aria-checked'), 'true');
-    assert.equal(await style.getByRole('slider', { name: '자막 크기', exact: true }).isDisabled(), true);
-    await preserve.click();
-    await f.page.waitForFunction(() => !document.querySelector('.sub-style-custom')?.disabled);
+    // Existing records omit the opt-in flag and must keep their custom appearance editable.
     assert.equal(await preserve.getAttribute('aria-checked'), 'false');
+    assert.equal(await style.getByRole('slider', { name: '자막 크기', exact: true }).isDisabled(), false);
     assert.equal(await style.locator('input[type=range]:visible').count(), 1);
     await f.page.screenshot({ path: verificationPath(`verification-subtitle-controls-compact-${width}.png`) });
     assert.equal(await style.getByRole('combobox', { name: '슬라이더 간격' }).innerText(), '5% · 0.5px');

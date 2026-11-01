@@ -319,6 +319,16 @@ export interface OnlineSubtitleSearch {
 
 export interface AudioTrack { id: string; label: string; lang?: string; default?: boolean }
 
+/** Highest known height within a target, otherwise the lowest available. Source order breaks ties. */
+export function preferredResolutionIndex(heights: readonly (number | undefined)[], target?: number): number | undefined {
+  if (!Number.isFinite(target) || target! <= 0) return;
+  const known = heights.map((height, index) => ({ height, index }))
+    .filter((item): item is { height: number; index: number } => Number.isFinite(item.height) && item.height! > 0)
+    .sort((a, b) => b.height - a.height || a.index - b.index);
+  return known.find(item => item.height <= target!)?.index
+    ?? known.find(item => item.height === known.at(-1)?.height)?.index;
+}
+
 export interface PlaybackSession {
   saved?: boolean;
   /** APK process must stay alive; client sends heartbeats while paused and can recreate an expired session once. */
@@ -339,7 +349,7 @@ export interface PlaybackSession {
   mime: "video/mp4" | "video/webm" | "application/vnd.apple.mpegurl";
   duration: number;
   live?: boolean;
-  streams?: Array<{ id: string; label: string }>;
+  streams?: Array<{ id: string; label: string; /** Explicit source resolution; server names such as HD-1 are not resolutions. */ height?: number }>;
   streamId?: string;
   startPosition: number;
   subtitles: SubtitleTrack[];
@@ -444,6 +454,8 @@ export interface Settings {
   autoplayNext: boolean;
   /** Seconds before the next episode starts automatically. */
   autoplayDelay: number;
+  /** Start the next-episode countdown this many seconds before an unmarked video ends. Zero waits for EOF. */
+  nextEpisodeLeadSeconds?: number;
   defaultSubtitleLang: string;
   subtitleSize: "small" | "medium" | "large" | "xlarge";
   subtitleScale?: number | null;
@@ -452,6 +464,7 @@ export interface Settings {
   subtitleOutline?: number | null;
   subtitleHeight?: number;
   subtitlePadding?: number;
+  /** Explicit opt-in; older records without the flag keep their custom ASS appearance. */
   subtitlePreserveAss?: boolean;
   subtitleStep?: 1 | 5 | 10;
   preferredQuality: "auto" | "1080" | "720" | "480";
@@ -521,7 +534,7 @@ export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | '
   playerShortcuts: PlayerShortcuts;
   fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; holdSpeed: 1.25 | 1.5 | 2 | 2.5 | 3; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: true, subtitleStep: 5 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: false, subtitleStep: 5 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];

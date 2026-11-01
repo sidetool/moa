@@ -253,7 +253,7 @@ function DefaultTabs({ tabs, sources }: { tabs: NavigationTab[]; sources: VideoS
       <small className="default-tabs-note">새로 가입한 사람이나 새로 만든 프로필이 처음 보는 홈 탭이에요. 이미 있는 프로필은 바뀌지 않아요.</small>
     </div>
     <div className="default-tabs-actions">
-      <Button disabled={save.isPending || same} onClick={() => save.mutate(tabs)}>{same ? <><Check size={16} />기본으로 지정됨</> : '이 구성을 기본으로'}</Button>
+      <Button disabled={save.isPending || same} icon={same ? <Check size={16} /> : undefined} onClick={() => save.mutate(tabs)}>{same ? '기본으로 지정됨' : '이 구성을 기본으로'}</Button>
       {nav && <button className="text-btn" disabled={save.isPending} onClick={() => save.mutate(null)}>자동으로 되돌리기</button>}
     </div>
     {save.isError && <p className="settings-error" role="alert">저장하지 못했어요. 다시 시도해 주세요.</p>}
