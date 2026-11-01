@@ -39,7 +39,7 @@ Pretendard Variable과 시스템 한글 글꼴을 사용합니다. 본문은 1re
 - 상태: `--success: #3fcf8e`, `--warning: #f5b84b`, `--danger: #ff5a6a`입니다.
 - 전환: `--motion-fast: .15s`, `--motion-normal: .24s`, `--motion-slow: .3s`입니다.
 
-`--selected`와 `--segments`는 `SegmentedControl`이 선택 위치와 항목 수에 맞춰 제공합니다. 문서 전용 `--docs-*` 값은 `apps/web/design-system/_document.scss`에서 관리합니다. `--docs-header-offset`은 실제 헤더 높이에 맞춰 갱신하며 투명도를 줄이는 환경에서는 불투명 배경을 사용합니다.
+`--selected`와 `--segments`는 `SegmentedControl`이 선택 위치와 항목 수에 맞춰 제공합니다. `--stepper-chars`는 `NumberStepper`가 보이는 자릿수에 맞춰 제공하며, 숫자 칸 폭은 `--stepper-digit`(숫자 한 자)과 `--stepper-caret`(입력 커서 여유)으로 계산합니다. 문서 전용 `--docs-*` 값은 `apps/web/design-system/_document.scss`에서 관리합니다. `--docs-header-offset`은 실제 헤더 높이에 맞춰 갱신하며 투명도를 줄이는 환경에서는 불투명 배경을 사용합니다.
 
 ## 적용 예제
 

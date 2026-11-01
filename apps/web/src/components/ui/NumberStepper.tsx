@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from "react";
+import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { Minus, Plus } from "lucide-react";
 import { cx } from "../../lib/format";
 
@@ -28,6 +28,7 @@ export function NumberStepper({ value, onChange, min, max, step = 1, label, unit
     else if (event.key === "Enter") { event.preventDefault(); commit(); }
     else if (event.key === "Escape" && draft !== null) { event.preventDefault(); setDraft(null); }
   };
+  const text = draft ?? String(value);
   const amount = `${step}${unit ?? ""}`;
   // aria-disabled keeps focus on the button at a limit, which matters for remotes.
   const atMin = value <= min, atMax = value >= max;
@@ -37,7 +38,7 @@ export function NumberStepper({ value, onChange, min, max, step = 1, label, unit
       <label className="number-stepper-value">
         <input role="spinbutton" aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={value} aria-valuetext={unit ? `${value}${unit}` : undefined}
           aria-invalid={invalid || undefined} aria-describedby={describedBy} inputMode="numeric" autoComplete="off" enterKeyHint="done" disabled={disabled}
-          size={Math.max(2, String(max).length)} value={draft ?? String(value)}
+          style={{ "--stepper-chars": Math.max(1, text.length) } as CSSProperties} value={text}
           onChange={event => setDraft(event.target.value.replace(/\D/g, "").slice(0, String(max).length + 1))}
           onFocus={event => event.currentTarget.select()} onBlur={commit} onKeyDown={onKeyDown} />
         {unit && <span aria-hidden="true">{unit}</span>}

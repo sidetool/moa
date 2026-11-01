@@ -87,6 +87,8 @@
   --switch-knob: 22px;
   --switch-inset: 3px;
   --switch-travel: 18px;
+  --stepper-digit: 1ch;
+  --stepper-caret: .25ch;
   --dialog-width: 480px;
   --dialog-shadow: 0 30px 80px #0009;
   --backdrop: #000a;
@@ -108,3 +110,4 @@
 
 /* Inline selection state overrides these safe defaults. */
 .segmented, .seg { --segments: 1; --selected: 0; }
+.number-stepper-value input { --stepper-chars: 2; }
