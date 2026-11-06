@@ -31,6 +31,8 @@ jobs:
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
         run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+      - name: Metadata scheduling and automatic subtitle selection
+        run: pnpm --filter @moa/server exec tsx --test test/tmdb.test.ts test/tmdb-settings.test.ts test/tmdb-scheduler.test.ts test/jimaku.test.ts ../web/tests/automatic-source.test.ts
       - name: Source playback integration
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-quality.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Plugin history, discovery and people contracts
@@ -38,6 +40,14 @@ jobs:
           pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/website-plugins.test.ts
           node --test plugins/title-people/test/plugin.test.mjs
       - run: pnpm --filter @moa/web build
+      - name: Install isolated browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/moa-browser-tools" --ignore-scripts --no-audit --no-fund playwright-core@1.62.0
+          node "$RUNNER_TEMP/moa-browser-tools/node_modules/playwright-core/cli.js" install --with-deps chromium
+      - name: Automatic subtitle selection in the player
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+        run: node apps/web/tests/automatic-source.browser.mjs
       - name: Isolated Docker update and rollback
         run: |
           docker pull node:22-bookworm-slim

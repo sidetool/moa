@@ -1,3 +1,4 @@
+import { readCheckpoint } from './checkpoint.js';
 import { randomUUID } from 'node:crypto';
 import { access, constants, lstat, mkdir, readdir, rm, stat, statfs, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -21,9 +22,12 @@ export class Downloads {
   private choicesCache=new Map<string,{episode:string;profile:string;until:number;choices:Map<string,{fingerprint:string;quality:string}>}>();
   private running?:{id:string;abort:AbortController;promise:Promise<void>};
   private untrackedBytes=0;
+  private partialBytes=new Map<string,number>();
+  private cleaning=false;
+  private lastCleanup=0;
   private timer?:NodeJS.Timeout;
   private mayRun=()=>true;
-  start(mayRun=()=>true){this.mayRun=mayRun;if(!this.timer){this.timer=setInterval(()=>this.pump(),1000);this.timer.unref();}this.pump();}
+  start(mayRun=()=>true){this.mayRun=mayRun;if(!this.timer){this.timer=setInterval(()=>{this.pump();if(Date.now()-this.lastCleanup>60000)void this.cleanupPartials();},1000);this.timer.unref();}this.pump();}
   private configuring: Promise<void> = Promise.resolve();
   private closed=false; private paused=false; private setup=false;
   private kids:KidsPolicy;
@@ -42,7 +46,7 @@ export class Downloads {
   }
   get busy(){return Boolean(this.running);}
   quota(){return Number(this.db.get("SELECT value FROM admin_settings WHERE key='downloadQuota'")?.value)||0;}
-  used(){return this.untrackedBytes+(this.db.get('SELECT COALESCE(SUM(size),0) AS n FROM download_assets')!.n as number);}
+  used(){return this.untrackedBytes+[...this.partialBytes.values()].reduce((a,b)=>a+b,0)+(this.db.get('SELECT COALESCE(SUM(size),0) AS n FROM download_assets')!.n as number);}
   private async storage(){
     if(!this.cfg.downloadRoot)throw new ApiFailure(503,'download-storage-unconfigured');
     const root=await realpath(this.cfg.downloadRoot).catch(()=>{throw new ApiFailure(503,'download-storage-unavailable');});
@@ -54,7 +58,7 @@ export class Downloads {
     await access(root,constants.W_OK);return root;
   }
   async initialize(){
-    this.untrackedBytes=0;
+    this.untrackedBytes=0; this.partialBytes.clear();
     this.db.run("UPDATE download_jobs SET state='interrupted',error='download-interrupted',updated_at=? WHERE state IN ('resolving','downloading','finalizing')",new Date().toISOString());
     try{
       const root=await this.storage();
@@ -62,8 +66,10 @@ export class Downloads {
         if(!/^job-[0-9a-f-]{36}$/.test(entry.name))continue;
         const known=this.db.get('SELECT 1 FROM download_assets WHERE job_id=?',entry.name.slice(4));
         if(!known){
-          const job=this.db.get('SELECT state FROM download_jobs WHERE id=?',entry.name.slice(4));
-          if(job&&job.state!=='ready')await rm(path.join(root,entry.name),{recursive:true,force:true});
+          const job=this.db.get('SELECT id,state,episode_id FROM download_jobs WHERE id=?',entry.name.slice(4));
+          const checkpoint=job&&entry.isDirectory()&&['queued','failed','interrupted'].includes(job.state)?await readCheckpoint(path.join(root,entry.name),job.id,job.episode_id):undefined;
+          if(checkpoint&&job)this.partialBytes.set(job.id,checkpoint.confirmedOffset);
+          else if(job&&job.state!=='ready')await rm(path.join(root,entry.name),{recursive:true,force:true});
           else if(entry.isDirectory())for(const file of await readdir(path.join(root,entry.name))){const st=await lstat(path.join(root,entry.name,file));if(st.isFile())this.untrackedBytes+=st.size;}
         }
       }
@@ -71,6 +77,26 @@ export class Downloads {
     }catch{/* Optional mount absent: retain metadata for the next mount/restart. */}
     this.setup=true;
     // Queued work stays durable. The host starts it only after checking maintenance leases.
+  }
+  private async cleanupPartials(){
+    if(this.cleaning)return;this.cleaning=true;this.lastCleanup=Date.now();
+    try {
+      const root=await this.storage();
+      for(const id of [...this.partialBytes.keys()]){
+        if(this.running?.id===id)continue;
+        const row=this.db.get('SELECT episode_id,state FROM download_jobs WHERE id=?',id);
+        const dir=path.join(root,`job-${id}`);
+        if(row&&this.deleting.has(row.episode_id))continue;
+        if(row?.state==='ready'){this.partialBytes.delete(id);continue;}
+        if(row&&!['failed','interrupted','cancelled'].includes(row.state))continue;
+        if(row&&row.state!=='cancelled'&&await readCheckpoint(dir,id,row.episode_id))continue;
+        // Recheck after filesystem IO; a retry may have acquired this directory.
+        const current=this.db.get('SELECT state FROM download_jobs WHERE id=?',id);
+        if(current&&!['failed','interrupted','cancelled'].includes(current.state)||this.running?.id===id||row&&this.deleting.has(row.episode_id))continue;
+        if(row)this.deleting.add(row.episode_id);
+        try{await rm(dir,{recursive:true,force:true});this.partialBytes.delete(id);}finally{if(row)this.deleting.delete(row.episode_id);}
+      }
+    }catch{}finally{this.cleaning=false;}
   }
   configure(bytes:number){if(!Number.isSafeInteger(bytes)||bytes<1||bytes>1000*1024**4)throw new ApiFailure(400,'download-quota-invalid');if(this.busy||bytes<this.used())throw new ApiFailure(409,'download-quota-in-use');this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('downloadQuota',?)",String(bytes));}
   enabled(){return this.db.get("SELECT value FROM admin_settings WHERE key='downloadEnabled'")?.value==='true';}
@@ -131,6 +157,7 @@ export class Downloads {
 
   episode(episode:string,profile:string){const r=this.db.get('SELECT media_id FROM episodes WHERE id=?',episode);if(!r)throw new ApiFailure(404,'episode-not-found');this.kids.assert(r.media_id,profile);const j=this.db.get('SELECT id FROM download_jobs WHERE episode_id=? ORDER BY updated_at DESC LIMIT 1',episode);return{saved:Boolean(this.db.get('SELECT 1 FROM download_assets WHERE episode_id=?',episode)),...(j?{job:this.job(j.id)}:{})};}
   private assertRequest(episode:string,profile:string){
+    if(this.deleting.has(episode))throw new ApiFailure(409,'download-in-use');
     if(this.closed||this.paused||!this.setup)throw new ApiFailure(503,'download-paused');
     if(this.cfg.downloadsEnabled===false||!this.enabled())throw new ApiFailure(503,'download-disabled');
     if(!this.db.get('SELECT 1 FROM profiles WHERE id=?',profile))throw new ApiFailure(401,'profile-required');
@@ -207,17 +234,19 @@ export class Downloads {
   private change(id:string,state:string,error:string|null=null){this.db.run('UPDATE download_jobs SET state=?,error=?,updated_at=? WHERE id=?',state,error,new Date().toISOString(),id);}
   private pump(){
     if(this.running||this.closed||this.paused||!this.setup||!this.mayRun()||!this.enabled()||this.cfg.downloadsEnabled===false)return;
-    const row=this.db.get("SELECT * FROM download_jobs WHERE state='queued' ORDER BY created_at,rowid LIMIT 1");if(!row)return;
+    const row=this.db.get("SELECT * FROM download_jobs WHERE state='queued' ORDER BY created_at,rowid LIMIT 1");if(!row||this.deleting.has(row.episode_id))return;
     const abort=new AbortController();const state={id:row.id,abort,promise:Promise.resolve()};this.running=state;
     state.promise=this.run(row,abort.signal).finally(()=>{if(this.running===state)this.running=undefined;this.pump();});
   }
   private async run(row:Record<string,any>,signal:AbortSignal){
     let dir:string|undefined,lease:string|undefined,timer:NodeJS.Timeout|undefined,renewing=false,leaseError=false,bytes=0,lastFlush=0;
+    const priorBytes=this.partialBytes.get(row.id)||0;
     try{
       const mapping=this.assertRequest(row.episode_id,row.profile_id);const root=await this.storage();signal.throwIfAborted();
-      dir=path.join(root,`job-${row.id}`);await mkdir(dir,{mode:0o700});await safePath(root,dir,true);
+      dir=path.join(root,`job-${row.id}`);await mkdir(dir,{mode:0o700,recursive:true});await safePath(root,dir,true);
+      this.partialBytes.delete(row.id);
       this.change(row.id,'resolving');
-      const videos=await this.sources.videos(row.episode_id);lease=videos.apkLease;signal.throwIfAborted();
+      const videos=await this.sources.videos(row.episode_id);lease=videos.apkLease;signal.throwIfAborted();this.assertRequest(row.episode_id,row.profile_id);
       const automatic=row.selection.startsWith('auto:')?row.selection.slice(5) as DownloadQuality:undefined;
       const matched=automatic?[]:videos.filter(v=>fingerprint(v)===row.selection);
       if(!automatic&&matched.length!==1)throw new ApiFailure(410,'download-selection-changed');
@@ -235,12 +264,12 @@ export class Downloads {
       };
       await budget(0);this.change(row.id,'downloading');
       const initial=new URL(item.url).origin,proxy=this.sources.proxy(mapping.source_id);
-      const fetcher=async(url:string,range?:string)=>{
-        if(new URL(url).origin===APK_RELAY)return this.sources.apk.stream(url,lease,range,signalWithLimit);
-        const headers={...item.headers};if(new URL(url).origin!==initial)for(const k of Object.keys(headers))if(/^(cookie|authorization)$/i.test(k))delete headers[k];
-        return this.transport(url,{...headers,...(range?{Range:range}:{})},signalWithLimit,proxy);
+      const fetcher=async(url:string,range?:string,ifRange?:string)=>{
+        if(new URL(url).origin===APK_RELAY)return this.sources.apk.stream(url,lease,ifRange?undefined:range,signalWithLimit);
+        const headers={...item.headers};for(const k of Object.keys(headers))if(/^(range|if-range|accept-encoding)$/i.test(k))delete headers[k];if(new URL(url).origin!==initial)for(const k of Object.keys(headers))if(/^(cookie|authorization)$/i.test(k))delete headers[k];
+        return this.transport(url,{'Accept-Encoding':'identity',...(range?{Range:range}:{}),...(ifRange?{'If-Range':ifRange}:{}),...headers},signalWithLimit,proxy);
       };
-      const result=await transferVideo(this.cfg,dir,item,fetcher,signalWithLimit,budget,()=>this.change(row.id,'finalizing'),automatic);
+      const result=await transferVideo(this.cfg,dir,item,fetcher,signalWithLimit,budget,()=>this.change(row.id,'finalizing'),automatic,{jobId:row.id,episodeId:row.episode_id});
       signalWithLimit.throwIfAborted();
       const subtitles=result.subtitles.map(n=>path.join(dir!,n));const size=result.size+(await Promise.all(subtitles.map(f=>stat(f)))).reduce((a,b)=>a+b.size,0);
       if(this.used()+size>this.quota())throw new ApiFailure(507,'download-quota-exceeded');
@@ -255,11 +284,14 @@ export class Downloads {
       this.change(row.id,['download-interrupted','download-disabled'].includes(code)?'interrupted':code==='download-cancelled'?'cancelled':'failed',code);
       // Stop the remaining queue on server-wide storage failure instead of extracting hundreds of doomed jobs.
       if(['download-quota-exceeded','download-space-low','download-storage-unavailable','download-storage-unconfigured','download-storage-overlap'].includes(code))this.db.run("UPDATE download_jobs SET state='interrupted',error=?,updated_at=? WHERE state='queued'",code,new Date().toISOString());
-      if(dir)await rm(dir,{recursive:true,force:true}).catch(()=>{});
+      const retain=['download-failed','download-truncated','download-interrupted'].includes(code);
+      const checkpoint=dir&&retain?await readCheckpoint(dir,row.id,row.episode_id):undefined;
+      if(checkpoint)this.partialBytes.set(row.id,checkpoint.confirmedOffset);
+      else if(dir){try{await rm(dir,{recursive:true,force:true});this.partialBytes.delete(row.id);}catch{this.partialBytes.set(row.id,Math.max(priorBytes,bytes));}}
     }finally{clearInterval(timer);await this.sources.apk.release(lease);}
   }
-  async cancel(id:string){const j=this.job(id);if(!activeStates.includes(j.state))throw new ApiFailure(409,'download-not-active');if(this.running?.id===id){this.running.abort.abort();await this.running.promise;}else this.change(id,'cancelled');return this.job(id);}
-  retry(id:string,profile:string){const row=this.db.get('SELECT * FROM download_jobs WHERE id=?',id);if(!row)throw new ApiFailure(404,'download-not-found');if(!terminal.includes(row.state))throw new ApiFailure(409,'download-not-retryable');this.assertRequest(row.episode_id,profile);if(this.db.get("SELECT 1 FROM download_jobs WHERE episode_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",row.episode_id))throw new ApiFailure(409,'download-already-exists');if(this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n>=MAX_QUEUED_DOWNLOADS)throw new ApiFailure(429,'download-queue-full');this.db.run('UPDATE download_jobs SET profile_id=?,bytes=0,total_bytes=NULL WHERE id=?',profile,id);this.change(id,'queued');this.pump();return this.job(id);}
+  async cancel(id:string){const j=this.job(id);if(!activeStates.includes(j.state))throw new ApiFailure(409,'download-not-active');if(this.running?.id===id){this.running.abort.abort();await this.running.promise;}else {this.deleting.add(j.episodeId);try{this.change(id,'cancelled');if(this.partialBytes.has(id)){const root=await this.storage();await rm(path.join(root,`job-${id}`),{recursive:true,force:true});this.partialBytes.delete(id);}}finally{this.deleting.delete(j.episodeId);}}return this.job(id);}
+  retry(id:string,profile:string){const row=this.db.get('SELECT * FROM download_jobs WHERE id=?',id);if(!row)throw new ApiFailure(404,'download-not-found');if(!terminal.includes(row.state)||this.deleting.has(row.episode_id)||this.running?.id===id||row.state==='cancelled'&&this.partialBytes.has(id))throw new ApiFailure(409,'download-not-retryable');this.assertRequest(row.episode_id,profile);if(this.db.get("SELECT 1 FROM download_jobs WHERE episode_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",row.episode_id))throw new ApiFailure(409,'download-already-exists');if(this.db.get("SELECT COUNT(*) AS n FROM download_jobs WHERE state='queued'")!.n>=MAX_QUEUED_DOWNLOADS)throw new ApiFailure(429,'download-queue-full');this.db.run('UPDATE download_jobs SET profile_id=?,bytes=0,total_bytes=NULL WHERE id=?',profile,id);this.change(id,'queued');this.pump();return this.job(id);}
   async withSaved<T>(episode:string,work:(asset:Awaited<ReturnType<Downloads['asset']>>)=>Promise<T>):Promise<T>{
     if(this.deleting.has(episode))throw new ApiFailure(409,'download-in-use');
     this.opening.set(episode,(this.opening.get(episode)||0)+1);
@@ -277,7 +309,8 @@ export class Downloads {
     this.deleting.add(j.episodeId);
     try {
     const a=this.db.get('SELECT * FROM download_assets WHERE job_id=?',id);
-    if(a){const root=await this.storage();const dir=path.join(root,`job-${id}`);const info=await lstat(dir).catch(e=>{if(e.code==='ENOENT')return undefined;throw e;});if(info){if(info.isSymbolicLink())throw new ApiFailure(400,'download-path-invalid');await safePath(root,dir,true);await rm(dir,{recursive:true,force:true});}}
+    if(a||this.partialBytes.has(id)){const root=await this.storage();const dir=path.join(root,`job-${id}`);const info=await lstat(dir).catch(e=>{if(e.code==='ENOENT')return undefined;throw e;});if(info){if(info.isSymbolicLink())throw new ApiFailure(400,'download-path-invalid');await safePath(root,dir,true);await rm(dir,{recursive:true,force:true});}}
+    this.partialBytes.delete(id);
     this.db.transaction(()=>{this.db.run('DELETE FROM download_assets WHERE job_id=?',id);this.db.run('DELETE FROM download_jobs WHERE id=?',id);});
     } finally {this.deleting.delete(j.episodeId);}
   }

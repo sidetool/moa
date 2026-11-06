@@ -56,6 +56,41 @@ export function parseEpisodes(raw: string): number[] {
   return match && Number(match[1]) < 2000 ? [Number(match[1])] : [];
 }
 
+/** File-only release tokens. Never apply these rules to article titles or link prose. */
+export function parseSubtitleFilenameEpisodes(raw: string): number[] {
+  let name = (raw.normalize("NFKC").split(/[\\/]/).at(-1) ?? raw)
+    .replace(/\.(?:ass|ssa|smi|srt|vtt|zip|7z|rar|tar)$/i, "");
+  const candidates: number[] = [];
+  const addBare = (number: number) => {
+    if (number < 1900 && ![480, 720, 1080].includes(number)) candidates.push(number);
+  };
+  name = name.replace(/\[(\d{1,3}(?:\.\d)?)\]/g, (_token, number: string) => {
+    addBare(Number(number));
+    return " ";
+  });
+  // A zero-padded episode followed immediately by a release group, not a title number.
+  name = name.replace(/(^|[\s_]|\s-\s)(0\d{1,2})([A-Za-z][A-Za-z\d-]*)(?=\s*(?:\[[^\]]*\]\s*)*$)/g,
+    (_token, separator: string, number: string) => { candidates.push(Number(number)); return separator; });
+  for (const match of name.matchAll(/(?:^|_)(\d{1,3})(?=_|$)/g)) {
+    const before = name.slice(0, match.index).replace(/_/g, " ");
+    if (/\b(?:season|no\.?)$/i.test(before.trim())) continue;
+    addBare(Number(match[1]));
+  }
+  // Remove technical suffixes before interpreting underscore-delimited episode tokens.
+  name = name.replace(/(?:^|[\s_.\[\]()])(?:\d{3,4}p|[xh]26[45]|HEVC|AVC|AAC|FLAC|WEB[- ]?DL|BluRay|BDRip)(?=$|[\s_.\[\]()])/gi, " ");
+  const cleaned = name.replace(/_/g, " ");
+  const bare = cleaned.replace(/\[[^\]]*\]|\([^)]*\)/g, " ").trim();
+  // A numeric title followed only by release metadata is not an episode.
+  if ((!/^\d+$/.test(bare) && !/\bNo\.?\s*\d+\s*$/i.test(bare))
+    || /^0\d+(?:\.\d)?$/.test(bare)) {
+    const parsed = parseEpisodes(cleaned);
+    // Explicit episode markers and ranges keep the existing long-series support.
+    if (/(?:\bS\d+E|\bEP?(?:ISODE)?\s*|第|#)\d|\d\s*(?:화|話)/i.test(cleaned) || parsed.length > 1) candidates.push(...parsed);
+    else parsed.forEach(addBare);
+  }
+  return [...new Set(candidates)];
+}
+
 export function validateEpisode(episode: number): void {
   if (!Number.isFinite(episode) || episode < 0 || episode > 10000) throw new RangeError("episode must be 0–10000");
 }

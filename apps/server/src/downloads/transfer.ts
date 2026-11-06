@@ -1,3 +1,4 @@
+import { readCheckpoint, writeCheckpoint, clearCheckpoint, urlDigest, strongETag } from './checkpoint.js';
 import { open, writeFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { DownloadQuality } from '@moa/shared';
@@ -8,12 +9,12 @@ import type { Config } from '../config.js';
 import type { Probe } from '../playback/probe.js';
 import { ApiFailure } from '../util.js';
 
-export type DownloadTransport=(url:string,range?:string)=>Promise<{response:import('node:http').IncomingMessage;url:string}>;
+export type DownloadTransport=(url:string,range?:string,ifRange?:string)=>Promise<{response:import('node:http').IncomingMessage;url:string}>;
 const fail=(code:string):never=>{throw new ApiFailure(422,code);};
 const attributes=(s:string)=>Object.fromEntries([...s.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)].map(m=>[m[1],m[2].replace(/^"|"$/g,'')]));
 
 /** Materialize a finite playlist first. ffmpeg/ffprobe never receive an upstream URL. */
-export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetcher:DownloadTransport,signal:AbortSignal,account:(bytes:number,total?:number)=>Promise<void>,finalizing:()=>void,quality:DownloadQuality='best'){
+export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetcher:DownloadTransport,signal:AbortSignal,account:(bytes:number,total?:number)=>Promise<void>,finalizing:()=>void,quality:DownloadQuality='best',identity?:{jobId:string;episodeId:string}){
   let sequence=0,requests=0,expectedDuration=0,omittedSubtitles=false; const files:string[]=[];
   const request=async(url:string,range?:string)=>{
     signal.throwIfAborted();if(++requests>12000)fail('download-request-limit');
@@ -92,10 +93,45 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
     const name=`list-${++sequence}.m3u8`;await writeFile(path.join(dir,name),output.join('\n')+'\n',{mode:0o600});files.push(name);return name;
   };
   if(!item.url.startsWith('https:')||item.audios?.length)fail('download-stream-unsupported');
-  const first=await request(item.url),mime=String(first.response.headers['content-type']||'');
+  let checkpoint=identity?await readCheckpoint(dir,identity.jobId,identity.episodeId):undefined;
+  if(checkpoint?.urlDigest!==urlDigest(item.url))checkpoint=undefined;
+  if(!checkpoint)await clearCheckpoint(dir);
+  let first:Awaited<ReturnType<DownloadTransport>>;
+  if(checkpoint){
+    first=await fetcher(item.url,`bytes=${checkpoint.confirmedOffset}-`,checkpoint.etag);
+    const h=first.response.headers,range=/^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(h['content-range']));
+    const encoding=String(h['content-encoding']||'identity').toLowerCase();
+    if(first.response.statusCode!==206||h.etag!==checkpoint.etag||encoding!=='identity'||!range||Number(range[1])!==checkpoint.confirmedOffset||Number(range[2])!==checkpoint.totalBytes-1||Number(range[3])!==checkpoint.totalBytes||Number(h['content-length'])!==checkpoint.totalBytes-checkpoint.confirmedOffset){
+      first.response.destroy();checkpoint=undefined;await clearCheckpoint(dir);first=await request(item.url);
+    }
+  }else first=await request(item.url);
+  const mime=String(first.response.headers['content-type']||'');
   let input:string;
-  if(/mpegurl/i.test(mime)||/\.m3u8(?:\?|$)/i.test(first.url))input=await playlist(first.url,0,(await consume(first,2*1024*1024)).toString('utf8'));
-  else {input='input.mp4';await consume(first,20*1024**3,input,true);files.push(input);}
+  if(/mpegurl/i.test(mime)||/\.m3u8(?:\?|$)/i.test(first.url)){
+    if(checkpoint){first.response.destroy();await clearCheckpoint(dir);first=await request(item.url);checkpoint=undefined;}
+    input=await playlist(first.url,0,(await consume(first,2*1024*1024)).toString('utf8'));
+  }else {
+    input='input.mp4';
+    const headers=first.response.headers,encoding=String(headers['content-encoding']||'identity').toLowerCase();
+    const total=checkpoint?.totalBytes??Number(headers['content-length']);
+    const resumable=identity&&encoding==='identity'&&strongETag(headers.etag)&&Number.isSafeInteger(total)&&total>0&&total<=20*1024**3;
+    let offset=checkpoint?.confirmedOffset??0,lastCheckpoint=offset;
+    const target=await open(path.join(dir,input),checkpoint?'a':'wx',0o600).catch(error=>{first.response.destroy();throw error;});
+    const save=async()=>{
+      if(resumable&&offset>0&&offset<total){await target.sync();await writeCheckpoint(dir,{version:1,...identity!,urlDigest:urlDigest(item.url),etag:headers.etag as string,totalBytes:total,confirmedOffset:offset,updatedAt:Date.now()});}
+    };
+    try {
+      await account(offset,Number.isSafeInteger(total)&&total>0?total:undefined);
+      for await(const chunk of first.response){signal.throwIfAborted();const data=Buffer.from(chunk);if(offset+data.length>20*1024**3)fail('download-response-limit');await account(data.length);await target.writeFile(data);offset+=data.length;if(resumable&&offset-lastCheckpoint>=8*1024*1024){await save();lastCheckpoint=offset;}}
+      if(!offset)fail('download-empty');
+      if(Number.isSafeInteger(total)&&total>0&&offset!==total)fail('download-truncated');
+    }catch(error){
+      // Only the transfer's transport/timeout path may leave a resumable payload.
+      if(!(error instanceof ApiFailure)||error.error==='download-truncated')await save();
+      throw error;
+    }finally{first.response.destroy();await target.close();}
+    files.push(input);
+  }
   signal.throwIfAborted();finalizing();
   const target=path.join(dir,'video.mp4.part');
   if(input.endsWith('.m3u8')){
@@ -119,6 +155,7 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
     }catch{signal.throwIfAborted();subtitleWarning=true;await rm(path.join(dir,name),{force:true});}
   }
   signal.throwIfAborted();await rename(target,path.join(dir,'video.mp4'));
+  await clearCheckpoint(dir);
   for(const f of files)await rm(path.join(dir,f),{force:true});
   return {probe,subtitles,subtitleWarning,size:(await stat(path.join(dir,'video.mp4'))).size};
 }

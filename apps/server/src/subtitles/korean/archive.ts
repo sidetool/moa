@@ -7,7 +7,7 @@ import yauzl, { type Entry, type ZipFile } from "yauzl";
 import iconv from "iconv-lite";
 import type { Readable } from "node:stream";
 import { decodeSubtitleBuffer, convertSubtitle } from "./convert.js";
-import { parseEpisodes, parseSeason } from "./normalize.js";
+import { parseSubtitleFilenameEpisodes, parseSeason } from "./normalize.js";
 
 export interface ExtractOptions {
   episode: number;
@@ -39,7 +39,7 @@ function filenameFor(entry: Entry): string {
 function rank(name: string, options: ExtractOptions): { rank: number; episode: number; exact: boolean } | undefined {
   if (options.acceptFilename?.(name) === false) return undefined;
   if (options.season && parseSeason(name) && parseSeason(name) !== options.season) return undefined;
-  const episodes = parseEpisodes(name);
+  const episodes = parseSubtitleFilenameEpisodes(name);
   if (episodes.length > 1) return undefined; // A range-labelled subtitle is not one confirmed episode.
   const choices = parseSeason(name) ? [options.episode] : [options.episode, options.alternateEpisode];
   const match = choices.find(ep => ep !== undefined && episodes.includes(ep));
@@ -57,7 +57,7 @@ export async function extractSubtitleBuffer(input: Uint8Array, filename: string,
     if (options.acceptFilename?.(filename) === false) return null;
     const score = rank(filename, options);
     // Unknown filenames from cloud downloads are accepted only with a matched post/label.
-    const numbers = parseEpisodes(filename);
+    const numbers = parseSubtitleFilenameEpisodes(filename);
     if (!score && (numbers.length || !options.allowUnnumbered)) return null;
     if (options.season && parseSeason(filename) && parseSeason(filename) !== options.season) return null;
     const converted = convertSubtitle(decodeSubtitleBuffer(buf));
