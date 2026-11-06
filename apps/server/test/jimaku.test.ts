@@ -27,6 +27,25 @@ test('Jimaku page parsing only accepts fixed-origin text subtitle files', () => 
   assert.ok(parsed.every((f) => f.url.startsWith('https://jimaku.cc/entry/9001/download/')));
   assert.equal(jimakuFiles(file('x.ass', 'https://evil.example/entry/9001/download/x.ass'), '9001').length, 0);
 });
+
+test('Jimaku applies file-only release tokens after removing language suffixes without certifying ambiguous files', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-jimaku-release-'));
+  const valid = ['Starlight Academy [03].ja.srt', 'Starlight Academy - 03Group.ja.srt', 'Starlight_Academy_03_1080p_x264.ja.srt'];
+  const names = [...valid, 'Starlight Academy [03] [04].ja.srt', 'Starlight Academy S02 [03].ja.srt', 'Starlight Academy [04].ja.srt'];
+  const env = await buildApp({ dataDir: dir, mediaRoot: dir, webDir: path.join(dir, 'web') }, false, {
+    jimakuFetch: async url => new Response(String(url).endsWith('/') ? index : names.map(name => file(name)).join('')),
+  });
+  try {
+    const profile = (await env.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Synthetic' } })).json();
+    env.db.run("INSERT INTO media VALUES('release',NULL,'Starlight Academy','anime','{}','2026')");
+    env.db.run("INSERT INTO episodes VALUES('release-3','release',1,3,'3화',100,NULL)");
+    const response = await env.app.inject({ url: '/api/episodes/release-3/subtitles/jimaku', headers: { 'x-moa-profile': profile.id } });
+    assert.equal(response.statusCode, 200, response.body);
+    const candidates = response.json().candidates;
+    assert.deepEqual(candidates.filter((candidate: { match: string }) => candidate.match === 'episode').map((candidate: { filename: string }) => candidate.filename).sort(), [...valid].sort());
+    assert.ok(!candidates.some((candidate: { filename: string }) => /S02|\[04\]/.test(candidate.filename)));
+  } finally { await env.app.close(); await rm(dir, { recursive: true, force: true }); }
+});
 test('Jimaku aliases, episode/season filtering, source cache, ownership and Japanese-to-Korean handoff', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-jimaku-'));
   let requests = 0,

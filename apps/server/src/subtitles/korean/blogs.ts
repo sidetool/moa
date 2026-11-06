@@ -3,7 +3,7 @@ import { load } from "cheerio";
 import { PublicHttpClient, validatePublicUrl, type HttpResponse } from "./http.js";
 import { extractSubtitleBuffer } from "./archive.js";
 import { decodeSubtitleBuffer } from "./convert.js";
-import { normalizeTitle, parseEpisodes, parseSeason, titleKey } from "./normalize.js";
+import { normalizeTitle, parseEpisodes, parseSubtitleFilenameEpisodes, parseSeason, titleKey } from "./normalize.js";
 import { stableId } from "./metadata.js";
 import { failureCode } from "./async.js";
 import type { AliasEntry, Diagnostic, ResolvedTitle, SubtitleCandidate, SubtitleCreator } from "./types.js";
@@ -151,16 +151,27 @@ export class BlogCollector {
 
   /** Fallback identity check when the article has not established the requested episode/series. */
   private fileIdentity(raw: string, creator: SubtitleCreator): boolean | undefined {
+    const filename = (raw.split(/[\\/]/).at(-1) ?? raw).split("\n")[0]!.trim();
+    // A label may be prose; release token handling requires an actual file extension.
+    const fileEpisodes = /\.(?:zip|7z|rar|tar|ass|ssa|srt|smi|vtt)$/i.test(filename)
+      ? parseSubtitleFilenameEpisodes(filename) : [];
     const name = (raw.split(/[\\/]/).at(-1) ?? raw).split("\n")[0]!.trim()
       .replace(/\.(?:zip|7z|rar|tar|ass|ssa|srt|smi|vtt)$/i, "")
       .replace(/^\[[^\]]+\]\s*(?=\S)/, "")
       .replace(/\[[^\]]*(?:\d{3,4}p|HEVC|AVC|[A-F\d]{8})[^\]]*\]|\([^)]*(?:\d{3,4}p|HEVC|WEB|BD|AAC|FLAC)[^)]*\)/gi, "")
       .replace(/^(?:ns|spon|non[- ]?spon)\s*[-_]\s*/i, "")
       .replace(/[._]/g, " ");
-    if (!parseEpisodes(name).length) return undefined;
-    const title = postTitle(name).replace(/(?:^|\s)(?:[-–]\s*)?\d+(?:\.\d)?\s*$/, "").trim();
+    if (!parseEpisodes(name).length && !fileEpisodes.length) return undefined;
+    // Remove file-only release suffixes so the existing title identity rules
+    // keep checking the complete work name (including numbers in that name).
+    const identityName = fileEpisodes.length === 1 ? name
+      .replace(/\[\d{1,3}\]\s*$/, "")
+      .replace(/(?:^|\s)0\d{1,2}[A-Za-z][A-Za-z\d-]*\s*$/, "")
+      .replace(/(?:\s+(?:\d{3,4}p|[xh]26[45]|HEVC|AVC|AAC|FLAC))+\s*$/gi, "")
+      .trim() : name;
+    const title = postTitle(identityName).replace(/(?:^|\s)(?:[-–]\s*)?\d+(?:\.\d)?\s*$/, "").trim();
     if (!title || /^(?:자막|subtitle|episode|ep|통합|완결)$/i.test(title)) return undefined;
-    if (this.titleMatches(name, creator)) return true;
+    if (this.titleMatches(identityName, creator)) return true;
     // Short Korean file labels are common. They are not sufficient to establish a
     // title, but also not evidence of a different work (the article must match).
     if (/^[가-힣]{1,3}(?:\s*\d+기)?$/.test(title)) {

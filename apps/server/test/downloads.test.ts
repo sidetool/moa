@@ -15,6 +15,7 @@ import { Playback } from '../src/playback/service.js';
 import { Downloads } from '../src/downloads/service.js';
 import { preferredQuality, qualityHeight } from '../src/downloads/quality.js';
 import { transferVideo } from '../src/downloads/transfer.js';
+import { readCheckpoint, checkpointTTL } from '../src/downloads/checkpoint.js';
 import { config } from '../src/config.js';
 import { buildApp } from '../src/app.js';
 
@@ -93,6 +94,169 @@ async function saved(db: Store, root: string, episode = 'ep', size = 16) {
   db.run('INSERT INTO download_assets VALUES(?,?,?,?,?,?)', episode, id, relative, size, JSON.stringify(probe), '[]');
   return id;
 }
+
+test('same-job direct retry sends Range/If-Range, preserves exact bytes and counts retained quota once', async t => {
+  const payload = Buffer.from('synthetic-original-video-bytes');
+  const offset = 9, calls: Array<Record<string, string>> = [];
+  const { downloads, cfg, db, create, released } = await fixture(t, async (url, headers) => {
+    const h = headers as Record<string, string>; calls.push({ ...h });
+    return { url, response: calls.length === 1
+      ? incoming(payload.subarray(0, offset), 'video/mp4', 200, { 'content-length': String(payload.length), etag: '"synthetic-v1"' })
+      : incoming(payload.subarray(offset), 'video/mp4', 206, { etag: '"synthetic-v1"', 'content-range': `bytes ${offset}-${payload.length - 1}/${payload.length}` }) };
+  });
+  await downloads.configureSettings({ quotaBytes: payload.length });
+  const job = await create(), failed = await settled(downloads, job.id);
+  assert.equal(failed.state, 'failed');
+  assert.equal(db.get('SELECT * FROM download_assets'), undefined);
+  assert.equal(await downloads.asset('ep'), undefined);
+  const dir = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  const checkpoint = await readCheckpoint(dir, job.id, 'ep');
+  assert.equal(checkpoint?.confirmedOffset, offset);
+  assert.equal((await downloads.status()).usedBytes, offset);
+  assert.doesNotMatch(await readFile(path.join(dir, 'checkpoint.json'), 'utf8'), /https:|Cookie|Authorization|source\.test/);
+  downloads.retry(job.id, 'viewer'); const complete = await settled(downloads, job.id);
+  assert.equal(complete.state, 'ready', complete.error || '');
+  assert.deepEqual(await readFile(path.join(dir, 'video.mp4')), payload);
+  assert.equal(calls[1].Range, `bytes=${offset}-`); assert.equal(calls[1]['If-Range'], '"synthetic-v1"');
+  assert.equal((await downloads.status()).usedBytes, payload.length);
+  assert.ok(!(await readdir(dir)).includes('checkpoint.json'));
+  assert.deepEqual(released, ['lease-1', 'lease-2', 'lease-3']);
+});
+
+for (const kind of ['ignored-range', 'unsatisfiable', 'wrong-offset', 'wrong-total', 'etag-changed', 'encoded'] as const) {
+  test(`direct retry restarts once when the range response is ${kind}`, async t => {
+    const { dir, cfg } = await layout(); t.after(() => rm(dir, { recursive: true, force: true }));
+    const target = path.join(cfg.downloadRoot!, kind); await mkdir(target);
+    const identity = { jobId: 'synthetic-job', episodeId: 'synthetic-episode' };
+    const payload = Buffer.from('abcdefghijklmno'), offset = 5;
+    const item = { url: 'https://source.test/private/video.mp4?token=synthetic-secret' };
+    const signal = new AbortController().signal;
+    await assert.rejects(transferVideo(cfg, target, item, async url => ({ url, response: incoming(payload.subarray(0, offset), 'video/mp4', 200, { etag: '"version-1"', 'content-length': String(payload.length) }) }), signal, async () => {}, () => {}, 'best', identity), { error: 'download-truncated' });
+    assert.equal((await readCheckpoint(target, identity.jobId, identity.episodeId))?.confirmedOffset, offset);
+    const calls: Array<{ range?: string; ifRange?: string }> = [];
+    await transferVideo(cfg, target, item, async (url, range, ifRange) => {
+      calls.push({ range, ifRange });
+      if (calls.length === 2) return { url, response: incoming(payload, 'video/mp4', 200, { etag: '"version-2"' }) };
+      const headers = { etag: kind === 'etag-changed' ? '"version-2"' : '"version-1"',
+        'content-range': `bytes ${kind === 'wrong-offset' ? offset + 1 : offset}-${payload.length - 1}/${kind === 'wrong-total' ? payload.length + 1 : payload.length}`,
+        ...(kind === 'encoded' ? { 'content-encoding': 'gzip' } : {}) };
+      return { url, response: incoming(payload.subarray(offset), 'video/mp4', kind === 'ignored-range' ? 200 : kind === 'unsatisfiable' ? 416 : 206, headers) };
+    }, signal, async () => {}, () => {}, 'best', identity);
+    assert.deepEqual(calls, [{ range: `bytes=${offset}-`, ifRange: '"version-1"' }, { range: undefined, ifRange: undefined }]);
+    assert.deepEqual(await readFile(path.join(target, 'video.mp4')), payload);
+  });
+}
+
+test('changed signed URL restarts without sending the old checkpoint validator', async t => {
+  const { dir, cfg } = await layout(); t.after(() => rm(dir, { recursive: true, force: true }));
+  const target = path.join(cfg.downloadRoot!, 'url-change'); await mkdir(target);
+  const identity = { jobId: 'synthetic-job', episodeId: 'synthetic-episode' }, signal = new AbortController().signal;
+  await assert.rejects(transferVideo(cfg, target, { url: 'https://source.test/video?lease=old' }, async url => ({ url, response: incoming('old', 'video/mp4', 200, { etag: '"v1"', 'content-length': '9' }) }), signal, async () => {}, () => {}, 'best', identity), { error: 'download-truncated' });
+  let calls = 0;
+  await transferVideo(cfg, target, { url: 'https://source.test/video?lease=new' }, async (url, range, ifRange) => {
+    calls++; assert.equal(range, undefined); assert.equal(ifRange, undefined);
+    return { url, response: incoming('new payload', 'video/mp4', 200, { etag: '"v2"' }) };
+  }, signal, async () => {}, () => {}, 'best', identity);
+  assert.equal(calls, 1); assert.equal(await readFile(path.join(target, 'video.mp4'), 'utf8'), 'new payload');
+});
+
+test('weak validators and encoded responses never create reusable partial checkpoints', async t => {
+  const { dir, cfg } = await layout(); t.after(() => rm(dir, { recursive: true, force: true }));
+  for (const [name, headers] of Object.entries({ weak: { etag: 'W/"v1"' }, encoded: { etag: '"v1"', 'content-encoding': 'gzip' } })) {
+    const target = path.join(cfg.downloadRoot!, name); await mkdir(target);
+    await assert.rejects(transferVideo(cfg, target, { url: 'https://source.test/video' }, async url => ({ url, response: incoming('short', 'video/mp4', 200, { ...headers, 'content-length': '10' }) }), new AbortController().signal, async () => {}, () => {}, 'best', { jobId: name, episodeId: 'ep' }), { error: 'download-truncated' });
+    assert.equal(await readCheckpoint(target, name, 'ep'), undefined);
+  }
+});
+
+test('startup retains a valid interrupted checkpoint and removes it after seven days', async t => {
+  const { downloads, cfg, create } = await fixture(t, async url => ({ url, response: incoming('partial', 'video/mp4', 200, { etag: '"v1"', 'content-length': '20' }) }));
+  const job = await create(); await settled(downloads, job.id);
+  const target = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  await downloads.initialize();
+  assert.equal((await downloads.status()).usedBytes, 7);
+  const meta = JSON.parse(await readFile(path.join(target, 'checkpoint.json'), 'utf8'));
+  assert.equal(meta.confirmedOffset, 7);
+  meta.updatedAt = Date.now() - checkpointTTL - 1;
+  await writeFile(path.join(target, 'checkpoint.json'), JSON.stringify(meta));
+  await downloads.initialize();
+  assert.equal((await downloads.status()).usedBytes, 0);
+  assert.ok(!(await readdir(cfg.downloadRoot!)).includes(`job-${job.id}`));
+});
+
+for (const stop of ['cancel', 'shutdown'] as const) test(`direct partial ${stop} drains the writer before cleanup or restart`, async t => {
+  const payload = Buffer.from('synthetic-restart-payload'), offset = 8;
+  let first = true; const ranges: Array<string | undefined> = [];
+  const transport: Transport = async (url, headers, signal) => {
+    ranges.push((headers as Record<string, string>).Range);
+    if (!first) {
+      const resumed = Boolean((headers as Record<string, string>).Range);
+      return { url, response: incoming(resumed ? payload.subarray(offset) : payload, 'video/mp4', resumed ? 206 : 200,
+        { etag: '"restart-v1"', ...(resumed ? { 'content-range': `bytes ${offset}-${payload.length - 1}/${payload.length}` } : {}) }) };
+    }
+    first = false;
+    const response = new IncomingMessage(new Socket()); response.statusCode = 200;
+    response.headers = { 'content-type': 'video/mp4', 'content-length': String(payload.length), etag: '"restart-v1"' };
+    let sent = false; response._read = () => { if (!sent) { sent = true; response.push(payload.subarray(0, offset)); } };
+    response.on('error', () => {});
+    const abort = () => response.destroy(new Error('synthetic stop'));
+    signal?.addEventListener('abort', abort, { once: true }); response.once('close', () => signal?.removeEventListener('abort', abort));
+    return { url, response };
+  };
+  const { downloads, cfg, db, sources, playback, create } = await fixture(t, transport);
+  const job = await create(), target = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    if ((await readFile(path.join(target, 'input.mp4')).catch(() => Buffer.alloc(0))).length === offset) break;
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  assert.equal((await readFile(path.join(target, 'input.mp4'))).length, offset);
+  if (stop === 'cancel') {
+    const stopping = downloads.cancel(job.id);
+    assert.throws(() => downloads.retry(job.id, 'viewer'), { error: 'download-not-retryable' });
+    await stopping;
+    assert.ok(!(await readdir(cfg.downloadRoot!)).includes(`job-${job.id}`));
+    assert.equal((await downloads.status()).usedBytes, 0);
+    downloads.retry(job.id, 'viewer'); assert.equal((await settled(downloads, job.id)).state, 'ready');
+    assert.deepEqual(ranges, [undefined, undefined]);
+  } else {
+    await downloads.close();
+    assert.equal((await readCheckpoint(target, job.id, 'ep'))?.confirmedOffset, offset);
+    const restarted = new Downloads(db, cfg, sources, playback, transport);
+    t.after(() => restarted.close());
+    await restarted.initialize();
+    assert.equal((await restarted.status()).usedBytes, offset);
+    restarted.retry(job.id, 'viewer'); assert.equal((await settled(restarted, job.id)).state, 'ready');
+    assert.deepEqual(ranges, [undefined, `bytes=${offset}-`]);
+  }
+  assert.deepEqual(await readFile(path.join(target, 'video.mp4')), payload);
+});
+
+test('checkpoint sidecars use private mode and refuse stale identity or inconsistent on-disk offsets', async t => {
+  const { dir, cfg } = await layout(); t.after(() => rm(dir, { recursive: true, force: true }));
+  const target = path.join(cfg.downloadRoot!, 'checkpoint-validation'); await mkdir(target);
+  const identity = { jobId: 'synthetic-job', episodeId: 'synthetic-episode' };
+  await assert.rejects(transferVideo(cfg, target, { url: 'https://source.test/video' }, async url => ({ url, response: incoming('partial', 'video/mp4', 200, { etag: '"v1"', 'content-length': '20' }) }), new AbortController().signal, async () => {}, () => {}, 'best', identity), { error: 'download-truncated' });
+  const { stat } = await import('node:fs/promises');
+  assert.equal((await stat(path.join(target, 'checkpoint.json'))).mode & 0o777, 0o600);
+  assert.equal(await readCheckpoint(target, 'another-job', identity.episodeId), undefined);
+  assert.equal(await readCheckpoint(target, identity.jobId, 'another-episode'), undefined);
+  await writeFile(path.join(target, 'input.mp4'), 'inconsistent bytes');
+  assert.equal(await readCheckpoint(target, identity.jobId, identity.episodeId), undefined);
+});
+
+test('extension-provided range and encoding headers cannot override direct download byte accounting', async t => {
+  const { downloads, create } = await fixture(t, async (url, headers) => {
+    const entries = Object.entries(headers as Record<string, string>);
+    assert.deepEqual(entries.filter(([key]) => /^(range|if-range)$/i.test(key)), []);
+    assert.deepEqual(entries.filter(([key]) => /^accept-encoding$/i.test(key)).map(([, value]) => value), ['identity']);
+    return { url, response: incoming('controlled synthetic bytes') };
+  }, { url: 'https://source.test/video.mp4', quality: '720p', headers: {
+    Range: 'bytes=100-', range: 'bytes=200-', 'If-Range': '"foreign"', 'if-range': '"other"',
+    'Accept-Encoding': 'gzip', 'accept-encoding': 'br',
+  } });
+  const job = await create(); assert.equal((await settled(downloads, job.id)).state, 'ready');
+});
 
 test('MP4 lifecycle registers one ready asset, releases APK leases and preserves IDs/history', async t => {
   const { downloads, db, cfg, released, create } = await fixture(t, async url => ({ url, response: incoming('synthetic MP4') }));

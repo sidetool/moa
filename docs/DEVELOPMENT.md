@@ -22,6 +22,13 @@ ffmpeg -f lavfi -i testsrc2=size=640x360:rate=24 -f lavfi -i sine=frequency=440 
   -t 12 -c:v libx264 -pix_fmt yuv420p -c:a aac data/verification/sample.mp4
 ```
 
+직접 파일 이어받기는 위 합성 영상과 실제 ffprobe로 별도 검증할 수 있습니다. 로컬 HTTP 연결을 끊고 같은 작업을 재시도하여 전송량·완성 파일 해시·미디어 검증을 확인합니다.
+
+```sh
+MOA_TEST_VIDEO="$PWD/data/verification/sample.mp4" MOA_TEST_FFPROBE="$(command -v ffprobe)" \
+  corepack pnpm --filter @moa/server exec tsx --test test/downloads-media.integration.ts
+```
+
 APK 실행 도구의 프로세스 잠금과 중계 검증은 Linux에서 실행합니다. 브라우저 의존성은 pnpm workspace와 별개이므로 먼저 설치합니다. 아래 단위 테스트는 실제 Chromium을 실행하지 않습니다.
 
 ```sh
@@ -192,6 +199,8 @@ GET/PATCH 200 응답 예:
 {"configured":true,"source":"database","credentialType":"token","hasSavedCredential":true}
 ```
 
-`source`: `environment | database | none`. `credentialType`: `token | apiKey | null`. `configured`는 키 존재 여부이며 원격 API 유효성 검증 결과가 아닙니다. `hasSavedCredential`은 환경변수로 덮어쓰는 중에도 DB 키 존재 여부를 보여줍니다. 저장 후 새 요청부터 바로 적용되며 진행 중인 요청은 이전 키를 사용할 수 있습니다. 기존 `GET /api/metadata/status`의 `{ "tmdb": boolean }`도 현재 활성 상태를 반영합니다.
+`source`: `environment | database | none`. `credentialType`: `token | apiKey | null`. `configured`는 키 존재 여부이며 원격 API 유효성 검증 결과가 아닙니다. `hasSavedCredential`은 환경변수로 덮어쓰는 중에도 DB 키 존재 여부를 보여줍니다. 저장하면 이전 설정의 진행·대기 요청을 취소하고 새 요청부터 적용하며 이전 응답은 DB에 반영하지 않습니다. 기존 `GET /api/metadata/status`의 `{ "tmdb": boolean }`도 현재 활성 상태를 반영합니다.
+
+TMDB 요청은 같은 설정·경로·매개변수의 진행 작업을 공유하며 최대 6개를 동시에 실행합니다. 429의 `Retry-After`는 대기열에도 적용하고 요청은 대기 시간을 포함해 8초로 제한합니다. 화면 요청을 우선하되 대기 중인 백그라운드 작업에도 순서를 배정합니다. 정상적인 빈 결과와 통신·응답 오류를 구분하며 기존 매칭 점수와 캐시 정책은 유지합니다.
 
 오류 JSON `{ "error": "..." }`: 400 `invalid-request`, 401 `login-required`, 403 `admin-required`. 키는 DB에 저장되므로 데이터 백업도 비공개로 관리합니다.

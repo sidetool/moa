@@ -67,3 +67,12 @@ test('direct Anissia files inherit work identity but still check episode and sea
   if(result)assert.equal(result.confidence,.95);
  }
 });
+
+test('file-specific tokens preserve verified article identity and reject a conflicting actual article', async () => {
+  for (const name of ['Cloud Garden [03].srt', 'Cloud Garden - 03Group.srt', 'Cloud_Garden_03_1080p_x264.srt']) {
+    const verified = await collect('구름 정원 3화', name, []);
+    assert.equal(verified?.matchedEpisode, 3, name);
+    assert.equal(await collect('다른 작품 3화', name, []), null, name);
+    assert.equal(await collect('구름 정원 4화', name, []), null, name);
+  }
+});

@@ -1,10 +1,10 @@
 import { load } from 'cheerio';
+import { parseSubtitleFilenameEpisodes } from '../subtitles/korean/normalize.js';
 import { randomUUID, createHash } from 'node:crypto';
 import {
   createSubtitleClient,
   knownAnimeIdentity,
   normalizeTitle,
-  parseEpisodes,
   parseSeason,
   convertSubtitle,
 } from '../subtitles/korean/index.js';
@@ -305,7 +305,7 @@ export class Jimaku {
           /[._](?:ja|jpn|jp|japanese|furigana)(?=\.(?:ass|ssa|srt|vtt|smi)$)/i,
           '',
         );
-        const numbers = parseEpisodes(episodeName),
+        const numbers = parseSubtitleFilenameEpisodes(episodeName),
           season = parseSeason(file.filename);
         if (season && season !== query.season) continue;
         if (numbers.length && (numbers.length !== 1 || numbers[0] !== query.episode)) continue;
