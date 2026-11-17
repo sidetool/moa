@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { MediaCard } from '@moa/shared';
 import { readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Catalog } from '../catalog/service.js';
@@ -15,12 +16,26 @@ import type { Sources } from './service.js';
 export function registerSourceRoutes(app: FastifyInstance, { db, cfg, sources, online, remotePlayback, playback, tmdb, catalog }: {
   db: Store; cfg: Config; sources: Sources; online: OnlineSubtitles; remotePlayback: RemotePlayback; playback: Playback; tmdb: Tmdb; catalog: Catalog;
 }) {
-  /** Give TMDB a moment to link new titles so first visits already show its artwork. */
-  const withMetadata = async <T extends { items: { id: string }[] }>(page: T, profileId: string): Promise<T> => {
-    const unlinked = page.items.map(c => c.id).filter(id => !db.get('SELECT 1 FROM tmdb_links WHERE media_id=?', id));
-    if (!tmdb.enabled || !unlinked.length) return page;
-    await tmdb.ensure(unlinked, 1500);
-    return { ...page, items: page.items.map(c => { const row = db.get('SELECT * FROM media WHERE id=?', c.id); return row ? { ...catalog.card(row, profileId), ...('sourceCount' in c ? { sourceCount: c.sourceCount } : {}) } : c; }) };
+  /** Keep a first-visit metadata budget where artwork or cross-language identity needs it. */
+  const withMetadata = async <T extends { items: MediaCard[] }>(page: T, profileId: string, search = false): Promise<T> => {
+    if (!tmdb.enabled || !page.items.length) return page;
+    const linked = new Set(db.all('SELECT media_id FROM tmdb_links WHERE media_id IN (SELECT value FROM json_each(?))',
+      JSON.stringify(page.items.map(card => card.id))).map(row => row.media_id));
+    const unlinked = page.items.filter(card => !linked.has(card.id));
+    if (!unlinked.length) return page;
+    const ids = unlinked.map(card => card.id);
+    // Korean search results can surface immediately. Foreign/unknown languages
+    // retain a metadata budget so cross-language identity can join on the first pass.
+    const needsIdentity = unlinked.some(card => card.provider.lang !== 'ko');
+    if (search && !needsIdentity && !catalog.kids.active(profileId)) {
+      void tmdb.ensure(ids, 0, 'background').catch(() => {});
+      return page;
+    }
+    await tmdb.ensure(ids, 1500);
+    return { ...page, items: page.items.map(card => {
+      const row = db.get('SELECT * FROM media WHERE id=?', card.id);
+      return row ? { ...catalog.card(row, profileId), ...(card.sourceCount !== undefined ? { sourceCount: card.sourceCount } : {}) } : card;
+    }) };
   };
   app.get('/api/admin/apk/status', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(await sources.apk.status()));
   app.get('/api/admin/cache-stats', async (_req,reply) => reply.header('Cache-Control','private, no-store').send(sources.stats.snapshot()));
@@ -52,9 +67,9 @@ export function registerSourceRoutes(app: FastifyInstance, { db, cfg, sources, o
   app.post('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.preload(params(req).id));
   app.delete('/api/admin/sources/:id/preload', { schema: { params: idParams() } }, async req => sources.cancelPreload(params(req).id));
   app.post('/api/sources/:id/browse', { schema: { params: idParams(), body: object({ mode: {type:'string',enum:['popular','latest','search'],default:'popular'}, page:pageQuery, q:{type:'string',maxLength:200,default:''}, selection:browseSelection }) } }, async req => {
-    const b = req.body as any; return withMetadata(await sources.browse(params(req).id, profile(req), b.mode, b.page, b.q, b.selection), profile(req));
+    const b = req.body as any; return withMetadata(await sources.browse(params(req).id, profile(req), b.mode, b.page, b.q, b.selection), profile(req), b.mode === 'search' || Boolean(b.q));
   });
   app.get('/api/sources/:id/browse', { schema: { params: idParams(), querystring: object({ mode: { type: 'string', enum: ['popular','latest','search'], default: 'popular' }, page: pageQuery, q: { type: 'string', maxLength: 200, default: '' } }) } }, async req => {
-    const q = query(req); return withMetadata(await sources.browse(params(req).id, profile(req), q.mode, q.page, q.q), profile(req));
+    const q = query(req); return withMetadata(await sources.browse(params(req).id, profile(req), q.mode, q.page, q.q), profile(req), q.mode === 'search' || Boolean(q.q));
   });
 }

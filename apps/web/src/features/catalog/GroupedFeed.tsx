@@ -1,7 +1,7 @@
 import { useTitleGrouping } from '../../lib/device-prefs';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, VideoSource } from '@moa/shared';
 import { api, currentProfileId } from '../../lib/api';
 import { categorySelection, sourcePage, sourceUrl } from '../sources/source-browse';
@@ -10,16 +10,16 @@ import { PosterCard } from '../../components/Cards';
 import { baseTitle, compareSeason, foreignCode, relevance, withLang } from './card-meta';
 import { cx } from '../../lib/format';
 
-export function useGroupedCards(cards: MediaCard[], query?: string) {
+export function useGroupedCards(cards: MediaCard[], query?: string, visibilityScope?: string) {
   const groupingEnabled = useTitleGrouping();
   const ids = [...new Set(cards.map(c => c.id))].slice(0, 1000);
   const result = useQuery({
-    queryKey: ['grouped-cards', ids, query],
+    queryKey: ['grouped-cards', ids, query, currentProfileId(), visibilityScope],
     queryFn: ({ signal }) => api<MediaCard[]>('/media/groups/resolve', { method: 'POST', body: query ? { ids, query } : { ids }, signal }),
     // Preserve grouped cards for incremental arrivals, never across a new query or removed sources.
     placeholderData: (previous, previousQuery) => {
       const previousIds = previousQuery?.queryKey[1] as string[] | undefined;
-      return ids.length && previousQuery?.queryKey[2] === query && previousIds?.every(id => ids.includes(id))
+      return ids.length && previousQuery?.queryKey[2] === query && previousQuery?.queryKey[3] === currentProfileId() && previousQuery?.queryKey[4] === visibilityScope && previousIds?.every(id => ids.includes(id))
         ? keepPreviousData(previous) : undefined;
     },
     enabled: groupingEnabled && !!ids.length, staleTime: 30_000, retry: false
@@ -146,11 +146,63 @@ function byFranchise(cards: MediaCard[]) {
   });
 }
 
+type SearchSlot = { key: string; aliases: string[] };
+// Only identity/order is remembered; card data always comes from the current visible response.
+const searchOrders = new Map<string, SearchSlot[]>();
+function useSearchSlots(cards: MediaCard[], scope: string) {
+  const [state, setState] = useState(() => ({ scope, slots: searchOrders.get(scope) ?? [] }));
+  const previous = state.scope === scope ? state.slots : searchOrders.get(scope) ?? [];
+  const slots = [...previous];
+  const keys = new Set(slots.map(slot => slot.key));
+  const byAlias = new Map<string, number[]>();
+  slots.forEach((slot, index) => slot.aliases.forEach(alias => {
+    const indices = byAlias.get(alias) ?? [];
+    indices.push(index); byAlias.set(alias, indices);
+  }));
+  const used = new Set<string>();
+  const identities = new Set<string>();
+  const rendered = new Map<string, MediaCard>();
+  for (const card of byFranchise(cards)) {
+    const id = card.groupId ?? card.id;
+    if (identities.has(id)) continue;
+    identities.add(id);
+    const aliases = [card.id, ...(card.groupId ? [card.groupId] : []), ...(card.groupMemberIds ?? [])];
+    const candidates = (alias: string) => (byAlias.get(alias) ?? []).filter(index => !used.has(slots[index].key));
+    const exact = candidates(id)[0];
+    const overlaps = exact === undefined ? aliases.flatMap(candidates) : [];
+    const match = exact ?? (overlaps.length ? Math.min(...overlaps) : -1);
+    let slot: SearchSlot;
+    if (match < 0) {
+      const base = card.groupId ?? card.id;
+      let key = base;
+      let suffix = 1;
+      while (keys.has(key)) key = `${base}:${suffix++}`;
+      keys.add(key);
+      slot = { key, aliases }; slots.push(slot);
+    } else {
+      const old = slots[match];
+      slot = old.aliases.length === aliases.length && old.aliases.every((id, i) => id === aliases[i]) ? old : { key: old.key, aliases };
+      slots[match] = slot;
+    }
+    used.add(slot.key);
+    rendered.set(slot.key, card);
+  }
+  if (state.scope !== scope || previous.length !== slots.length || previous.some((slot, i) => slot !== slots[i])) setState({ scope, slots });
+  useEffect(() => {
+    searchOrders.set(scope, slots);
+    if (searchOrders.size > 80) searchOrders.delete(searchOrders.keys().next().value!);
+  }, [scope, state]);
+  return slots.flatMap(slot => rendered.has(slot.key) ? [{ key: slot.key, card: rendered.get(slot.key)! }] : []);
+}
+
 export function GroupedSearch({ sources, query, local, pending = false }: { sources: VideoSource[]; query: string; local: MediaCard[]; pending?: boolean }) {
-  const pages = useQueries({ queries: sources.map(s => ({ queryKey: ['source-page', s.id, 'search', query], queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(s.id, 'search', query, 1, undefined, signal), staleTime: 60_000, retry: false })) });
-  const all = [...pages.flatMap(p => p.data?.items || []), ...local], grouped = useGroupedCards(all, query);
+  const location = useLocation();
+  const scope = JSON.stringify([currentProfileId(), query, sources.map(s => s.id).sort()]);
+  const pages = useQueries({ queries: sources.map(s => ({ queryKey: ['source-page', s.id, 'search', query, currentProfileId()], queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(s.id, 'search', query, 1, undefined, signal), staleTime: 60_000, retry: false })) });
+  const all = [...pages.flatMap(p => p.data?.items || []), ...local], grouped = useGroupedCards(all, query, scope);
   const langs = useMemo(() => new Map(sources.map(s => [s.id, s.lang])), [sources]);
   const cards = (!grouped.groupingEnabled || grouped.isError ? all : all.length ? grouped.data || [] : []).map(card => withLang(card, langs));
+  const stable = useSearchSlots(cards, `${location.key}:${scope}:${grouped.groupingEnabled}`);
   const searching = pending || pages.some(p => p.isPending) || (grouped.groupingEnabled && !!all.length && grouped.isFetching);
   // Sources with nothing to show stay out of the way; pending and failed ones still say so.
   const chips = sources.map((source, i) => ({ source, page: pages[i] })).filter(({ page }) => page.isPending || page.isError || !!page.data?.items.length);
@@ -165,7 +217,7 @@ export function GroupedSearch({ sources, query, local, pending = false }: { sour
       })}
     </div>}
     {(cards.length > 0 || searching) && <div className="grid">
-      {byFranchise(cards).map(c => <PosterCard key={c.id} card={c} />)}
+      {stable.map(({ key, card }) => <PosterCard key={key} card={card} identity={`search:${key}`} />)}
       {searching && Array.from({ length: cards.length ? 6 : 12 }, (_, i) => <div key={`pending-${i}`} className="card poster-card" aria-hidden="true"><span className="sk art art-poster" /></div>)}
     </div>}
     {!cards.length && !searching && <p className="search-empty">‘{query}’에 대한 결과가 없어요. 다른 제목으로 검색해 보세요.</p>}

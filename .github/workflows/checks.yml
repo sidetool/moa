@@ -30,7 +30,7 @@ jobs:
           pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
-        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
       - name: Metadata scheduling and automatic subtitle selection
         run: pnpm --filter @moa/server exec tsx --test test/tmdb.test.ts test/tmdb-settings.test.ts test/tmdb-scheduler.test.ts test/jimaku.test.ts ../web/tests/automatic-source.test.ts
       - name: Source playback integration
@@ -48,6 +48,17 @@ jobs:
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
         run: node apps/web/tests/automatic-source.browser.mjs
+      - name: Search results and back navigation
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+          MOA_TEST_BASE: http://127.0.0.1:5137
+          MOA_API: http://127.0.0.1:1
+        run: |
+          pnpm --filter @moa/web exec vite --port 5137 --strictPort > "$RUNNER_TEMP/moa-search-vite.log" 2>&1 &
+          trap 'kill "$!" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
+          node apps/web/scripts/verify-search-loading.mjs
+          node apps/web/scripts/verify-search-return.mjs
       - name: Isolated Docker update and rollback
         run: |
           docker pull node:22-bookworm-slim

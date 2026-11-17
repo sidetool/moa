@@ -287,6 +287,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       void client.invalidateQueries({ queryKey: ["home"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["recommendations"], refetchType: "none" });
       void client.invalidateQueries({ queryKey: ["history"], refetchType: keepalive ? "active" : "none" });
+      void client.invalidateQueries({ queryKey: ["grouped-cards"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["media", session.mediaId], refetchType: keepalive ? "active" : "none" });
     }).catch(() => {});
   }, [session, client]);

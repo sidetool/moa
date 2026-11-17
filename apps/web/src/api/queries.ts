@@ -40,7 +40,7 @@ export const useGenres = (type?: MediaType) =>
 
 export const useSearch = (q: string) =>
   useQuery({
-    queryKey: keys.search(q),
+    queryKey: [...keys.search(q), currentProfileId()],
     queryFn: ({ signal }) => api<{ query: string; groups: SearchGroup[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
     enabled: q.trim().length > 0,
   });

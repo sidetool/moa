@@ -1,4 +1,5 @@
 import type { createBrowserRouter } from 'react-router-dom';
+import { cancelBrowsingPosition, isRestoringBrowsingPosition } from './browsing-position';
 
 export type RemotePreference = 'auto' | 'on' | 'off';
 const tvBrowser = /SmartTV|Smart-TV|HbbTV|Tizen|Web0S|WebOS|GoogleTV|Android.*TV|\bAFT/i.test(navigator.userAgent);
@@ -43,9 +44,6 @@ function focus(el?: HTMLElement) {
   if (!el) return;
   el.focus({preventScroll: true});
   el.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
-}
-function identity(el: HTMLElement) {
-  return el.dataset.remoteId || el.id || `${el.tagName}:${el.getAttribute('href') || ''}:${el.getAttribute('aria-label') || el.textContent?.trim().slice(0,100) || el.getAttribute('name') || ''}`;
 }
 const selected = '[aria-current="true"],[aria-current="page"],[aria-selected="true"],[aria-pressed="true"],[role="menuitemradio"][aria-checked="true"],.is-current,.opt.is-active';
 const groupSelector = '[data-remote-group],[role="tablist"],[role="radiogroup"]';
@@ -92,11 +90,8 @@ function nearest(from: HTMLElement, candidates: HTMLElement[], key: string, loos
 export function installRemoteNavigation(router: ReturnType<typeof createBrowserRouter>) {
   paintMode();
   let currentKey = router.state.location.key;
-  const remembered = new Map<string, {id: string; y: number}>();
-  let restore: {id:string;y:number} | undefined;
   let lastScope: HTMLElement = document.body;
   let lastActivation: HTMLElement | undefined;
-  let restoreUntil=0;
   const openers = new WeakMap<HTMLElement, HTMLElement>();
   let timer = 0;
   let forwardingEscape = false;
@@ -104,15 +99,8 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
   let autoFocused = false;
   const initial = ['[data-remote-initial]', '.center-play', '.hero-actions button', '.title-actions button'];
   const preferred = (choices: HTMLElement[]) => initial.map(sel => choices.find(el => el.matches(sel))).find(Boolean);
-  const remember = () => {
-    const el = document.activeElement as HTMLElement;
-    if (el && el !== document.body && !el.closest(modalSelector)) {
-      remembered.set(currentKey,{id:identity(el),y:window.scrollY});
-      if (remembered.size > 80) remembered.delete(remembered.keys().next().value!);
-    }
-  };
   const sync = () => {
-    if (!isRemoteMode()) return;
+    if (!isRemoteMode() || isRestoringBrowsingPosition()) return;
     const root = scope(), active = document.activeElement as HTMLElement;
     if (root !== lastScope) {
       if (root.matches(modalSelector)) {
@@ -126,11 +114,6 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
       lastScope = root;
     }
     const choices = items(root);
-    if (Date.now()>restoreUntil) restore=undefined;
-    if (restore) {
-      const target = choices.find(el=>identity(el)===restore!.id);
-      if (target) { window.scrollTo(0,restore.y); restore=undefined; focus(target); autoFocused=false; return; }
-    }
     if (!root.contains(document.activeElement) || document.activeElement === document.body || !visible(document.activeElement as HTMLElement)) {
       focus(preferred(choices) || choices[0]); autoFocused=true;
     } else if (autoFocused) {
@@ -139,15 +122,14 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
     }
   };
   const schedule = () => { window.clearTimeout(timer); timer=window.setTimeout(sync,40); };
+  const restored = () => { autoFocused = false; schedule(); };
   const unsubscribe = router.subscribe(state => {
     if (state.location.key === currentKey) return;
-    currentKey=state.location.key; restore=remembered.get(currentKey); restoreUntil=Date.now()+8000;
+    currentKey=state.location.key;
     schedule();
   });
   const observer = new MutationObserver(schedule);
   observer.observe(document.getElementById('root')!,{childList:true,subtree:true});
-  document.addEventListener('focusin',remember);
-  document.addEventListener('click',remember,true);
   const pointer = () => { autoFocused=false; if (!tvBrowser && remotePreference()==='auto') { directionalInput=false; paintMode(); } };
   document.addEventListener('pointerdown',pointer,true);
   const onKey = (event: KeyboardEvent) => {
@@ -157,9 +139,10 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
     const typing=target.matches('textarea,input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),[contenteditable="true"]');
     if (remotePreference()==='auto' && !document.querySelector('.player') && arrow && !typing) { directionalInput=true; paintMode(); }
     if (!isRemoteMode()) return;
-    if (arrow || key==='Enter') { restore=undefined; autoFocused=false; }
+    if (arrow || key==='Enter') { autoFocused=false; }
     const back=key==='Back' || (key==='Backspace' && !typing);
     if (!arrow && !back && key!=='Enter' && !key.startsWith('Media')) return;
+    cancelBrowsingPosition();
     if (back && event.repeat) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (typing && !back && (key==='ArrowLeft'||key==='ArrowRight'||key==='Enter')) return;
     if (target.matches('select,[role="combobox"]') && (key==='ArrowUp'||key==='ArrowDown'||key==='Enter'||key==='Back')) return;
@@ -193,7 +176,8 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
   };
   window.addEventListener('keydown',onKey,true);
   window.addEventListener('moa:remote-mode',schedule);
+  window.addEventListener('moa:position-restored',restored);
   document.addEventListener('animationend',schedule);
   schedule();
-  return () => { unsubscribe();observer.disconnect();document.removeEventListener('animationend',schedule);clearTimeout(timer);window.removeEventListener('keydown',onKey,true);window.removeEventListener('moa:remote-mode',schedule);document.removeEventListener('focusin',remember);document.removeEventListener('click',remember,true);document.removeEventListener('pointerdown',pointer,true); };
+  return () => { unsubscribe();observer.disconnect();document.removeEventListener('animationend',schedule);clearTimeout(timer);window.removeEventListener('keydown',onKey,true);window.removeEventListener('moa:remote-mode',schedule);window.removeEventListener('moa:position-restored',restored);document.removeEventListener('pointerdown',pointer,true); };
 }

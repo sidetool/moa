@@ -10,10 +10,10 @@ function metaLine(card: MediaCard) {
   return [card.rating ? `★ ${card.rating.toFixed(1)}` : null, card.year, TYPE_LABEL[card.type], card.episodeCount && card.type !== "movie" ? `${card.episodeCount}화` : null].filter(Boolean).join(" · ");
 }
 
-export function PosterCard({ card, eager }: { card: MediaCard; eager?: boolean }) {
+export function PosterCard({ card, eager, identity }: { card: MediaCard; eager?: boolean; identity?: string }) {
   const lang = foreignLang(card), season = seasonInfo(card);
   return (
-    <Link to={`/title/${encodeURIComponent(card.id)}`} className="card poster-card" aria-label={card.title}>
+    <Link to={`/title/${encodeURIComponent(card.resumeMediaId ?? card.id)}`} data-remote-id={identity} className="card poster-card" aria-label={card.title}>
       <div className="card-frame">
         <Artwork src={card.poster} fallbackSrc={card.backdrop} title={card.title} ratio="poster" width={342} eager={eager} />
         {(card.badge || (card.sourceCount || 0) > 1) && <span className="card-badge">{card.badge || `소스 ${card.sourceCount}개`}</span>}

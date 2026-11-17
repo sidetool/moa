@@ -1,8 +1,9 @@
 import { installPlaybackFullscreen } from "./lib/playback-fullscreen";
 import { installRemoteNavigation } from "./lib/remote";
+import { useBrowsingPosition } from "./lib/browsing-position";
 import { StrictMode, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider, useNavigate, useParams } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useNavigate, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "./features/layout/AppShell";
 import { GenrePage, HomePage } from "./pages/HomePage";
@@ -53,7 +54,12 @@ function GenreRoute({ type }: { type?: MediaType }) {
   return <GenrePage type={type} genre={decodeURIComponent(genre)} />;
 }
 
-const router = createBrowserRouter([
+function BrowsingLayout() {
+  useBrowsingPosition();
+  return <Outlet />;
+}
+
+const router = createBrowserRouter([{ element: <BrowsingLayout />, children: [
   { path: "/profiles", element: <ProfilesPage /> },
   { path: "/watch/:episodeId", element: <RequireProfile><WatchPage /></RequireProfile> },
   { path: "/play/:id", element: <RequireProfile><PlayRedirect /></RequireProfile> },
@@ -89,7 +95,7 @@ const router = createBrowserRouter([
       { path: "*", element: <Navigate to="/" replace /> }
     ]
   }
-]);
+]}]);
 
 const disposeRemote = installRemoteNavigation(router);
 const disposeFullscreen = installPlaybackFullscreen(router);

@@ -81,6 +81,7 @@ export function HistoryPage() {
       setConfirm(null);
       void client.invalidateQueries({ queryKey: ["recommendations"] });
       void client.invalidateQueries({ queryKey: keys.history });
+      void client.invalidateQueries({ queryKey: ["grouped-cards"] });
       void client.invalidateQueries({ queryKey: ["home"] });
     } catch {
       setError("기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");

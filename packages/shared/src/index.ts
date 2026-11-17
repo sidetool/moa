@@ -55,6 +55,12 @@ export interface ResumeTarget {
   kind: 'resume' | 'next';
 }
 export interface MediaCard {
+  /** Stable identity of the visible title group, independent of its representative source. */
+  groupId?: string;
+  /** Visible selected members used to reconcile incremental search cards. */
+  groupMemberIds?: string[];
+  /** Allowed member whose playback history supplies resume/progress for this group. */
+  resumeMediaId?: string;
   seasonInfo?: SeasonInfo;
   audio?: 'sub' | 'dub';
   baseTitle?: string;
