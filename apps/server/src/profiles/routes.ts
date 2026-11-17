@@ -16,6 +16,8 @@ import { ApiFailure, now } from '../util.js';
 import type { ProfilePins } from './pin.js';
 import { hashPin } from './pin.js';
 import { completion } from './progress.js';
+import { WatchlistRefresh } from './watchlist-refresh.js';
+import { watchlistUpdates } from './watchlist-updates.js';
 import type { Recommendations } from './recommendations.js';
 
 const COLORS = ['red', 'blue', 'green', 'amber', 'violet', 'teal'];
@@ -25,11 +27,17 @@ const toProfile = (p: Record<string, any>): Profile => ({ id: p.id, name: p.name
 export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, online, translations, remotePlayback, playback, recommendations, catalog, groups, sources }: {
   db: Store; cfg: Config; pins: ProfilePins; online: OnlineSubtitles; translations: Translations; remotePlayback: RemotePlayback; playback: Playback; recommendations: Recommendations; catalog: Catalog; groups: TitleGroups; sources: Sources;
 }) {
+  const watchlistRefresh = new WatchlistRefresh(db, sources, groups);
+  app.get('/api/watchlist/refresh-status', async (req, reply) => {
+    watchlistRefresh.request(profile(req));
+    return reply.header('Cache-Control', 'private, no-store').send(watchlistRefresh.status(profile(req)));
+  });
   app.get('/api/recommendations', async (req,reply) => reply.header('Cache-Control','private, no-store').send(recommendations.get(profile(req))));
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
   app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
   app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
   async function removeProfile(id: string) {
+    watchlistRefresh.forget(id);
     pins.invalidate(id);
     // Delete the ownership row before awaiting process cleanup so concurrent asset requests fail closed.
     db.run('DELETE FROM profiles WHERE id=?', id);
@@ -83,7 +91,11 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
     await removeProfile(params(req).id);
     return reply.code(204).send();
   });
-  app.get('/api/watchlist', async req => groups.resolve(catalog.watchlist(profile(req)).map(c=>c.id),profile(req)));
+  app.get('/api/watchlist', { schema: { querystring: object({ sort: { type: 'string', enum: ['saved', 'updated'], default: 'saved' } }) } }, async (req, reply) => {
+    const result = watchlistUpdates(db, groups.saved(profile(req)), profile(req));
+    if (query(req).sort === 'updated') result.sort((a,b) => (b.episodesUpdatedAt ?? '').localeCompare(a.episodesUpdatedAt ?? ''));
+    return reply.header('Cache-Control', 'private, no-store').send(result);
+  });
   app.put('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
     const id = params(req).mediaId; if (!db.get('SELECT id FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
     db.run('INSERT OR IGNORE INTO watchlist VALUES(?,?,?)', profile(req), id, now()); return reply.code(204).send();
@@ -108,4 +120,5 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
     db.run('INSERT OR REPLACE INTO progress VALUES(?,?,?,?,?,?)', profile(req), body.episodeId, position, body.duration, Number(completion(position, body.duration)), now());
     return episodeProgress(db.get('SELECT * FROM progress WHERE profile_id=? AND episode_id=?', profile(req), body.episodeId)!);
   });
+  return watchlistRefresh;
 }

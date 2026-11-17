@@ -1,7 +1,8 @@
 import { CacheStats, type CacheOperation } from '../system/cache-stats.js';
 import { Store } from '../db.js';
+import { ApiFailure } from '../util.js';
 
-export interface ReadPolicy { freshMs: number; staleMs: number; background?: boolean; fallback?: boolean; cache?: boolean; operation?: CacheOperation }
+export interface ReadPolicy { freshMs: number; staleMs: number; empty?: (value: unknown) => boolean; force?: boolean; background?: boolean; fallback?: boolean; cache?: boolean; operation?: CacheOperation }
 export const SOURCE_CACHE_LIMITS = { maxEntries: 10_000, maxBytes: 128 * 1024 * 1024 } as const;
 interface Entry<T> { value:T; fetched:number; retry:number; touched:number }
 /** Shared source facts only. Profile responses, progress and playback URLs never enter this cache. */
@@ -53,35 +54,44 @@ export class SourceReadCache {
     }
   }
 
-  async read<T>(source:string,key:string,policy:ReadPolicy,loader:(current:()=>void)=>Promise<T>):Promise<T> {
+  async read<T>(source:string,key:string,policy:ReadPolicy,loader:(current:()=>void, background:boolean)=>Promise<T>):Promise<T> {
     this.signal.throwIfAborted();
     const revision=this.revisions.get(source)||0,identity=this.identity(source,key)+':'+revision;
     const current=()=>{this.signal.throwIfAborted();if((this.revisions.get(source)||0)!==revision)throw new Error('source_cache_invalidated');};
     const cached=policy.cache===false?undefined:this.entry<T>(source,key),age=cached?this.clock()-cached.fetched:Infinity;
-    const usable=!!cached && age>=0 && age<=policy.staleMs;
+    const negative = cached && policy.empty?.(cached.value);
+    const freshMs = negative ? Math.min(policy.freshMs,60_000) : policy.freshMs;
+    const usable=!!cached && age>=0 && age<=(negative?Math.min(policy.staleMs,5*60_000):policy.staleMs);
     const operation=policy.operation ?? (key.startsWith('detail:')?'detail':key==='schema'?'filters':'list');
-    if(usable && age<=policy.freshMs){
+    if(!policy.force && usable && age<=freshMs){
       this.stats?.cache(source,operation,'hit');
       // Minute precision is sufficient for eviction; warm views do not need a SQLite write each time.
       if(this.clock()-cached!.touched>=60_000)this.db.run('UPDATE source_read_cache SET touched=? WHERE source_id=? AND cache_key=?',this.clock(),source,key);
       return cached!.value;
     }
-    const refresh=():Promise<T>=>{
+    const refresh=(background=false):Promise<T>=>{
       const flight=this.flights.get(identity);if(flight){this.stats?.cache(source,operation,'coalesced');return flight as Promise<T>;}
-      const pending=Promise.resolve().then(()=>loader(current)).then(value=>{current();if(policy.cache!==false)this.put(source,key,value);return value;}).catch(error=>{
-        if((this.revisions.get(source)||0)===revision)this.db.run('UPDATE source_read_cache SET retry=? WHERE source_id=? AND cache_key=?',this.clock()+30_000,source,key);
+      const pending=Promise.resolve().then(()=>loader(current,background)).then(value=>{current();if(policy.cache!==false)this.put(source,key,value);return value;}).catch(error=>{
+        if(!this.signal.aborted && (this.revisions.get(source)||0)===revision) {
+          if(error instanceof ApiFailure && error.error === 'source-filters-changed') this.db.run('DELETE FROM source_read_cache WHERE source_id=? AND cache_key=?',source,key);
+          else this.db.run('UPDATE source_read_cache SET retry=? WHERE source_id=? AND cache_key=?',this.clock()+30_000,source,key);
+        }
         throw error;
       }).finally(()=>{if(this.flights.get(identity)===pending)this.flights.delete(identity);});
       this.flights.set(identity,pending);return pending;
     };
-    if(usable && policy.background!==false){
+    if(!policy.force && usable && policy.background!==false){
       this.stats?.cache(source,operation,'stale');
-      if(cached!.retry<=this.clock())void refresh().catch(()=>{});
+      if(cached!.retry<=this.clock())void refresh(true).catch(()=>{});
       return cached!.value;
     }
     this.stats?.cache(source,operation,'miss');
     try{return await refresh();}
-    catch(error){current();if(usable && policy.fallback!==false)return cached!.value;throw error;}
+    catch(error){current();if(!policy.force && usable && policy.fallback!==false)return cached!.value;throw error;}
   }
+  has(source:string,key:string) {
+    return Boolean(this.db.get('SELECT 1 FROM source_read_cache WHERE source_id=? AND cache_key=?',source,key));
+  }
+  pending(source:string,key:string) { return this.flights.has(this.identity(source,key)+':'+(this.revisions.get(source)||0)); }
   async drain(source?:string){await Promise.allSettled([...this.flights].filter(([key])=>!source||key.startsWith(source+':')).map(([,flight])=>flight));}
 }

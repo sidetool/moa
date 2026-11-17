@@ -20,6 +20,10 @@ export class ProfilePins {
   constructor(private db: Store) {
     db.db.exec('CREATE TABLE IF NOT EXISTS profile_pin_attempts(profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE, attempts INTEGER NOT NULL, expires INTEGER NOT NULL)');
   }
+  assertOwner(id: string, request: FastifyRequest) {
+    if (!this.db.get('SELECT 1 FROM profiles WHERE id=? AND account_id=?', id, request.moaAccount.id)) throw new ApiFailure(401,'profile-required');
+    this.assert(id,request);
+  }
   assert(id: string, request: FastifyRequest) {
     const hash = this.db.get('SELECT pin_hash FROM profiles WHERE id=?', id)?.pin_hash;
     if (!hash) return;

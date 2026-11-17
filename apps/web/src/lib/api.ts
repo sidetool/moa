@@ -51,7 +51,7 @@ async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T
     if (response.status === 401 && data?.error === "login-required") {
       window.location.replace(`/__moa/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
     }
-    if (response.status === 401 && ["profile-required", "profile-locked"].includes(data?.error)) {
+    if (response.status === 401 && profile === currentProfileId() && ["profile-required", "profile-locked"].includes(data?.error)) {
       setCurrentProfileId(null);
       window.dispatchEvent(new Event("moa:profile-required"));
     }

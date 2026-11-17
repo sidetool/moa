@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Info, Play } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import type { MediaCard } from "@moa/shared";
@@ -10,10 +11,12 @@ function metaLine(card: MediaCard) {
   return [card.rating ? `★ ${card.rating.toFixed(1)}` : null, card.year, TYPE_LABEL[card.type], card.episodeCount && card.type !== "movie" ? `${card.episodeCount}화` : null].filter(Boolean).join(" · ");
 }
 
-export function PosterCard({ card, eager, identity }: { card: MediaCard; eager?: boolean; identity?: string }) {
+export function PosterCard({ card, eager, identity, showUnseen }: { card: MediaCard; eager?: boolean; identity?: string; showUnseen?: boolean }) {
   const lang = foreignLang(card), season = seasonInfo(card);
+  const description = useId();
+  const unseen = showUnseen && card.unseenEpisodeCount ? `안 본 회차 ${card.unseenEpisodeCount}개` : undefined;
   return (
-    <Link to={`/title/${encodeURIComponent(card.resumeMediaId ?? card.id)}`} data-remote-id={identity} className="card poster-card" aria-label={card.title}>
+    <Link to={`/title/${encodeURIComponent(card.resumeMediaId ?? card.id)}`} data-remote-id={identity} className="card poster-card" aria-label={card.title} aria-describedby={unseen ? description : undefined}>
       <div className="card-frame">
         <Artwork src={card.poster} fallbackSrc={card.backdrop} title={card.title} ratio="poster" width={342} eager={eager} />
         {(card.badge || (card.sourceCount || 0) > 1) && <span className="card-badge">{card.badge || `소스 ${card.sourceCount}개`}</span>}
@@ -24,6 +27,7 @@ export function PosterCard({ card, eager, identity }: { card: MediaCard; eager?:
         </div>
       </div>
       <span className="card-title">{card.title}</span>
+      {unseen && <span id={description} className="card-season">{unseen}</span>}
       {/* Subtitled is the default; only dubs are called out. */}
       {(season || card.audio === "dub") && <span className="card-season">{[season?.label, card.audio === "dub" && "더빙"].filter(Boolean).join(" · ")}</span>}
     </Link>

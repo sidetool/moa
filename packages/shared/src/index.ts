@@ -9,7 +9,7 @@ export type MediaType = "movie" | "series" | "anime";
 export type ProviderKind = "local" | "mangayomi-js" | "aniyomi-apk";
 
 export interface ApiError { error: string; message?: string }
-export interface Page<T> { items: T[]; page: number; hasNextPage: boolean; total?: number }
+export interface Page<T> { refreshing?: boolean; items: T[]; page: number; hasNextPage: boolean; total?: number }
 
 /* ---------- Profiles ---------- */
 
@@ -82,6 +82,10 @@ export interface MediaCard {
   provider: ProviderRef;
   /** Number of episodes for series/anime. */
   episodeCount?: number;
+  /** Available episodes after the latest watched episode, never premiere schedules. */
+  unseenEpisodeCount?: number;
+  /** Last observed source episode-list change, independent of metadata refresh. */
+  episodesUpdatedAt?: string;
   progress?: ProgressSummary;
   /** Next playable target; does not create viewing progress. */
   resume?: ResumeTarget;
@@ -136,6 +140,7 @@ export interface Franchise { title: string; seasons: FranchiseSeason[]; complete
 // GET /api/media/:id/franchise -> Franchise
 
 export interface MediaDetail extends MediaCard {
+  refreshing?: boolean;
   overview?: string;
   rating?: number;
   /** Seconds, movies only. */
@@ -182,6 +187,7 @@ export interface Row {
 }
 
 export interface HomeResponse {
+  refreshing?: boolean;
   /** 1..5 featured items for the rotating hero. */
   hero: MediaCard[];
   rows: Row[];

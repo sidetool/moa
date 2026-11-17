@@ -1,6 +1,7 @@
+import { catalogReadOptions } from '../../api/catalog-refresh';
 import { useTitleGrouping } from '../../lib/device-prefs';
 import { useEffect, useMemo, useState } from 'react';
-import { keepPreviousData, useQueries, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
 import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, VideoSource } from '@moa/shared';
 import { api, currentProfileId } from '../../lib/api';
@@ -10,11 +11,23 @@ import { PosterCard } from '../../components/Cards';
 import { baseTitle, compareSeason, foreignCode, relevance, withLang } from './card-meta';
 import { cx } from '../../lib/format';
 
+// Query data retains object references for unchanged cards. Include revisions so metadata-only
+// changes refresh grouping and ranking without embedding entire card payloads in query keys.
+let nextCardRevision = 0;
+const cardRevisions = new WeakMap<MediaCard, number>();
+function cardRevision(card: MediaCard) {
+  const previous = cardRevisions.get(card);
+  if (previous !== undefined) return previous;
+  const revision = ++nextCardRevision;
+  cardRevisions.set(card,revision);
+  return revision;
+}
+
 export function useGroupedCards(cards: MediaCard[], query?: string, visibilityScope?: string) {
   const groupingEnabled = useTitleGrouping();
   const ids = [...new Set(cards.map(c => c.id))].slice(0, 1000);
   const result = useQuery({
-    queryKey: ['grouped-cards', ids, query, currentProfileId(), visibilityScope],
+    queryKey: ['grouped-cards', ids, query, currentProfileId(), visibilityScope, cards.slice(0,1000).map(cardRevision)],
     queryFn: ({ signal }) => api<MediaCard[]>('/media/groups/resolve', { method: 'POST', body: query ? { ids, query } : { ids }, signal }),
     // Preserve grouped cards for incremental arrivals, never across a new query or removed sources.
     placeholderData: (previous, previousQuery) => {
@@ -27,27 +40,30 @@ export function useGroupedCards(cards: MediaCard[], query?: string, visibilitySc
   return { ...result, groupingEnabled };
 }
 
-type SourceList = { items: MediaCard[]; unsupported: boolean; selection?: BrowseSelection };
+type SourceList = { refreshing?: boolean; items: MediaCard[]; unsupported: boolean; selection?: BrowseSelection };
 
 /** Popular + latest lists for every source of a tab, fetched independently. */
 export function useTabFeed(sources: VideoSource[], tab?: NavigationTab) {
+  const client = useQueryClient();
   const popular = useQueries({ queries: sources.map(source => ({
-    queryKey: ['tab-source', source.id, tab?.id, tab?.sourceFilters?.[source.id]],
+    ...catalogReadOptions,
+    queryKey: ['tab-source', source.id, tab?.id, tab?.sourceFilters?.[source.id], currentProfileId()],
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SourceList> => {
       let selection: BrowseSelection | undefined = tab?.sourceFilters?.[source.id];
       if (!selection && ['movies', 'series'].includes(tab?.id || '')) {
-        const schema = await api<BrowseSchema>(`/sources/${source.id}/filters`, { signal });
+        const schema = await client.fetchQuery({ queryKey:['source-filters', source.id], queryFn:({signal})=>api<BrowseSchema>(`/sources/${source.id}/filters`, { signal }), staleTime:60_000 });
         selection = categorySelection(schema, tab?.id);
         if (!selection) return { items: [], unsupported: true, selection };
       }
       const page = await sourcePage(source.id, 'popular', '', 1, selection, signal);
-      return { items: page.items, unsupported: false, selection };
+      return { items: page.items, unsupported: false, selection, refreshing:page.refreshing };
     },
     staleTime: 5 * 60_000, retry: false
   })) });
   // "Latest" only makes sense for the unfiltered catalogue of on-demand sources.
   const latest = useQueries({ queries: sources.map(source => ({
-    queryKey: ['tab-source-latest', source.id],
+    ...catalogReadOptions,
+    queryKey: ['tab-source-latest', source.id, currentProfileId()],
     queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(source.id, 'latest', '', 1, undefined, signal),
     enabled: !source.live && !tab?.sourceFilters?.[source.id] && !['movies', 'series'].includes(tab?.id || ''),
     staleTime: 5 * 60_000, retry: false
@@ -59,7 +75,7 @@ export function useTabFeed(sources: VideoSource[], tab?: NavigationTab) {
   for (let i = 0; i < Math.max(0, ...onDemand.map(list => list.length)); i++) for (const list of onDemand) if (list[i]) mixed.push(list[i]);
   const rankingLists=sources.flatMap((source,i)=>source.live||!popular[i].data?.items.length?[]:[{sourceId:source.id,ids:popular[i].data!.items.slice(0,20).map(c=>c.id)}]);
   const ranking=useQuery({
-    queryKey:['source-popularity',currentProfileId(),rankingLists],
+    queryKey:['source-popularity',currentProfileId(),rankingLists,onDemand.map(cards=>cards.slice(0,20).map(cardRevision))],
     queryFn:({signal})=>api<MediaCard[]>('/media/popular',{method:'POST',body:{lists:rankingLists},signal}),
     enabled:rankingLists.length>0,staleTime:5*60_000,retry:false
   });
@@ -198,7 +214,7 @@ function useSearchSlots(cards: MediaCard[], scope: string) {
 export function GroupedSearch({ sources, query, local, pending = false }: { sources: VideoSource[]; query: string; local: MediaCard[]; pending?: boolean }) {
   const location = useLocation();
   const scope = JSON.stringify([currentProfileId(), query, sources.map(s => s.id).sort()]);
-  const pages = useQueries({ queries: sources.map(s => ({ queryKey: ['source-page', s.id, 'search', query, currentProfileId()], queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(s.id, 'search', query, 1, undefined, signal), staleTime: 60_000, retry: false })) });
+  const pages = useQueries({ queries: sources.map(s => ({ ...catalogReadOptions, queryKey: ['source-page', s.id, 'search', query, currentProfileId()], queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(s.id, 'search', query, 1, undefined, signal), staleTime: 60_000, retry: false })) });
   const all = [...pages.flatMap(p => p.data?.items || []), ...local], grouped = useGroupedCards(all, query, scope);
   const langs = useMemo(() => new Map(sources.map(s => [s.id, s.lang])), [sources]);
   const cards = (!grouped.groupingEnabled || grouped.isError ? all : all.length ? grouped.data || [] : []).map(card => withLang(card, langs));

@@ -1,3 +1,4 @@
+import { catalogRefreshSettings, setCatalogRefreshSettings } from '../system/catalog-refresh.js';
 import type { FastifyInstance } from 'fastify';
 import { rm, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -16,6 +17,8 @@ import type { YouTubeTrailers } from './youtube-trailers.js';
 export function registerMetadataRoutes(app: FastifyInstance, { db, cfg, tmdb, youtube, catalog, imageCache, sources }: {
   db: Store; cfg: Config; tmdb: Tmdb; youtube: YouTubeTrailers; catalog: Catalog; imageCache: ImageCache; sources: Sources;
 }) {
+  app.get('/api/admin/catalog-refresh', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(catalogRefreshSettings(db)));
+  app.patch('/api/admin/catalog-refresh', { schema: { body: object({ intervalMinutes: { type: 'integer', minimum: 1, maximum: 10080 } }, ['intervalMinutes']) } }, async (req, reply) => reply.header('Cache-Control', 'private, no-store').send(setCatalogRefreshSettings(db, (req.body as { intervalMinutes: number }).intervalMinutes)));
   app.get('/api/admin/tmdb/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(tmdb.status()));
   app.get('/api/admin/youtube/config', async (_req, reply) => reply.header('Cache-Control', 'private, no-store').send(youtube.status()));
   app.patch('/api/admin/youtube/config', { schema: { body: object({

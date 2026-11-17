@@ -1,7 +1,8 @@
+import { catalogReadOptions } from './catalog-refresh';
 import { deviceSettingsPatch, loadDevicePrefs, saveDevicePrefs, useDevicePrefs, useTitleGrouping } from "../lib/device-prefs";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Account, HomeResponse, LibraryFolder, MediaCard, MediaDetail, MediaType, Page, Profile, ScanStatus, SearchGroup, Settings, HistoryEntry } from "@moa/shared";
-import { api, currentProfileId } from "../lib/api";
+import { api, ApiError, currentProfileId } from "../lib/api";
 
 export const keys = {
   me: ["me"] as const,
@@ -24,15 +25,18 @@ export const useProfiles = () => useQuery({ queryKey: keys.profiles, queryFn: ()
 
 export const useHome = (type?: MediaType, providers?: string[], personalScope: "tab" | "all" = "tab") => {
   const titleGrouping = useTitleGrouping();
-  return useQuery({ queryKey: [...keys.home(type), providers, personalScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
+  return useQuery({ ...catalogReadOptions, queryKey: [...keys.home(type), providers, personalScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
 };
 
-export const useMedia = (id: string) =>
-  useQuery({ queryKey: keys.media(id), queryFn: ({ signal }) => api<MediaDetail>(`/media/${encodeURIComponent(id)}`, { signal }), enabled: id !== "" });
+export const useMedia = (id: string) => {
+  const query = useQuery({ ...catalogReadOptions, retry:false, queryKey: keys.media(id), queryFn: ({ signal }) => api<MediaDetail>(`/media/${encodeURIComponent(id)}`, { signal }), enabled: id !== "" });
+  const denied = query.error instanceof ApiError && ([401,403,404].includes(query.error.status) || query.error.code === 'source-removing');
+  return denied ? { ...query, data: undefined } : query;
+};
 
 export const useMediaList = (params: { type?: MediaType; provider?: string; genre?: string; sort?: string }) => {
   const query = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)]));
-  return useInfiniteQuery({ queryKey: keys.list(params), initialPageParam: 1, queryFn: ({ pageParam, signal }) => api<Page<MediaCard>>(`/media?${query}&page=${pageParam}`, { signal }), getNextPageParam: last => last.hasNextPage ? last.page + 1 : undefined, retry: false });
+  return useInfiniteQuery({ ...catalogReadOptions, queryKey: keys.list(params), initialPageParam: 1, queryFn: ({ pageParam, signal }) => api<Page<MediaCard>>(`/media?${query}&page=${pageParam}`, { signal }), getNextPageParam: last => last.hasNextPage ? last.page + 1 : undefined, retry: false });
 };
 
 export const useGenres = (type?: MediaType) =>
@@ -40,12 +44,21 @@ export const useGenres = (type?: MediaType) =>
 
 export const useSearch = (q: string) =>
   useQuery({
+    ...catalogReadOptions,
     queryKey: [...keys.search(q), currentProfileId()],
     queryFn: ({ signal }) => api<{ query: string; groups: SearchGroup[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
     enabled: q.trim().length > 0,
   });
 
-export const useWatchlist = () => useQuery({ queryKey: keys.watchlist, queryFn: () => api<MediaCard[]>("/watchlist") });
+export const useWatchlist = (sort: "saved" | "updated" = "saved") => {
+  const profile = currentProfileId();
+  return useQuery({
+    queryKey: [...keys.watchlist, profile, sort],
+    queryFn: ({ signal }) => api<MediaCard[]>(`/watchlist?sort=${sort}`, { signal }),
+    placeholderData: (previous, query) => query?.queryKey[1] === profile ? previous : undefined,
+    refetchOnMount: "always",
+  });
+};
 export const useHistory = () => useQuery({ queryKey: keys.history, queryFn: () => api<Page<HistoryEntry>>("/history") });
 export const useFolders = () => useQuery({ queryKey: keys.folders, queryFn: () => api<LibraryFolder[]>("/library/folders") });
 export const useScanStatus = (poll: boolean) =>

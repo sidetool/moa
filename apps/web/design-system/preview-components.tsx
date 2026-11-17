@@ -183,3 +183,15 @@ export function PlayerQualityPreview() {
     </div>
   </div>;
 }
+
+export function CatalogRefreshPattern() {
+  const [interval, setInterval] = useState('60');
+  const [sort, setSort] = useState('saved');
+  const [busy, setBusy] = useState(false);
+  return <div className="preview-stack">
+    <div className="preview-row"><b>정보 갱신 빈도</b><Select aria-label="정보 갱신 빈도" value={interval} onChange={setInterval} options={[{ value: '15', label: '자주' }, { value: '60', label: '기본' }, { value: '360', label: '드물게' }]} /></div>
+    <div className="preview-row"><b>내 목록</b><Select aria-label="내 목록 정렬" value={sort} onChange={setSort} options={[{ value: 'saved', label: '담은 순' }, { value: 'updated', label: '회차 업데이트순' }]} /></div>
+    <span>안 본 회차 2개</span>
+    <div className="preview-row"><Button variant="secondary" size="l" icon={<RefreshCw size={20} />} disabled={busy} aria-busy={busy} onClick={() => { setBusy(true); setTimeout(() => setBusy(false), 1000); }}>{busy ? '갱신 중…' : '새로고침'}</Button></div>
+  </div>;
+}

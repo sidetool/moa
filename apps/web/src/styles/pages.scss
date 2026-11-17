@@ -7,6 +7,7 @@
 .page-head h1 { font-size: clamp(1.7rem, 3vw, 2.4rem); font-weight: 850; }
 .page-kicker { color: var(--text-3); font-weight: 650; margin-bottom: 4px; }
 .page-head-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.title-refresh-error { flex-basis: 100%; grid-column: 1 / -1; }
 .page-head-actions { display: flex; gap: 8px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--poster-w), 1fr)); gap: 26px 12px; }
 

@@ -1,0 +1,290 @@
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { verificationPath } from './verification-path.mjs';
+
+// Run against the app with VITE_MOCK=1. Extend the existing mock for responses
+// whose timing, profile or failure state must be deterministic.
+const base = new URL(process.env.MOA_TEST_BASE || 'http://127.0.0.1:5187');
+const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
+const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
+const failures = [];
+
+function installFixture() {
+  if (!localStorage.getItem('moa.profile')) localStorage.setItem('moa.profile', 'p1');
+  const state = window.catalogFixture = { titleReads: 0, sourceReads: 0, listReads: [], statusReads: 0, settingsReads: 0, refreshes: [], saves: [], observed: 1 };
+  const wait = key => new Promise(resolve => { state[key] = resolve; });
+  const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  let currentFetch = window.fetch.bind(window);
+  Object.defineProperty(window, 'fetch', {
+    configurable: true,
+    get: () => currentFetch,
+    set: mock => {
+      currentFetch = async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
+        const method = init?.method ?? 'GET';
+        const profile = new Headers(init?.headers).get('x-moa-profile');
+        if (url.pathname === '/api/admin/catalog-refresh') {
+          if (method === 'GET') state.settingsReads++;
+          if (method === 'PATCH') {
+            const body = JSON.parse(init.body);
+            state.saves.push(body.intervalMinutes);
+            if (state.failSave) return json({ error: 'fixture-failure' }, 500);
+            localStorage.setItem('verify.catalog.interval', String(body.intervalMinutes));
+          }
+          return json({ intervalMinutes: Number(localStorage.getItem('verify.catalog.interval') || 60) });
+        }
+        if (url.pathname === '/api/media/demo-1' && method === 'GET') {
+          state.titleReads++;
+          const response = await mock(input, init);
+          const detail = await response.json();
+          return json({ ...detail, title: profile === 'p2' ? '가족의 작품' : !state.titleReady ? '저장한 작품' : '확인한 작품',
+            refreshing: profile === 'p1' && !state.titleReady });
+        }
+        if (url.pathname === '/api/media/demo-1/refresh' && method === 'POST') {
+          state.refreshes.push(profile);
+          const partial = state.partial;
+          const response = await mock('/api/media/demo-1', { method: 'GET' });
+          const detail = await response.json();
+          await wait('finishTitle');
+          return json({ detail: { ...detail, title: '수동 갱신 작품', refreshing: false }, errors: partial ? ['metadata'] : [] });
+        }
+        if (url.pathname === '/api/sources/sample-kr/browse') {
+          state.sourceReads++;
+          const response = await mock('/api/media/demo-1', { method: 'GET' });
+          const detail = await response.json();
+          return json({ page: 1, hasNextPage: false, items: [{ ...detail, title: !state.sourceReady ? '저장한 소스 목록' : '확인한 소스 목록' }],
+            refreshing: !state.sourceReady });
+        }
+        if (url.pathname === '/api/watchlist/refresh-status') {
+          state.statusReads++;
+          if (state.statusGate) await state.statusGate;
+          return json({ running: profile === 'p1' && state.observed === 1, revision: state.observed - 1 });
+        }
+        if (url.pathname === '/api/watchlist') {
+          const sort = url.searchParams.get('sort');
+          state.listReads.push([profile, sort]);
+          if (profile === 'p1' && state.holdList) await wait('finishList');
+          const response = await mock(input, init);
+          const [first, second] = await response.json();
+          const saved = profile === 'p2' ? { ...first, id: 'demo-1', title: '가족의 목록' } : { ...first, title: '먼저 저장한 작품' };
+          const updated = { ...second, title: '회차 갱신 작품', unseenEpisodeCount: state.observed };
+          return json(profile === 'p2' ? [saved] : sort === 'updated' ? [updated, saved] : [saved, updated]);
+        }
+        return mock(input, init);
+      };
+    }
+  });
+}
+
+async function scenario(name, width, run, seed) {
+  const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+  await context.route('**/*', route => new URL(route.request().url()).origin === base.origin ? route.continue() : route.abort());
+  await context.addInitScript(installFixture);
+  if (seed) await context.addInitScript(seed);
+  const page = await context.newPage();
+  const errors = [];
+  page.setDefaultTimeout(10000);
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await run(page);
+    assert.deepEqual(errors, [], 'uncaught browser errors');
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failures.push(name);
+    console.error(`FAIL ${name}`, error);
+    await screenshot(page, `${name}-failure`);
+  } finally {
+    await context.close();
+  }
+}
+
+const screenshot = (page, name) => process.env.MOA_VERIFY_DIR
+  ? page.screenshot({ path: verificationPath(`catalog-refresh-${name}.png`), animations: 'disabled' }) : undefined;
+const heading = (page, name) => page.getByRole('heading', { name, exact: true }).waitFor();
+const control = (page, name) => page.getByRole('combobox', { name, exact: true });
+const alert = (page, text) => page.getByRole('alert').filter({ hasText: text }).waitFor();
+const fixture = (page, fn, argument) => page.evaluate(fn, argument);
+const open = (page, path) => page.goto(new URL(path, base).href);
+
+async function choose(page, name, option, keyboard) {
+  const trigger = control(page, name);
+  if (keyboard) {
+    await trigger.focus();
+    await trigger.press('Enter');
+    await page.getByRole('listbox', { name, exact: true }).waitFor();
+    await trigger.press('End');
+    const active = await trigger.getAttribute('aria-activedescendant');
+    assert.equal((await page.getByRole('option', { name: option, exact: true }).getAttribute('id')), active);
+    await trigger.press('Enter');
+  } else {
+    await trigger.click();
+    const menu = page.getByRole('listbox', { name, exact: true });
+    assert.ok(await menu.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight;
+    }), `${name} fits the viewport`);
+    await menu.getByRole('option', { name: option, exact: true }).click();
+  }
+}
+
+async function setupSettings(page) {
+  await open(page, '/settings#library');
+  await control(page, '정보 갱신 빈도').filter({ hasText: '기본' }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('[aria-label="정보 갱신 빈도"]')?.disabled);
+}
+
+async function switchProfile(page) {
+  await page.getByRole('button', { name: '프로필 메뉴' }).click();
+  await page.getByRole('menuitem', { name: '프로필 전환' }).click();
+  await page.getByRole('button', { name: '가족', exact: true }).click();
+  await page.waitForURL(url => url.pathname === '/');
+}
+
+async function assertPollingStops(page, counter, cachedReads) {
+  const settledReads = await fixture(page, key => window.catalogFixture[key], counter);
+  assert.ok(settledReads > cachedReads, 'refreshing=true led to another read');
+  await page.waitForTimeout(2500);
+  assert.equal(await fixture(page, key => window.catalogFixture[key], counter), settledReads, 'polling stops after refreshing=false');
+}
+
+async function openList(page) {
+  await page.locator('nav a[href="/my-list"]:visible').click();
+  await heading(page, '내 목록');
+}
+
+try {
+  for (const width of [320, 390, 1280]) {
+    await scenario(`settings-${width}`, width, async page => {
+      await setupSettings(page);
+      await control(page, '정보 갱신 빈도').scrollIntoViewIfNeeded();
+      await screenshot(page, `settings-${width}`);
+      await choose(page, '정보 갱신 빈도', '드물게', width === 1280);
+      await control(page, '정보 갱신 빈도').filter({ hasText: '드물게' }).waitFor();
+      assert.deepEqual(await fixture(page, () => window.catalogFixture.saves), [360]);
+      await fixture(page, () => { window.catalogFixture.failSave = true; });
+      await choose(page, '정보 갱신 빈도', '자주', false);
+      await alert(page, '갱신 설정을 저장하지 못했어요.');
+      await control(page, '정보 갱신 빈도').filter({ hasText: '드물게' }).waitFor();
+      await page.reload();
+      await control(page, '정보 갱신 빈도').filter({ hasText: '드물게' }).waitFor();
+    });
+
+    await scenario(`title-${width}`, width, async page => {
+      await open(page, '/title/demo-1');
+      await heading(page, '저장한 작품');
+      const cachedReads = await fixture(page, () => {
+        window.catalogFixture.titleReady = true;
+        return window.catalogFixture.titleReads;
+      });
+      await heading(page, '확인한 작품');
+      const refresh = page.getByRole('button', { name: '새로고침', exact: true });
+      if (width === 1280) {
+        await assertPollingStops(page, 'titleReads', cachedReads);
+        await refresh.press('Enter');
+      } else {
+        await refresh.click();
+      }
+      const busy = page.getByRole('button', { name: '갱신 중…' });
+      await busy.waitFor();
+      assert.ok(await busy.isDisabled());
+      assert.equal(await busy.getAttribute('aria-busy'), 'true');
+      await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
+      await fixture(page, () => window.catalogFixture.finishTitle());
+      await heading(page, '수동 갱신 작품');
+      await page.getByRole('button', { name: '갱신 완료', exact: true }).waitFor();
+      await fixture(page, () => { window.catalogFixture.partial = true; window.catalogFixture.finishTitle = null; });
+      await refresh.click();
+      await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
+      await fixture(page, () => window.catalogFixture.finishTitle());
+      await alert(page, '일부 정보를 갱신하지 못했어요.');
+      assert.deepEqual(await fixture(page, () => window.catalogFixture.refreshes), ['p1', 'p1']);
+      await screenshot(page, `title-${width}`);
+    });
+
+    await scenario(`list-${width}`, width, async page => {
+      await open(page, '/my-list');
+      const cards = page.locator('main a.poster-card');
+      await cards.first().waitFor();
+      assert.equal(await cards.first().getAttribute('aria-label'), '먼저 저장한 작품');
+      await page.getByText('안 본 회차 1개', { exact: true }).waitFor();
+      await fixture(page, () => { window.catalogFixture.observed = 2; });
+      await page.getByText('안 본 회차 2개', { exact: true }).waitFor();
+      await choose(page, '내 목록 정렬', '회차 업데이트순', width === 1280);
+      await page.waitForFunction(() => document.querySelector('main .poster-card')?.getAttribute('aria-label') === '회차 갱신 작품');
+      const updatedCard = page.getByRole('link', { name: '회차 갱신 작품', exact: true });
+      const describedBy = await updatedCard.getAttribute('aria-describedby');
+      assert.ok(describedBy, 'the title-only link exposes the unseen count as a description');
+      assert.equal(await page.locator(`[id="${describedBy}"]`).textContent(), '안 본 회차 2개');
+      assert.equal(await cards.filter({ hasText: '안 본 회차' }).count(), 1);
+      assert.ok((await fixture(page, () => window.catalogFixture.listReads)).some(([id, sort]) => id === 'p1' && sort === 'updated'));
+      await screenshot(page, `list-${width}`);
+    });
+  }
+
+  await scenario('list-already-refreshed', 1280, async page => {
+    await open(page, '/');
+    await fixture(page, () => {
+      const state = window.catalogFixture;
+      state.statusGate = new Promise(resolve => { state.releaseStatus = resolve; });
+    });
+    await openList(page);
+    await page.getByText('안 본 회차 1개', { exact: true }).waitFor();
+    await fixture(page, () => {
+      const state = window.catalogFixture;
+      state.observed = 2;
+      state.releaseStatus();
+    });
+    // The first status reply already reports completion. There will be no running poll.
+    await page.getByText('안 본 회차 2개', { exact: true }).waitFor();
+  });
+
+  await scenario('member-settings', 1280, async page => {
+    await open(page, '/settings#library');
+    await heading(page, '설정');
+    assert.equal(await control(page, '정보 갱신 빈도').count(), 0);
+    assert.equal(await fixture(page, () => window.catalogFixture.settingsReads), 0);
+  }, () => localStorage.setItem('moa.mockRole', 'member'));
+
+  await scenario('source-revalidation', 1280, async page => {
+    await open(page, '/sources/sample-kr');
+    await page.getByRole('link', { name: '저장한 소스 목록', exact: true }).waitFor();
+    const cachedReads = await fixture(page, () => {
+      window.catalogFixture.sourceReady = true;
+      return window.catalogFixture.sourceReads;
+    });
+    await page.getByRole('link', { name: '확인한 소스 목록', exact: true }).waitFor();
+    await assertPollingStops(page, 'sourceReads', cachedReads);
+  });
+
+  await scenario('late-profile-title', 1280, async page => {
+    await open(page, '/title/demo-1');
+    await heading(page, '저장한 작품');
+    await page.getByRole('button', { name: '새로고침', exact: true }).click();
+    await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
+    await switchProfile(page);
+    await openList(page);
+    await page.getByRole('link', { name: '가족의 목록', exact: true }).click();
+    await heading(page, '가족의 작품');
+    await fixture(page, () => window.catalogFixture.finishTitle());
+    await page.waitForTimeout(900);
+    assert.equal(await page.getByRole('heading', { name: '가족의 작품', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: '수동 갱신 작품', exact: true }).count(), 0);
+  });
+
+  await scenario('late-profile-list', 1280, async page => {
+    await open(page, '/');
+    await fixture(page, () => { window.catalogFixture.holdList = true; });
+    await openList(page);
+    await page.waitForFunction(() => typeof window.catalogFixture.finishList === 'function');
+    await switchProfile(page);
+    await openList(page);
+    await page.getByRole('link', { name: '가족의 목록', exact: true }).waitFor();
+    await fixture(page, () => window.catalogFixture.finishList());
+    await page.waitForTimeout(900);
+    assert.equal(await page.getByText('안 본 회차 1개', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('link', { name: '가족의 목록', exact: true }).count(), 1);
+  });
+} finally {
+  await browser.close();
+}
+assert.deepEqual(failures, []);

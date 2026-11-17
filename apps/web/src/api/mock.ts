@@ -114,6 +114,7 @@ const mockTrailers: Record<string, Pick<MediaDetail, "trailer" | "trailers">> = 
 
 /* Optional YouTube precheck. With a saved key, `e101`/`e150` keys count as embedding-disabled (dropped) and
    `rgn` keys as region-blocked (moved to the end). `moa.mockTrailerPreflight=error|slow` previews failures. */
+let catalogRefreshMinutes = 60;
 let youtubeConfig = { configured: false, source: "none" as "environment" | "database" | "none", hasSavedCredential: false, regionCode: "KR" };
 function trailerPreflight(id: string) {
   const d = mockTrailers[id] ?? {};
@@ -503,6 +504,18 @@ export function installMockApi() {
       await delay(mode === "slow" ? 8000 : 400);
       return json(trailerPreflight(decodeURIComponent(trailerCheck[1])));
     }
+    if (path === "/admin/catalog-refresh") {
+      if (method === "PATCH") {
+        if (!Number.isInteger(body.intervalMinutes) || body.intervalMinutes < 1 || body.intervalMinutes > 10080) return json({ error: "invalid-request" }, 400);
+        catalogRefreshMinutes = body.intervalMinutes;
+      }
+      return json({ intervalMinutes: catalogRefreshMinutes });
+    }
+    const titleRefresh = /^\/media\/([^/]+)\/refresh$/.exec(path);
+    if (titleRefresh && method === "POST") {
+      const updated = detail(decodeURIComponent(titleRefresh[1]));
+      return updated ? json({ detail: updated, errors: [] }) : json({ error: "media-not-found" }, 404);
+    }
     if (path === "/admin/youtube/config") {
       if (method === "PATCH") {
         if (typeof body.regionCode === "string") { if (!/^[A-Z]{2}$/.test(body.regionCode)) return json({ error: "youtube-region-invalid" }, 400); youtubeConfig = { ...youtubeConfig, regionCode: body.regionCode }; }
@@ -515,7 +528,18 @@ export function installMockApi() {
     if (path === "/media") { const type = url.searchParams.get("type"); const items = cards.filter(card => !type || card.type === type); return json({ items, page: 1, hasNextPage: false, total: items.length }); }
     if (path === "/genres") return json(["드라마", "로맨스", "뮤지컬", "미스터리", "음악", "코미디", "스릴러"]);
     if (path === "/search") { const q = (url.searchParams.get("q") ?? "").toLowerCase(); const hit = cards.filter(card => card.title.toLowerCase().includes(q)); return json({ query: q, groups: [{ provider: local, items: hit.filter(card => card.provider.id === "local") }, { provider: ext, items: hit.filter(card => card.provider.id !== "local") }] }); }
-    if (path === "/watchlist") return json(cards.filter(card => watchlist.has(card.id)));
+    if (path === "/watchlist/refresh-status") return json({ running: false, revision: 0 });
+    if (path === "/watchlist") {
+      const saved = [...watchlist].reverse().map(id => byId.get(id)!).filter(Boolean).map(card => {
+        if (card.type === "movie" || card.provider.kind === "local") return card;
+        const episodes = episodesOf(card.id);
+        const last = episodes.findLastIndex(e => e.progress && (e.progress.position > 0 || e.progress.completed));
+        return { ...card, ...(card.id === "demo-1" ? { episodesUpdatedAt: ago(3_600_000) } : {}),
+          ...(last >= 0 ? { unseenEpisodeCount: episodes.length - last - 1 } : {}) };
+      });
+      if (url.searchParams.get("sort") === "updated") saved.sort((a,b) => (b.episodesUpdatedAt ?? "").localeCompare(a.episodesUpdatedAt ?? ""));
+      return json(saved);
+    }
     if (path.startsWith("/watchlist/")) { const id = decodeURIComponent(path.slice(11)); watchlist = new Set(watchlist); if (method === "PUT") watchlist.add(id); else watchlist.delete(id); return json(null, 204); }
     if (path === "/history") return json({ items: history(), page: 1, hasNextPage: false });
     if (path.startsWith("/history/media/") && method === "DELETE") { episodesOf(decodeURIComponent(path.slice(15))).forEach(e => progressLog.delete(e.id)); return json(null, 204); }

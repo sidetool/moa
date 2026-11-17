@@ -4,14 +4,14 @@ import { Bookmark, ChevronRight, History, LogOut, Search as SearchIcon, Settings
 import type { HistoryEntry, Settings } from "@moa/shared";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSources } from "./SourcesPage";
 import { keys, useHistory, useMe, useProfiles, useSearch, useSettings, useWatchlist } from "../api/queries";
 import { PosterCard } from "../components/Cards";
 import { Avatar } from "../features/layout/AppShell";
 import { logout } from "./AccountsPage";
 import { Artwork } from "../components/Artwork";
-import { Button, ConfirmDialog, EmptyState, ProgressBar, Skeleton, Toggle } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, ProgressBar, Skeleton, Toggle, Select } from "../components/ui";
 import { api, currentProfileId, setCurrentProfileId } from "../lib/api";
 import { clock } from "../lib/format";
 import { settledQuery, useSettledQuery } from "../lib/search-input";
@@ -52,14 +52,40 @@ export function SearchPage() {
 }
 
 export function MyListPage() {
-  const list = useWatchlist();
+  const [sort, setSort] = useState<'saved' | 'updated'>('saved');
+  const list = useWatchlist(sort);
+  const client = useQueryClient();
+  const profile = currentProfileId();
+  const revision = useRef<{ profile: string | null; value: number } | undefined>(undefined);
+  const refresh = useQuery({
+    queryKey: ['watchlist-refresh', profile],
+    queryFn: ({ signal }) => api<{ running: boolean; revision: number }>('/watchlist/refresh-status', { signal }),
+    refetchOnMount: 'always',
+    refetchInterval: query => query.state.data?.running ? 2000 : 60_000,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!refresh.data || profile !== currentProfileId()) return;
+    const previous = revision.current;
+    revision.current = { profile, value: refresh.data.revision };
+    const lastSeen = previous?.profile === profile ? previous.value : 0;
+    if (lastSeen !== refresh.data.revision) {
+      // Even the first status response can describe a batch that finished after
+      // the list request began. Replace any in-flight read of that older snapshot.
+      const scope = { queryKey: [...keys.watchlist, profile] };
+      void client.cancelQueries(scope).then(() => {
+        if (profile === currentProfileId()) return client.invalidateQueries(scope);
+      });
+    }
+  }, [refresh.data, profile, client]);
   const navigate = useNavigate();
   return (
     <div className="page-pad">
-      <header className="page-head"><h1>내 목록</h1></header>
+      <header className="page-head page-head-row"><h1>내 목록</h1>{!!list.data?.length && <Select aria-label="내 목록 정렬" value={sort} onChange={value => setSort(value as typeof sort)} options={[{ value: "saved", label: "담은 순" }, { value: "updated", label: "회차 업데이트순" }]} />}</header>
+      {list.isError && <p className="settings-error" role="alert">목록을 불러오지 못했어요. <button className="text-btn" onClick={() => void list.refetch()}>다시 시도</button></p>}
       {list.isPending && <GridSkeleton />}
       {list.data?.length === 0 && <EmptyState icon={<Bookmark size={40} />} title="아직 담은 작품이 없습니다" body="작품 상세 화면에서 '내 목록'을 누르면 여기에 모입니다." action={<Button variant="primary" onClick={() => navigate("/")}>둘러보기</Button>} />}
-      {!!list.data?.length && <div className="grid">{list.data.map(card => <PosterCard key={card.id} card={card} />)}</div>}
+      {!!list.data?.length && <div className="grid">{list.data.map(card => <PosterCard key={card.id} card={card} showUnseen />)}</div>}
     </div>
   );
 }

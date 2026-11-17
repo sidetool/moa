@@ -1,3 +1,4 @@
+import { RefreshTitle } from '../features/title/RefreshTitle';
 import { TitleReviews } from '../features/title/TitleReviews';
 import { TitleSources } from '../features/title/TitleSources';
 import { InlinePlugins } from '../features/plugins/WebsitePlugins';
@@ -15,7 +16,7 @@ import { MetadataCredit, PeopleRow, SimilarRow } from "../features/title/TitleEx
 import { TrailerDialog } from "../features/title/TrailerDialog";
 import { trailerKeys } from "../lib/youtube";
 import { Button, ButtonLink, EmptyState, ProgressBar, Skeleton } from "../components/ui";
-import { ApiError } from "../lib/api";
+import { ApiError, currentProfileId } from "../lib/api";
 import { foreignCode, foreignLang, langLabel, seasonInfo, type SeasonInfo } from "../features/catalog/card-meta";
 import { useFranchise, type FranchiseSeason } from "../features/catalog/franchise";
 import { useDevicePrefs } from "../lib/device-prefs";
@@ -270,6 +271,7 @@ export function TitlePage() {
             >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
+            <RefreshTitle key={`${currentProfileId()}:${m.id}`} id={m.id} />
           </div>
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}

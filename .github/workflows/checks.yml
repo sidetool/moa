@@ -37,7 +37,7 @@ jobs:
         run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-quality.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Plugin history, discovery and people contracts
         run: |
-          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/website-plugins.test.ts
+          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/catalog-refresh*.test.ts test/website-plugins.test.ts
           node --test plugins/title-people/test/plugin.test.mjs
       - run: pnpm --filter @moa/web build
       - name: Install isolated browser test tools
@@ -59,6 +59,17 @@ jobs:
           curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
           node apps/web/scripts/verify-search-loading.mjs
           node apps/web/scripts/verify-search-return.mjs
+      - name: Catalog refresh and saved-title updates
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+          MOA_TEST_BASE: http://127.0.0.1:5187
+          MOA_API: http://127.0.0.1:1
+          VITE_MOCK: '1'
+        run: |
+          pnpm --filter @moa/web exec vite --host 127.0.0.1 --port 5187 --strictPort > "$RUNNER_TEMP/moa-catalog-vite.log" 2>&1 &
+          trap 'kill "$!" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
+          node apps/web/scripts/verify-catalog-refresh.mjs
       - name: Isolated Docker update and rollback
         run: |
           docker pull node:22-bookworm-slim

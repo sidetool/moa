@@ -170,10 +170,28 @@ export class TitleGroups {
     }).map(row => row.id as string);
     return { episodeIds, mediaIds };
   }
+  savedIds(profile: string): string[] {
+    return this.catalog.db.all('SELECT media_id FROM watchlist WHERE profile_id=? ORDER BY added_at DESC,media_id', profile).map(row => row.media_id);
+  }
+  latestWatchedMembers(profile: string, mapping: Map<string, string>, selected: ReadonlySet<string>) {
+    const watched = new Map<string, string>();
+    if (!selected.size) return watched;
+    for (const row of this.catalog.db.all(`SELECT e.media_id,MAX(p.updated_at) AS updated
+      FROM progress p JOIN episodes e ON e.id=p.episode_id
+      WHERE p.profile_id=? AND (p.position>0 OR p.completed=1)
+      GROUP BY e.media_id ORDER BY updated DESC,e.media_id`, profile)) {
+      const group = mapping.get(row.media_id);
+      if (group && selected.has(group) && !watched.has(group)) watched.set(group, row.media_id);
+    }
+    return watched;
+  }
+  saved(profile: string) {
+    return this.resolveMapped(this.savedIds(profile), profile, this.mapping(profile), undefined, true);
+  }
   resolve(ids: string[], profile: string, query?: string): MediaCard[] {
     return this.resolveMapped(ids,profile,this.mapping(profile),query);
   }
-  private resolveMapped(ids:string[],profile:string,map:Map<string,string>,query?:string):MediaCard[]{
+  private resolveMapped(ids:string[],profile:string,map:Map<string,string>,query?:string,withHistory = query !== undefined):MediaCard[]{
     const groups = new Map<string,MediaCard[]>();
     for (const id of new Set(ids)) {
       const k = map.get(id); if (!k) continue;
@@ -182,20 +200,11 @@ export class TitleGroups {
     }
     // History is read fresh, independently of the cached identity mapping. Only real
     // viewing activity participates; a completed latest source must suppress an older resume.
-    const watched = new Map<string, string>();
-    if (query !== undefined && groups.size) {
-      for (const row of this.catalog.db.all(`SELECT e.media_id,MAX(p.updated_at) AS updated
-        FROM progress p JOIN episodes e ON e.id=p.episode_id
-        WHERE p.profile_id=? AND (p.position>0 OR p.completed=1)
-        GROUP BY e.media_id ORDER BY updated DESC,e.media_id`, profile)) {
-        const key = map.get(row.media_id);
-        if (key && groups.has(key) && !watched.has(key)) watched.set(key, row.media_id);
-      }
-    }
+    const watched = withHistory ? this.latestWatchedMembers(profile, map, new Set(groups.keys())) : undefined;
     return [...groups].map(([groupId, cards]) => {
       const rank = (c: MediaCard) => c.provider.lang === 'ko' ? 0 : c.provider.lang === 'all' || c.provider.kind === 'local' ? 1 : 2;
       const representative = cards.reduce((best, card) => rank(card) < rank(best) ? card : best);
-      const watchedId = watched.get(groupId);
+      const watchedId = watched?.get(groupId);
       const latest = watchedId ? cards.find(card => card.id === watchedId)
         ?? this.catalog.card(this.catalog.db.get('SELECT * FROM media WHERE id=?', watchedId)!, profile) : undefined;
       return { ...representative, groupId, groupMemberIds: cards.map(card => card.id),

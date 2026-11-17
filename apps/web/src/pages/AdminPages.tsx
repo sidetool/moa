@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
 import { NetworkSettings } from "../features/settings/NetworkSettings";
+import { CatalogRefreshSettings } from "../features/settings/CatalogRefreshSettings";
 import { TmdbSettings } from "../features/settings/TmdbSettings";
 import { YouTubeSettings } from "../features/settings/YouTubeSettings";
 import { TranslationSettings } from "../features/settings/TranslationSettings";
@@ -290,7 +291,7 @@ export function SettingsPage() {
         onChange={patch => void save(patch).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
       {admin && category === "sources" && <SourcesPage embedded />}
       {admin && category === "accounts" && <AccountsPage embedded />}
-      {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}
+      {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><CatalogRefreshSettings /><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}
       {admin && category === "subtitle-library" && <><SubtitleLibrarySettings /><SubtitleMemorySettings /></>}
       {admin && category === "plugins" && <WebsitePlugins admin />}
       {admin && category === "translation" && <><TranslationSettings /><section className="settings-group"><h2>요청 설정</h2><div className="settings-card"><RequestControls /></div></section></>}
