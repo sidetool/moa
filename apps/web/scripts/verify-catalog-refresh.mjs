@@ -14,6 +14,12 @@ function installFixture() {
   const state = window.catalogFixture = { titleReads: 0, sourceReads: 0, listReads: [], statusReads: 0, settingsReads: 0, refreshes: [], saves: [], observed: 1 };
   const wait = key => new Promise(resolve => { state[key] = resolve; });
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  function withSeasons(detail) {
+    if (!state.layoutTitle) return detail;
+    const second = { number: 2, title: '시즌 2 · 아주 긴 부제가 붙은 시즌', episodes: detail.seasons[0].episodes.slice(0, 2)
+      .map(episode => ({ ...episode, id: `s2-${episode.id}`, season: 2 })) };
+    return { ...detail, seasons: [...detail.seasons, second] };
+  }
   let currentFetch = window.fetch.bind(window);
   Object.defineProperty(window, 'fetch', {
     configurable: true,
@@ -37,7 +43,10 @@ function installFixture() {
           state.titleReads++;
           const response = await mock(input, init);
           const detail = await response.json();
-          return json({ ...detail, title: profile === 'p2' ? '가족의 작품' : !state.titleReady ? '저장한 작품' : state.layoutTitle || '확인한 작품',
+          const episodeCase = localStorage.getItem('verify.episodeCase');
+          if (episodeCase === 'empty') return json({ ...detail, seasons: [], playTarget: undefined, refreshing: false });
+          if (episodeCase === 'live') return json({ ...detail, badge: 'LIVE', refreshing: false });
+          return json({ ...withSeasons(detail), title: profile === 'p2' ? '가족의 작품' : !state.titleReady ? '저장한 작품' : state.layoutTitle || '확인한 작품',
             ...(state.titleReady && state.layoutLogo ? { logo: state.layoutLogo } : {}),
             refreshing: profile === 'p1' && !state.titleReady });
         }
@@ -47,7 +56,7 @@ function installFixture() {
           const response = await mock('/api/media/demo-1', { method: 'GET' });
           const detail = await response.json();
           await wait('finishTitle');
-          return json({ detail: { ...detail, title: '수동 갱신 작품', refreshing: false }, errors: partial ? ['metadata'] : [] });
+          return json({ detail: { ...withSeasons(detail), title: '수동 갱신 작품', refreshing: false }, errors: partial ? ['metadata'] : [] });
         }
         if (url.pathname === '/api/sources/sample-kr/browse') {
           state.sourceReads++;
@@ -183,21 +192,27 @@ try {
       }, { width, longTitle });
       await heading(page, longTitle);
       if (width === 390) await page.waitForFunction(() => document.querySelector('.title-name img')?.naturalWidth > 0);
-      const refresh = page.getByRole('button', { name: '작품 정보 새로고침', exact: true });
+      const refresh = page.getByRole('button', { name: '회차 새로고침', exact: true });
+      const panel = page.getByRole('region', { name: '회차', exact: true });
+      const picker = panel.locator('button.season-trigger');
+      await picker.click();
+      await page.getByRole('menuitemradio', { name: /시즌 2/ }).click();
+      await panel.locator('li[data-episode^="s2-"]').first().waitFor();
       const layout = await refresh.evaluate(button => {
-        const icon = button.querySelector('svg').getBoundingClientRect();
-        const box = button.getBoundingClientRect(), heading = document.querySelector('.title-name').getBoundingClientRect();
-        return { iconOnly: !button.textContent.trim() && icon.width <= 20 && !button.closest('.hero-actions'),
+        const icon = button.querySelector('svg').getBoundingClientRect(), box = button.getBoundingClientRect();
+        const head = button.closest('.episodes-head'), sort = head.querySelector('[aria-label="최신화부터 보기"]').getBoundingClientRect();
+        return { iconOnly: !button.textContent.trim() && icon.width <= 20 && !document.querySelector('.title-hero .episode-refresh-button'),
           transparent: getComputedStyle(button).backgroundColor === 'rgba(0, 0, 0, 0)',
           touchTarget: box.width >= 44 && box.height >= 44,
-          besideTitle: heading.right <= box.left && box.right <= innerWidth && box.top < heading.bottom && box.bottom > heading.top };
+          beforeSort: box.right <= sort.left && sort.left - box.right <= 8 && box.top < sort.bottom && box.bottom > sort.top,
+          fits: [...head.querySelectorAll('button')].every(el => el.getBoundingClientRect().right <= innerWidth) };
       });
-      assert.deepEqual(layout, { iconOnly: true, transparent: true, touchTarget: true, besideTitle: true });
+      assert.deepEqual(layout, { iconOnly: true, transparent: true, touchTarget: true, beforeSort: true, fits: true });
       if (width === 1280) {
         await assertPollingStops(page, 'titleReads', cachedReads);
-        await page.locator('.title-hero .title-back').focus();
-        await page.keyboard.press('Tab');
-        assert.ok(await refresh.evaluate(button => button === document.activeElement), 'keyboard can reach the icon beside the title');
+        await panel.getByRole('button', { name: '최신화부터 보기' }).focus();
+        await page.keyboard.press('ArrowLeft');
+        assert.ok(await refresh.evaluate(button => button === document.activeElement), 'the remote moves left from sort to refresh');
         await page.keyboard.press('Enter');
       } else {
         await refresh.tap();
@@ -208,6 +223,7 @@ try {
       await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
       await fixture(page, () => window.catalogFixture.finishTitle());
       await heading(page, '수동 갱신 작품');
+      assert.match(await picker.textContent(), /시즌 2/);
       await page.getByRole('status').filter({ hasText: '갱신 완료' }).waitFor();
       await fixture(page, () => { window.catalogFixture.partial = true; window.catalogFixture.finishTitle = null; });
       await refresh.click();
@@ -237,6 +253,26 @@ try {
       await screenshot(page, `list-${width}`);
     });
   }
+
+  await scenario('empty-episodes', 320, async page => {
+    await open(page, '/title/demo-1');
+    const panel = page.getByRole('region', { name: '회차', exact: true });
+    await panel.getByText('아직 제공된 회차가 없습니다.').waitFor();
+    assert.equal(await panel.getByRole('button', { name: '최신화부터 보기' }).count(), 0);
+    await panel.getByRole('button', { name: '회차 새로고침' }).tap();
+    await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
+    await fixture(page, () => window.catalogFixture.finishTitle());
+    await panel.locator('li[data-episode]').first().waitFor();
+    await panel.getByRole('button', { name: '최신화부터 보기' }).waitFor();
+  }, () => localStorage.setItem('verify.episodeCase', 'empty'));
+
+  await scenario('movie-and-live', 390, async page => {
+    for (const [id, name] of [['demo-2', '여름의 끝에서'], ['demo-1', '밤의 도시를 걷다']]) {
+      await open(page, '/title/' + id);
+      await heading(page, name);
+      assert.equal(await page.getByRole('button', { name: '회차 새로고침' }).count(), 0);
+    }
+  }, () => localStorage.setItem('verify.episodeCase', 'live'));
 
   await scenario('list-already-refreshed', 1280, async page => {
     await open(page, '/');
@@ -276,7 +312,7 @@ try {
   await scenario('late-profile-title', 1280, async page => {
     await open(page, '/title/demo-1');
     await heading(page, '저장한 작품');
-    await page.getByRole('button', { name: '작품 정보 새로고침', exact: true }).click();
+    await page.getByRole('button', { name: '회차 새로고침', exact: true }).click();
     await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
     await switchProfile(page);
     await openList(page);

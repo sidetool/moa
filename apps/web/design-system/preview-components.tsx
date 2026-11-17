@@ -1,12 +1,12 @@
 import { DEFAULT_PLAYER_SHORTCUTS, type Settings as ProfileSettings } from '@moa/shared';
 import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleControls';
-import { TitleRefreshButton } from '../src/features/title/RefreshTitle';
+import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
 import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
 import { useEffect, useId, useRef, useState } from 'react';
-import { Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
+import { ArrowDownUp, Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { Button, ConfirmDialog, EmptyState, IconButton, NumberStepper, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
 
 export function ButtonsPreview() {
@@ -188,6 +188,7 @@ export function PlayerQualityPreview() {
 export function CatalogRefreshPattern() {
   const [interval, setInterval] = useState('60');
   const [sort, setSort] = useState('saved');
+  const [descending, setDescending] = useState(false);
   const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
@@ -198,6 +199,6 @@ export function CatalogRefreshPattern() {
     <div className="preview-row"><b>정보 갱신 빈도</b><Select aria-label="정보 갱신 빈도" value={interval} onChange={setInterval} options={[{ value: '15', label: '자주' }, { value: '60', label: '기본' }, { value: '360', label: '드물게' }]} /></div>
     <div className="preview-row"><b>내 목록</b><Select aria-label="내 목록 정렬" value={sort} onChange={setSort} options={[{ value: 'saved', label: '담은 순' }, { value: 'updated', label: '회차 업데이트순' }]} /></div>
     <span>안 본 회차 2개</span>
-    <div className="preview-row"><b>작품 제목</b><TitleRefreshButton state={state} onRefresh={() => setState('busy')} /></div>
+    <div className="preview-row"><b>회차</b><EpisodeRefreshButton state={state} onRefresh={() => setState('busy')} /><IconButton label={descending ? '1화부터 보기' : '최신화부터 보기'} onClick={() => setDescending(!descending)}><ArrowDownUp size={18} /></IconButton></div>
   </div>;
 }

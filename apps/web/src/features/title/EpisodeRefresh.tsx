@@ -6,11 +6,11 @@ import { keys } from '../../api/queries';
 import { IconButton } from '../../components/ui';
 import { api, ApiError, currentProfileId } from '../../lib/api';
 
-export function TitleRefreshButton({ state, onRefresh }: { state: 'idle' | 'busy' | 'done'; onRefresh: () => void }) {
+export function EpisodeRefreshButton({ state, onRefresh }: { state: 'idle' | 'busy' | 'done'; onRefresh: () => void }) {
   const busy = state === 'busy';
   const Icon = busy ? LoaderCircle : state === 'done' ? Check : RefreshCw;
   return <>
-    <IconButton type="button" className="icon-btn-l title-refresh-button" label="작품 정보 새로고침"
+    <IconButton type="button" className="icon-btn-l episode-refresh-button" label="회차 새로고침"
       aria-busy={busy} aria-disabled={busy} onClick={() => { if (!busy) onRefresh(); }}>
       <Icon size={18} aria-hidden="true" />
     </IconButton>
@@ -18,7 +18,7 @@ export function TitleRefreshButton({ state, onRefresh }: { state: 'idle' | 'busy
   </>;
 }
 
-export function RefreshTitle({ id }: { id: string }) {
+export function useEpisodeRefresh(id: string) {
   const client = useQueryClient();
   const mounted = useRef(false);
   useLayoutEffect(() => {
@@ -54,10 +54,9 @@ export function RefreshTitle({ id }: { id: string }) {
     return () => clearTimeout(timer);
   }, [done, refresh.reset]);
 
-  return <>
-    <TitleRefreshButton state={refresh.isPending ? 'busy' : done ? 'done' : 'idle'} onRefresh={() => refresh.mutate(currentProfileId())} />
-    {(refresh.isError || !!refresh.data?.errors.length) && <span role="alert" className="settings-error title-refresh-error">
-      {refresh.isError ? '새로고침하지 못했어요.' : '일부 정보를 갱신하지 못했어요.'}
-    </span>}
-  </>;
+  return {
+    state: refresh.isPending ? 'busy' as const : done ? 'done' as const : 'idle' as const,
+    run: () => refresh.mutate(currentProfileId()),
+    error: refresh.isError ? '새로고침하지 못했어요.' : refresh.data?.errors.length ? '일부 정보를 갱신하지 못했어요.' : undefined,
+  };
 }

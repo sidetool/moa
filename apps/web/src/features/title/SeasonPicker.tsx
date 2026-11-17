@@ -31,7 +31,7 @@ export function SeasonPicker({ choices, count, onPick }: { choices: SeasonChoice
   }, [open]);
 
   if (!current) return null;
-  const label = <>{current.label}<span className="season-trigger-count">{count}화</span></>;
+  const label = <><span className="season-trigger-label">{current.label}</span><span className="season-trigger-count">{count}화</span></>;
   if (choices.length < 2) return <span className="season-trigger is-static">{label}</span>;
   return (
     <div className="season-picker" ref={root}>
