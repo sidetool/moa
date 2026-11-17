@@ -1,10 +1,11 @@
 import { DEFAULT_PLAYER_SHORTCUTS, type Settings as ProfileSettings } from '@moa/shared';
 import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleControls';
+import { TitleRefreshButton } from '../src/features/title/RefreshTitle';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
 import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { Button, ConfirmDialog, EmptyState, IconButton, NumberStepper, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
 
@@ -187,11 +188,16 @@ export function PlayerQualityPreview() {
 export function CatalogRefreshPattern() {
   const [interval, setInterval] = useState('60');
   const [sort, setSort] = useState('saved');
-  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = setTimeout(() => setState(state === 'busy' ? 'done' : 'idle'), state === 'busy' ? 800 : 2200);
+    return () => clearTimeout(timer);
+  }, [state]);
   return <div className="preview-stack">
     <div className="preview-row"><b>정보 갱신 빈도</b><Select aria-label="정보 갱신 빈도" value={interval} onChange={setInterval} options={[{ value: '15', label: '자주' }, { value: '60', label: '기본' }, { value: '360', label: '드물게' }]} /></div>
     <div className="preview-row"><b>내 목록</b><Select aria-label="내 목록 정렬" value={sort} onChange={setSort} options={[{ value: 'saved', label: '담은 순' }, { value: 'updated', label: '회차 업데이트순' }]} /></div>
     <span>안 본 회차 2개</span>
-    <div className="preview-row"><Button variant="secondary" size="l" icon={<RefreshCw size={20} />} disabled={busy} aria-busy={busy} onClick={() => { setBusy(true); setTimeout(() => setBusy(false), 1000); }}>{busy ? '갱신 중…' : '새로고침'}</Button></div>
+    <div className="preview-row"><b>작품 제목</b><TitleRefreshButton state={state} onRefresh={() => setState('busy')} /></div>
   </div>;
 }

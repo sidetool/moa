@@ -7,7 +7,6 @@
 .page-head h1 { font-size: clamp(1.7rem, 3vw, 2.4rem); font-weight: 850; }
 .page-kicker { color: var(--text-3); font-weight: 650; margin-bottom: 4px; }
 .page-head-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.title-refresh-error { flex-basis: 100%; grid-column: 1 / -1; }
 .page-head-actions { display: flex; gap: 8px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--poster-w), 1fr)); gap: 26px 12px; }
 
@@ -46,6 +45,8 @@
 .title-back:hover { color: #fff; }
 
 .title-hero-copy { width: min(720px, 100%); padding: 0 var(--gutter) 28px; animation: rise .5s var(--ease) both; }
+.title-heading-row { display: grid; grid-template-columns: minmax(0, max-content) var(--control-height-lg) minmax(0, 1fr); align-items: center; column-gap: var(--space-1); }
+.title-heading-row .title-refresh-error { grid-column: 1 / -1; }
 .title-name { font-size: clamp(2.2rem, 5vw, 4rem); font-weight: 900; line-height: 1.04; letter-spacing: -.055em; }
 .title-overview {
   margin-top: 20px;
@@ -60,7 +61,7 @@
   cursor: pointer;
 }
 .title-overview.is-expanded { -webkit-line-clamp: unset; cursor: auto; }
-.title-name.has-logo img { width: auto; max-width: min(480px, 88%); max-height: clamp(96px, 18vh, 180px); object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 24px rgba(0, 0, 0, .45)); }
+.title-name.has-logo img { width: auto; max-width: min(480px, 100%); max-height: clamp(96px, 18vh, 180px); object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 24px rgba(0, 0, 0, .45)); }
 .title-original { margin-top: 8px; color: var(--text-3); font-size: .92rem; font-weight: 600; }
 .title-tagline { margin-top: 18px; color: var(--text-2); font-size: .95rem; font-weight: 600; }
 .title-tagline + .title-overview { margin-top: 6px; }
@@ -387,7 +388,7 @@
   .episode-no { display: inline; color: var(--text-2); }
   .hero-overview { display: none; }
   .hero-title.has-logo img { max-width: 78%; max-height: 92px; margin: 0 auto; object-position: center bottom; }
-  .title-name.has-logo img { max-width: 76%; max-height: 96px; }
+  .title-name.has-logo img { max-height: 96px; }
   .person { width: 84px; }
   .person-photo { width: 72px; height: 72px; }
   .similar-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 8px; }

@@ -37,7 +37,8 @@ function installFixture() {
           state.titleReads++;
           const response = await mock(input, init);
           const detail = await response.json();
-          return json({ ...detail, title: profile === 'p2' ? '가족의 작품' : !state.titleReady ? '저장한 작품' : '확인한 작품',
+          return json({ ...detail, title: profile === 'p2' ? '가족의 작품' : !state.titleReady ? '저장한 작품' : state.layoutTitle || '확인한 작품',
+            ...(state.titleReady && state.layoutLogo ? { logo: state.layoutLogo } : {}),
             refreshing: profile === 'p1' && !state.titleReady });
         }
         if (url.pathname === '/api/media/demo-1/refresh' && method === 'POST') {
@@ -77,7 +78,7 @@ function installFixture() {
 }
 
 async function scenario(name, width, run, seed) {
-  const context = await browser.newContext({ viewport: { width, height: 900 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+  const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width < 768, reducedMotion: 'reduce', serviceWorkers: 'block' });
   await context.route('**/*', route => new URL(route.request().url()).origin === base.origin ? route.continue() : route.abort());
   await context.addInitScript(installFixture);
   if (seed) await context.addInitScript(seed);
@@ -172,26 +173,42 @@ try {
     await scenario(`title-${width}`, width, async page => {
       await open(page, '/title/demo-1');
       await heading(page, '저장한 작품');
-      const cachedReads = await fixture(page, () => {
-        window.catalogFixture.titleReady = true;
-        return window.catalogFixture.titleReads;
+      const longTitle = '새벽 기차를 타고 도시를 지나 작은 바닷가 마을에 도착하기까지의 아주 긴 이야기';
+      const cachedReads = await fixture(page, ({ width, longTitle }) => {
+        const state = window.catalogFixture;
+        state.titleReady = true;
+        state.layoutTitle = longTitle;
+        if (width === 390) state.layoutLogo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="180"><text x="0" y="135" font-size="128" fill="white">작품 로고</text></svg>');
+        return state.titleReads;
+      }, { width, longTitle });
+      await heading(page, longTitle);
+      if (width === 390) await page.waitForFunction(() => document.querySelector('.title-name img')?.naturalWidth > 0);
+      const refresh = page.getByRole('button', { name: '작품 정보 새로고침', exact: true });
+      const layout = await refresh.evaluate(button => {
+        const icon = button.querySelector('svg').getBoundingClientRect();
+        const box = button.getBoundingClientRect(), heading = document.querySelector('.title-name').getBoundingClientRect();
+        return { iconOnly: !button.textContent.trim() && icon.width <= 20 && !button.closest('.hero-actions'),
+          transparent: getComputedStyle(button).backgroundColor === 'rgba(0, 0, 0, 0)',
+          touchTarget: box.width >= 44 && box.height >= 44,
+          besideTitle: heading.right <= box.left && box.right <= innerWidth && box.top < heading.bottom && box.bottom > heading.top };
       });
-      await heading(page, '확인한 작품');
-      const refresh = page.getByRole('button', { name: '새로고침', exact: true });
+      assert.deepEqual(layout, { iconOnly: true, transparent: true, touchTarget: true, besideTitle: true });
       if (width === 1280) {
         await assertPollingStops(page, 'titleReads', cachedReads);
-        await refresh.press('Enter');
+        await page.locator('.title-hero .title-back').focus();
+        await page.keyboard.press('Tab');
+        assert.ok(await refresh.evaluate(button => button === document.activeElement), 'keyboard can reach the icon beside the title');
+        await page.keyboard.press('Enter');
       } else {
-        await refresh.click();
+        await refresh.tap();
       }
-      const busy = page.getByRole('button', { name: '갱신 중…' });
-      await busy.waitFor();
-      assert.ok(await busy.isDisabled());
-      assert.equal(await busy.getAttribute('aria-busy'), 'true');
+      await page.getByRole('status').filter({ hasText: '갱신 중…' }).waitFor();
+      assert.ok(await refresh.isDisabled());
+      assert.equal(await refresh.getAttribute('aria-busy'), 'true');
       await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
       await fixture(page, () => window.catalogFixture.finishTitle());
       await heading(page, '수동 갱신 작품');
-      await page.getByRole('button', { name: '갱신 완료', exact: true }).waitFor();
+      await page.getByRole('status').filter({ hasText: '갱신 완료' }).waitFor();
       await fixture(page, () => { window.catalogFixture.partial = true; window.catalogFixture.finishTitle = null; });
       await refresh.click();
       await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
@@ -199,7 +216,7 @@ try {
       await alert(page, '일부 정보를 갱신하지 못했어요.');
       assert.deepEqual(await fixture(page, () => window.catalogFixture.refreshes), ['p1', 'p1']);
       await screenshot(page, `title-${width}`);
-    });
+    }, width === 1280 ? () => localStorage.setItem('moa.remoteMode', 'on') : undefined);
 
     await scenario(`list-${width}`, width, async page => {
       await open(page, '/my-list');
@@ -259,7 +276,7 @@ try {
   await scenario('late-profile-title', 1280, async page => {
     await open(page, '/title/demo-1');
     await heading(page, '저장한 작품');
-    await page.getByRole('button', { name: '새로고침', exact: true }).click();
+    await page.getByRole('button', { name: '작품 정보 새로고침', exact: true }).click();
     await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
     await switchProfile(page);
     await openList(page);

@@ -1,10 +1,22 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { MediaDetail } from '@moa/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
+import { Check, LoaderCircle, RefreshCw } from 'lucide-react';
 import { keys } from '../../api/queries';
-import { Button } from '../../components/ui';
+import { IconButton } from '../../components/ui';
 import { api, ApiError, currentProfileId } from '../../lib/api';
+
+export function TitleRefreshButton({ state, onRefresh }: { state: 'idle' | 'busy' | 'done'; onRefresh: () => void }) {
+  const busy = state === 'busy';
+  const Icon = busy ? LoaderCircle : state === 'done' ? Check : RefreshCw;
+  return <>
+    <IconButton type="button" className="icon-btn-l title-refresh-button" label="작품 정보 새로고침"
+      aria-busy={busy} aria-disabled={busy} onClick={() => { if (!busy) onRefresh(); }}>
+      <Icon size={18} aria-hidden="true" />
+    </IconButton>
+    <span className="sr-only" role="status">{busy ? '갱신 중…' : state === 'done' ? '갱신 완료' : ''}</span>
+  </>;
+}
 
 export function RefreshTitle({ id }: { id: string }) {
   const client = useQueryClient();
@@ -43,10 +55,7 @@ export function RefreshTitle({ id }: { id: string }) {
   }, [done, refresh.reset]);
 
   return <>
-    <Button variant="secondary" size="l" icon={<RefreshCw size={20} />} aria-busy={refresh.isPending}
-      disabled={refresh.isPending} onClick={() => refresh.mutate(currentProfileId())}>
-      <span aria-live="polite">{refresh.isPending ? '갱신 중…' : done ? '갱신 완료' : '새로고침'}</span>
-    </Button>
+    <TitleRefreshButton state={refresh.isPending ? 'busy' : done ? 'done' : 'idle'} onRefresh={() => refresh.mutate(currentProfileId())} />
     {(refresh.isError || !!refresh.data?.errors.length) && <span role="alert" className="settings-error title-refresh-error">
       {refresh.isError ? '새로고침하지 못했어요.' : '일부 정보를 갱신하지 못했어요.'}
     </span>}

@@ -244,7 +244,10 @@ export function TitlePage() {
         {backButton}
         <div className="title-hero-copy">
           <p className="hero-kicker">{m.provider.kind === "local" ? "내 라이브러리" : m.provider.name}{lang && <span className="lang-tag" title={`${langLabel(lang)} 소스`}>{lang.toUpperCase()}</span>}</p>
-          <TitleLogo className="title-name" logo={m.logo} title={m.title} />
+          <div className="title-heading-row">
+            <TitleLogo className="title-name" logo={m.logo} title={m.title} />
+            <RefreshTitle key={`${currentProfileId()}:${m.id}`} id={m.id} />
+          </div>
           {(season || lang) && <SeasonTag info={season} lang={lang} />}
           {m.originalTitle && m.originalTitle !== m.title && <p className="title-original" lang="en">{m.originalTitle}</p>}
           <MetaLine card={m} meta={meta} />
@@ -271,7 +274,6 @@ export function TitlePage() {
             >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
-            <RefreshTitle key={`${currentProfileId()}:${m.id}`} id={m.id} />
           </div>
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
