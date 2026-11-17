@@ -215,11 +215,16 @@ test('HTTP source browse and detail signal ongoing work while retaining the cach
 });
 
 test('watchlist checks use completed-title freshness and share the per-minute budget across profiles', async t => {
-  const dir = await workDirectory(t), db = new Store(dir), catalog = new Catalog(db);
+  const dir = await workDirectory(), db = new Store(dir), catalog = new Catalog(db);
   const sources = new Sources(db, catalog), groups = new TitleGroups(catalog);
   const now = Date.now(), hour = 3_600_000;
   const scheduler = new WatchlistRefresh(db, sources, groups, () => now);
-  t.after(async () => { await scheduler.close(); await sources.close(); db.close(); });
+  t.after(async () => {
+    await scheduler.close();
+    await sources.close();
+    db.close();
+    await rm(dir, { recursive: true });
+  });
   seedSource(db, 'fixture');
   for (const profile of ['alice', 'bob']) {
     db.run('INSERT INTO profiles(id,name,color,kids,created_at) VALUES(?,?,?,0,?)', profile, profile, 'blue', '2026');
