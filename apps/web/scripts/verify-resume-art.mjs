@@ -393,16 +393,60 @@ try {
   assert.equal(await authTab.evaluate(() => localStorage.getItem('test.unrelated')), 'keep');
   await waitForArt(episodeThumb);
 
-  // A remote session revocation is confirmed by the protected sessions endpoint on return.
+  // Both protected settings queries discover the same revocation. Keep a second
+  // tab's actual 401s pending until a new login has saved fresh artwork.
   await saveScene();
   db.prepare('DELETE FROM sessions WHERE account_id=?').run(owner);
-  await authTab.goto(base + '/settings#account');
-  await authTab.waitForURL(url => url.pathname === '/__moa/login' && url.searchParams.get('next') === '/settings#account');
+  const staleTab = await context.newPage();
+  const release401 = Promise.withResolvers();
+  const protectedSettings = /\/__moa\/api\/(?:sessions|session-settings)$/;
+  await staleTab.route(protectedSettings, async route => {
+    const response = await route.fetch();
+    assert.equal(response.status(), 401);
+    await release401.promise;
+    await route.fulfill({ response });
+  });
+  const staleRequests = ['sessions', 'session-settings'].map(path =>
+    staleTab.waitForRequest(req => new URL(req.url()).pathname === '/__moa/api/' + path, { timeout: 15_000 })
+  );
+  await Promise.all([staleTab.goto(base + '/settings#account'), ...staleRequests]);
+
+  // Hold both responses until both have arrived, so both API error handlers can run.
+  const both401 = Promise.withResolvers();
+  let failures = 0, loginRequests = 0;
+  await authTab.route(protectedSettings, async route => {
+    const response = await route.fetch();
+    assert.equal(response.status(), 401);
+    if (++failures === 2) both401.resolve();
+    await both401.promise;
+    await route.fulfill({ response });
+  });
+  const loginDocument = req => req.isNavigationRequest() && new URL(req.url()).pathname === '/__moa/login';
+  const countLogin = req => { if (loginDocument(req)) loginRequests++; };
+  authTab.on('request', countLogin);
+  await authTab.goto(base + '/settings#account', { waitUntil: 'commit' });
+  await authTab.getByLabel('아이디').waitFor();
+  const loginUrl = new URL(authTab.url());
+  assert.equal(loginUrl.pathname, '/__moa/login');
+  assert.equal(loginUrl.searchParams.get('next'), '/settings#account');
+  assert.equal(loginRequests, 1, 'concurrent login-required errors navigate to a single login document');
+  assert.equal(failures, 2);
+  authTab.off('request', countLogin);
+  await authTab.unroute(protectedSettings);
   assert.equal(await scenes(), 0);
   await waitForArt(episodeThumb);
+
   await authTab.goto(base + '/__moa/login');
   await login();
   assert.equal(await scenes(), 0);
+  await saveScene();
+  const freshGeneration = await generation();
+  const staleRedirect = staleTab.waitForRequest(loginDocument);
+  release401.resolve();
+  await staleRedirect;
+  assert.equal(await generation(), freshGeneration);
+  assert.ok(await scenes(), 'a late 401 from an old tab preserves the new session’s artwork');
+  await staleTab.close();
 
   // If scripts were disabled throughout the native logout/login, the next app load
   // receives the uncleared marker even when it never visited the scripted login form.

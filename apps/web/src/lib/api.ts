@@ -30,9 +30,19 @@ type ApiInit = { method?: string; body?: Json; signal?: AbortSignal; keepalive?:
 export const api = <T>(path: string, init: ApiInit = {}) => request<T>(`/api${path}`, init, false);
 export const authApi = <T>(path: string, init: ApiInit = {}) => request<T>(`/__moa/api${path}`, init, true);
 
-export function finishLogout() {
+let redirectingToLogin = false;
+function redirectToLogin(next?: string) {
+  if (redirectingToLogin) return;
+  redirectingToLogin = true;
   clearResumeScenes();
-  window.location.assign('/__moa/login');
+  if (next) window.location.replace(`/__moa/login?next=${encodeURIComponent(next)}`);
+  else window.location.assign('/__moa/login');
+}
+// A restored page can receive a new session expiry after a trip through the back-forward cache.
+window.addEventListener('pageshow', event => { if (event.persisted) redirectingToLogin = false; });
+
+export function finishLogout() {
+  redirectToLogin();
 }
 
 async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T> {
@@ -55,8 +65,7 @@ async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && data?.error === "login-required") {
-      clearResumeScenes();
-      window.location.replace(`/__moa/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
+      redirectToLogin(location.pathname + location.search + location.hash);
     }
     if (response.status === 401 && profile === currentProfileId() && ["profile-required", "profile-locked"].includes(data?.error)) {
       setCurrentProfileId(null);
