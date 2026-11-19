@@ -255,8 +255,17 @@ try {
   await page.waitForFunction(() => window.documentPictureInPicture.window.document.querySelector('.panel-settings')?.textContent.includes('Anime4K 원본 재생 · 화면 속 화면'));
   await page.evaluate(() => window.documentPictureInPicture.window.close());
   await page.waitForFunction(() => document.querySelector('video') === window.initialVideo);
-  await video.evaluate(v => v.play());
-  await video.evaluate(v => new Promise(resolve => v.requestVideoFrameCallback(() => v.requestVideoFrameCallback(resolve))));
+  // Chromium can keep playing after Document PiP without delivering rVFC on the reparented video.
+  const returned = await video.evaluate(v => {
+    const { totalVideoFrames, droppedVideoFrames } = v.getVideoPlaybackQuality();
+    void v.play();
+    return { time: v.currentTime, frames: totalVideoFrames - droppedVideoFrames };
+  });
+  await page.waitForFunction(({ time, frames }) => {
+    const v = document.querySelector('video');
+    const { totalVideoFrames, droppedVideoFrames } = v.getVideoPlaybackQuality();
+    return !v.paused && v.currentTime > time && totalVideoFrames - droppedVideoFrames >= frames + 2;
+  }, returned, { polling: 100, timeout: 15000 });
   await fallback('화질 보정 오류');
   assert.equal(await layer.count(), 0, 'returning from Document PiP cannot retry a failed filter');
   assert.equal(sessions, 2);
