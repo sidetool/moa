@@ -4,37 +4,36 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer, request as httpRequest } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { createAuthServer } from '../../../deploy/auth/server.mjs';
 import { passwordHash } from '../../../deploy/auth/accounts.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
-const base = process.env.MOA_TEST_BASE || 'http://127.0.0.1:5173';
+const frontend = new URL(process.env.MOA_TEST_BASE || 'http://127.0.0.1:5173');
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
 const db = new DatabaseSync(':memory:');
 const password = 'local-fixture-password', salt = 'ab'.repeat(30);
 const auth = createAuthServer({ database: db, credentials: { users: [{ username: 'viewer', salt, hash: await passwordHash(password, salt) }], csrfSecret: 'fixture' }, origin: 'http://localhost', allowAnyHost: true, secure: false });
+// Native navigations, redirects and device mutations share one browser origin with the app.
+const gateway = createServer((req, res) => {
+  if (req.url.startsWith('/__moa/')) return auth.emit('request', req, res);
+  const proxy = httpRequest(frontend, { method: req.method, path: req.url, headers: { ...req.headers, host: frontend.host } }, upstream => {
+    res.writeHead(upstream.statusCode, upstream.headers);
+    upstream.pipe(res);
+  });
+  proxy.on('error', () => res.destroy());
+  req.pipe(proxy);
+});
 let scratch;
 try {
-  await new Promise(resolve => auth.listen(0, '127.0.0.1', resolve));
-  const authOrigin = `http://127.0.0.1:${auth.address().port}`;
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${gateway.address().port}`;
   scratch = await mkdtemp(join(tmpdir(), 'moa-resume-scene-'));
   const path = process.env.MOA_TEST_VIDEO || join(scratch, 'sample.mp4');
   if (!process.env.MOA_TEST_VIDEO) execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=240x136:rate=2', '-t', '210', '-c:v', 'libx264', '-threads', '1', '-preset', 'ultrafast', '-movflags', '+faststart', path]);
   const bytes = await readFile(path);
   const context = await browser.newContext();
-  // Forward the gateway's auth paths to an isolated production auth server. Keep the
-  // browser's host, Origin, cookies, redirects and repeated Set-Cookie headers intact.
-  await context.route('**/__moa/**', async route => {
-    const request = route.request(), url = new URL(request.url());
-    const response = await fetch(authOrigin + url.pathname + url.search, {
-      method: request.method(), headers: { ...await request.allHeaders(), host: url.host },
-      body: request.postDataBuffer(), redirect: 'manual'
-    });
-    const headers = Object.fromEntries(response.headers);
-    if (response.headers.has('set-cookie')) headers['set-cookie'] = response.headers.getSetCookie().join('\n');
-    await route.fulfill({ status: response.status, headers, body: Buffer.from(await response.arrayBuffer()) });
-  });
   await context.route(url => url.pathname === '/settings', async route => {
     const response = await route.fetch();
     await route.fulfill({ response, body: (await response.text()).replace('</head>', '<meta name="moa-auth" content="enabled"></head>') });
@@ -321,7 +320,10 @@ try {
     const exit = page.waitForResponse(r => isExitSave(r.request()));
     await back();
     const saved = await (await exit).json();
-    await page.waitForFunction(key => document.querySelector('.landscape-card img')?.src === JSON.parse(localStorage.getItem(key) || '{}').image && localStorage.getItem(key), sceneKey(saved));
+    await page.waitForFunction(key => {
+      const image = JSON.parse(localStorage.getItem(key) || '{}').image;
+      return image && document.querySelector('.landscape-card img')?.src === image;
+    }, sceneKey(saved));
   };
   const holdExit = async () => {
     await frame.click();
@@ -355,16 +357,16 @@ try {
   // Use real account-scoped device DELETEs, including a retryable failure in the same dialog.
   const owner = db.prepare("SELECT id FROM accounts WHERE username='viewer'").get().id;
   const addDevice = name => {
-    const token = crypto.randomUUID(), id = crypto.randomUUID();
-    db.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(token, owner, Date.now() + 3600000, Date.now(), 0);
-    db.prepare('INSERT INTO session_devices(id,token_hash,name,created_at,last_seen) VALUES(?,?,?,?,?)').run(id, token, name, Date.now(), Date.now());
+    const tokenHash = crypto.randomUUID(), id = crypto.randomUUID();
+    db.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(tokenHash, owner, Date.now() + 3600000, Date.now(), 0);
+    db.prepare('INSERT INTO session_devices(id,token_hash,name,created_at,last_seen) VALUES(?,?,?,?,?)').run(id, tokenHash, name, Date.now(), Date.now());
   };
   addDevice('다른 브라우저');
   addDevice('다른 TV');
   await authTab.goto(base + '/settings#account');
   const sessionGroup = authTab.locator('.settings-group').filter({ has: authTab.getByRole('heading', { name: '로그인 기기' }) });
   const deviceLogout = label => sessionGroup.locator('.setting').filter({ hasText: label }).getByRole('button', { name: '로그아웃', exact: true });
-  const confirm = authTab.getByRole('dialog').getByRole('button', { name: '로그아웃', exact: true });
+  const confirm = authTab.getByRole('alertdialog').getByRole('button', { name: '로그아웃', exact: true });
   const before = await generation();
   await deviceLogout('다른 TV').click();
   await confirm.click();
@@ -417,7 +419,8 @@ try {
   console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, disabling and re-enabling in another tab, pending and stale settings, progress with capture disabled, native and current-device logout, revocation failure/retry, other devices, remote revocation, reauthentication and delayed progress after logout.');
 } finally {
   await browser.close();
-  if (auth.listening) await new Promise(resolve => auth.close(resolve));
+  if (gateway.listening) await new Promise(resolve => gateway.close(resolve));
+  auth.close();
   db.close();
   if (scratch) await rm(scratch, { recursive: true, force: true });
 }
