@@ -18,6 +18,16 @@ try {
   await context.addInitScript(() => {
     localStorage.setItem('moa.profile', 'viewer');
     window.capturedPositions = [];
+    // Keepalive is a fetch option, so the mock server needs a tag to identify the exit save.
+    const fetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (init?.keepalive && init.method === 'POST' && new URL(input instanceof Request ? input.url : input, location.href).pathname === '/api/progress') {
+        const headers = new Headers(init.headers);
+        headers.set('x-test-exit-save', '1');
+        return fetch(input, { ...init, headers });
+      }
+      return fetch(input, init);
+    };
     const draw = CanvasRenderingContext2D.prototype.drawImage;
     CanvasRenderingContext2D.prototype.drawImage = function(source, ...args) {
       if (source instanceof HTMLVideoElement && source.classList.contains('player-video')) window.capturedPositions.push(source.currentTime);
@@ -34,6 +44,7 @@ try {
   const card = { id: 'representative', title: '합성 시리즈', type: 'series', provider: { id: 'local', kind: 'local', name: '로컬' }, poster: picture };
   let account = 'local', count = 0, mediaRequests = 0, revision = 0, kind = 'resume', thumb = picture;
   let heldSave;
+  const isExitSave = request => request.headers()['x-test-exit-save'] === '1';
   let progress = { position: 28, duration: 210, completed: false, updatedAt: '2026-10-01T00:00:00.000Z' };
   await page.route('**/fixture/video.mp4', route => {
     mediaRequests++;
@@ -53,7 +64,7 @@ try {
       progress = { duration, position, completed: false, updatedAt: new Date(Date.UTC(2026, 10, 1) + ++revision).toISOString() };
       // Another Home read can observe the committed revision before this HTTP acknowledgement arrives.
       const saved = { ...progress };
-      if (heldSave) {
+      if (heldSave && isExitSave(route.request())) {
         heldSave.committed.resolve();
         await heldSave.ack.promise;
       } else {
@@ -90,9 +101,9 @@ try {
       await page.locator('.player-video').evaluate(video => video.play());
       await page.waitForFunction(at => document.querySelector('.player-video').currentTime >= at + .3, pausedAt);
     }
-    const finalSave = page.waitForRequest(request => new URL(request.url()).pathname === '/api/progress');
+    const finalSave = page.waitForResponse(response => isExitSave(response.request()));
     await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
-    const confirmed = await (await (await finalSave).response()).json();
+    const confirmed = await (await finalSave).json();
     await page.waitForFunction(({ episodeId, confirmed }) => {
       const key = 'moa.resumeScene:' + JSON.stringify([confirmed.updatedAt, 'local', 'viewer', episodeId, confirmed.position]);
       const scene = JSON.parse(localStorage.getItem(key) || '{}').image;
@@ -136,9 +147,9 @@ try {
   await page.locator('.landscape-card .card-frame').click();
   await page.waitForFunction(() => { const v = document.querySelector('.player-video'); return v && !v.paused && !v.seeking && v.readyState >= 2; });
   heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
-  const ackResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/progress');
   await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
   await heldSave.committed.promise;
+  await image.waitFor();
   assert.ok(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('moa.resumeScene:'))));
   const authTab = await context.newPage();
   const loginHtml = await readFile(new URL('../../../deploy/auth/login.html', import.meta.url), 'utf8');
@@ -163,8 +174,9 @@ try {
   assert.equal(await scenes(), 0);
   assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
   const refreshedHome = page.waitForResponse(response => new URL(response.url()).pathname === '/api/home');
+  const ackResponse = page.waitForResponse(response => isExitSave(response.request()));
   heldSave.ack.resolve();
-  await ackResponse;
+  assert.ok((await ackResponse).ok());
   await refreshedHome; // The progress acknowledgement handler, including any attempted write, has run.
   assert.equal(await scenes(), 0, 'the old player cannot recreate frames after logout');
 
