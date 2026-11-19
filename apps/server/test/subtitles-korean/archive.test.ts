@@ -84,3 +84,14 @@ test('new release tokens never override a wrong season or make a multi-candidate
     assert.equal(await extractSubtitleBuffer(syntheticZip([[name, raw]]), 'batch.zip', { episode: 3, season: 1, allowUnnumbered: true }), null, name);
   }
 });
+
+test('numeric title aliases cannot certify unnumbered direct files or ZIP members', async () => {
+  const raw = fixture('sample.ass');
+  const options = { episode: 12, season: 1, titles: ['Room 12 Files', 'Case 12'] };
+  const unnumbered = '[Release] Case_12_1080p_x264.ko.ass';
+  const numbered = 'Room_12_Files S01E03.ass';
+  assert.equal(await extractSubtitleBuffer(raw, unnumbered, options), null);
+  const zip = syntheticZip([[unnumbered, raw], [numbered, raw]]);
+  assert.equal(await extractSubtitleBuffer(zip, 'series.zip', options), null);
+  assert.equal((await extractSubtitleBuffer(zip, 'series.zip', { ...options, episode: 3 }))?.filename, numbered);
+});

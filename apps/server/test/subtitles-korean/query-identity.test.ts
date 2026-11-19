@@ -76,3 +76,46 @@ test('file-specific tokens preserve verified article identity and reject a confl
     assert.equal(await collect('구름 정원 4화', name, []), null, name);
   }
 });
+
+test('series collection ranks episode filenames from labels and URL paths before its download budget', async () => {
+  const series = { ...creator, title: 'Fixture School', aliases: ['Room 12 Files', 'Case 12'] };
+  const bytes = '1\n00:00:01,000 --> 00:00:02,000\n세 번째 자막\n';
+  const files = ['Room 12 Files [03].srt', 'Room 12 Files - 03Group.srt', 'Room_12_Files_03_1080p_x264.srt'];
+  for (const filename of files) {
+    for (const label of [filename, '다운로드']) {
+      const http = new PublicHttpClient(), downloads: string[] = [];
+      const attachment = 'https://files.example/' + encodeURIComponent(filename);
+      http.get = async url => {
+        if (url !== series.website) {
+          downloads.push(url);
+          return { url, status: 200, headers: {}, body: Buffer.from(bytes) };
+        }
+        const others = Array.from({ length: 9 }, (_, i) => `<a href="/other-${i}.srt">Fixture School [09].srt</a>`).join('');
+        return { url, status: 200, headers: {}, body: Buffer.from(`<h1>Fixture School</h1><div class="post-body">${others}<a href="${attachment}">${label}</a></div>`) };
+      };
+      const collector = new BlogCollector(http, { maxZipBytes: 10000, maxZipEntries: 10, aliases: [] });
+      const found = await collector.collect(series, 3, AbortSignal.timeout(2000), false, true);
+      assert.equal(found?.filename, filename, label);
+      assert.deepEqual(downloads, [attachment]);
+    }
+  }
+});
+
+test('series collection rejects numeric titles, prose-only release syntax and conflicting attachment evidence before download', async () => {
+  const series = { ...creator, title: 'Fixture School', aliases: ['Case 12'] };
+  const http = new PublicHttpClient(), calls: string[] = [];
+  http.get = async url => {
+    calls.push(url);
+    return { url, status: 200, headers: {}, body: Buffer.from(`<h1>Fixture School</h1><div class="post-body">
+      <a href="/Case_12_1080p.srt">자막</a>
+      <a href="/subtitle.srt">Notes [12]</a>
+      <a href="/Fixture_School_S02E12.srt">Fixture School [12].srt</a>
+      <a href="/Fixture_School_13.srt">Fixture School [12].srt</a>
+      <a href="/subtitle.srt?ambiguous">Fixture School [12] [13].srt</a>
+      <a href="/subtitle.zip">Fixture School [12] [13].zip</a>
+    </div>`) };
+  };
+  const collector = new BlogCollector(http, { maxZipBytes: 10000, maxZipEntries: 10, aliases: [] });
+  assert.equal(await collector.collect(series, 12, AbortSignal.timeout(2000), false, true), null);
+  assert.deepEqual(calls, [series.website]);
+});

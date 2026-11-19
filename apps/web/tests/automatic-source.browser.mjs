@@ -17,13 +17,14 @@ const base = server.resolvedUrls.local[0].replace(/\/$/, '');
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
 const errors = [], passed = [];
 const track = (id, label, lang = 'en', source = 'extension') => ({ id, label, lang, source, format: 'vtt', url: `data:text/vtt,${encodeURIComponent(`WEBVTT\n\n00:00:01.000 --> 00:00:10.000\nSynthetic dialogue ${id}\n`)}` });
-const partial = track('signs', 'English Signs & Songs');
+const partial = track('signs', 'English Signs & Songs (No Dialogue)');
 const full = track('full', 'Japanese Full (Signs included)', 'ja');
 const ordinary = track('ordinary', 'English');
 const ai = track('ai', 'English AI Full');
 
 async function scenario(name, options, check) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.route(url => ['http:', 'https:'].includes(url.protocol) && url.origin !== base, route => route.abort());
   // Match the established mock player tests: a synthetic playlist buffers forever, with usable controls.
   await context.route(url => url.hostname === 'test-streams.mux.dev', route => route.request().url().endsWith('.m3u8')
     ? route.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:600\n#EXTINF:596,\nsegment.ts\n#EXT-X-ENDLIST\n' })
@@ -84,6 +85,10 @@ try {
     await waitForStart(page);
     assert.equal((await requests(page))[0].body.sourceLabel, full.label);
     assert.equal(await page.evaluate(() => window.__jimakuRequests), 0);
+  });
+  await scenario('Ordinary dialogue wins over a track explicitly lacking dialogue', { tracks: [partial, ordinary], jimaku: 'empty' }, async page => {
+    await waitForStart(page);
+    assert.equal((await requests(page))[0].body.sourceLabel, ordinary.label);
   });
   await scenario('Only signs never create an automatic paid request and remain manually selectable', { tracks: [partial], jimaku: 'empty' }, async page => {
     await page.locator('.translate-offer').waitFor(); await noCharge(page);

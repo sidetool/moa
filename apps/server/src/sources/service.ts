@@ -5,7 +5,6 @@ import { SourceQueue, type SourceLane } from './queue.js';
 import { isInlineHls } from '../playback/inline-hls.js';
 import { SourceBrowser } from './browser.js';
 import { CacheStats } from '../system/cache-stats.js';
-import { DetailPolicy } from '../catalog/detail-policy.js';
 import { SourceReadCache } from './cache.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ApkBridge, apkIconUrl, type ApkEntry, type ExtractedVideos } from './apk-bridge.js';
@@ -36,7 +35,6 @@ export class Sources {
   private preloads = new Map<string, { status: SourcePreload; abort: AbortController; work?: Promise<void> }>();
   private reads: SourceReadCache;
   readonly stats = new CacheStats();
-  private details: DetailPolicy;
   private identities: SourceIdentities;
   private navigationRevision = new Map<string,number>();
   private failedNavigation = new Map<string,{source:string;until:number}>();
@@ -58,7 +56,6 @@ export class Sources {
       INSERT OR IGNORE INTO source_repositories(url) SELECT DISTINCT repository FROM source_entries;`);
     if(!db.all('PRAGMA table_info(source_repositories)').some(r=>r.name==='kind')) db.db.exec("ALTER TABLE source_repositories ADD COLUMN kind TEXT NOT NULL DEFAULT 'mangayomi-js'");
     this.reads = new SourceReadCache(db,this.abort.signal,Date.now,undefined,this.stats);
-    this.details = new DetailPolicy(db);
     this.identities = new SourceIdentities(db);
   }
   network() {
@@ -313,7 +310,7 @@ export class Sources {
     this.cancelPreload(id);
     this.navigationRevision.set(id,(this.navigationRevision.get(id)||0)+1);
     for(const [key,value] of this.failedNavigation)if(value.source===id)this.failedNavigation.delete(key);
-    this.reads.invalidate(id); this.details.invalidateSource(id); this.db.run('UPDATE source_media SET detail_at=0 WHERE source_id=?', id); }
+    this.reads.invalidate(id); this.catalog.details.invalidateSource(id); this.db.run('UPDATE source_media SET detail_at=0 WHERE source_id=?', id); }
   configure(id: string, values: { enabled?: boolean; type?: MediaType; live?: boolean }) {
     const r = this.row(id, false);
     if (!r.code) throw new ApiFailure(409, 'source-not-installed');
@@ -649,7 +646,7 @@ export class Sources {
     this.row(mapping.source_id);
   }
   detailFreshMs(id: string) {
-    return catalogFreshMs(this.db, this.details.policy(id).freshMs);
+    return catalogFreshMs(this.db, this.catalog.details.policy(id).freshMs);
   }
   detailRefreshing(id:string) {
     const mapping=this.db.get('SELECT source_id FROM source_media WHERE media_id=?',id);
@@ -666,7 +663,7 @@ export class Sources {
     this.row(mapping.source_id);
     const cacheKey='detail:'+id;
     // Reuse successful details from before the persistent shared cache migration.
-    const hasEpisodes = Boolean(this.db.get('SELECT 1 FROM episodes WHERE media_id=? LIMIT 1', id));
+    const hasEpisodes = Boolean(this.db.get('SELECT 1 FROM available_episodes WHERE media_id=? LIMIT 1', id));
     if(mapping.detail_at>0)this.reads.prime(mapping.source_id,cacheKey,hasEpisodes,mapping.detail_at);
     return this.reads.read(mapping.source_id,cacheKey,{freshMs:this.detailFreshMs(id),staleMs:Infinity,empty:value=>value===false || value===true && !hasEpisodes,force},(current,background)=>this.serial(mapping.source_id, async () => {
       current();const row = this.row(mapping.source_id);
@@ -704,13 +701,17 @@ export class Sources {
         }
         // Mangayomi JSON completed=1; Aniyomi SAnime completed=2.
         const apk = JSON.parse(row.installed_entry || row.entry).format === 'aniyomi-apk';
-        this.details.observe(id, [...observed].map(([episodeId,number])=>({id:episodeId,number})), raw.status === (apk ? 2 : 1));
+        this.catalog.details.observe(id, [...observed].map(([episodeId,number])=>({id:episodeId,number})), raw.status === (apk ? 2 : 1));
         this.db.run('UPDATE source_media SET detail_at=? WHERE media_id=?', Date.now(), id);
       });
       return parsed.length > 0;
     }, background ? 'background' : lane));
   }
-  remoteEpisode(episodeId: string) { return this.db.get('SELECT s.source_id,s.media_id,e.url FROM source_episodes e JOIN episodes ep ON ep.id=e.episode_id JOIN source_media s ON s.media_id=ep.media_id WHERE e.episode_id=?', episodeId); }
+  remoteEpisode(episodeId: string, includeWithdrawn = false) {
+    const episodes = includeWithdrawn ? 'episodes' : 'available_episodes';
+    return this.db.get(`SELECT s.source_id,s.media_id,e.url FROM source_episodes e JOIN ${episodes} ep ON ep.id=e.episode_id
+      JOIN source_media s ON s.media_id=ep.media_id WHERE e.episode_id=?`, episodeId);
+  }
   async videos(episodeId: string) {
     const source = this.remoteEpisode(episodeId); if (!source) throw new ApiFailure(404, 'episode-not-found');
     return this.serial(source.source_id, async () => {

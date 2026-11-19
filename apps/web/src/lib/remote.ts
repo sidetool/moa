@@ -140,7 +140,8 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
     const key=remoteKey(event), arrow=key.startsWith('Arrow');
     const target=event.target instanceof HTMLElement ? event.target : document.activeElement as HTMLElement;
     const typing=target.matches('textarea,input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),[contenteditable="true"]');
-    if (remotePreference()==='auto' && !document.querySelector('.player') && arrow && !typing) { directionalInput=true; paintMode(); }
+    const select = target.matches('select,[role="combobox"]');
+    if (remotePreference()==='auto' && !document.querySelector('.player') && arrow && !typing && !select) { directionalInput=true; paintMode(); }
     if (!isRemoteMode()) return;
     if (arrow || key==='Enter') { autoFocused=false; }
     const back=key==='Back' || (key==='Backspace' && !typing);
@@ -148,7 +149,9 @@ export function installRemoteNavigation(router: ReturnType<typeof createBrowserR
     cancelBrowsingPosition();
     if (back && event.repeat) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (typing && !back && (key==='ArrowLeft'||key==='ArrowRight'||key==='Enter')) return;
-    if (target.matches('select,[role="combobox"]') && (key==='ArrowUp'||key==='ArrowDown'||key==='Enter'||key==='Back')) return;
+    if (target.matches('select') && (key==='ArrowUp'||key==='ArrowDown'||key==='Enter'||key==='Back')) return;
+    // The open list owns its arrows and Back. The closed button is a regular spatial stop.
+    if (target.matches('[role="combobox"][aria-expanded="true"]') && (arrow || back || key==='Enter')) return;
     if (target.matches('input[type="range"]') && (key==='ArrowLeft'||key==='ArrowRight')) return;
     const playerEvent: RemotePlayerEvent = new CustomEvent('moa:remote-key',{detail:{key:back?'Back':key,original:event},cancelable:true});
     window.dispatchEvent(playerEvent);

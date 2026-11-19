@@ -1,4 +1,5 @@
 import type { Episode, EpisodeProgress, MediaCard, MediaDetail, MetadataCandidate, HomeResponse, HistoryEntry, MediaType, Page, ProviderRef, Row } from '@moa/shared';
+import { DetailPolicy } from './detail-policy.js';
 import { KidsPolicy } from '../profiles/kids.js';
 import { Store } from '../db.js';
 import { ApiFailure, normalize } from '../util.js';
@@ -14,23 +15,34 @@ export class Catalog {
   /** Set when TMDB is configured; detail responses then report the link state. */
   metadata = false;
   kids: KidsPolicy;
-  constructor(public db: Store) { this.kids = new KidsPolicy(db); }
-  episodes(id: string, profile: string): Episode[] {
-    return this.db.all(`SELECT e.*,p.position,p.duration AS progress_duration,p.completed,p.updated_at
-      FROM episodes e LEFT JOIN progress p ON p.episode_id=e.id AND p.profile_id=?
-      WHERE e.media_id=? ORDER BY e.season,e.number,e.id`, profile,id).map(e => {
-      const p = e.updated_at !== null ? { ...e, duration: e.progress_duration } : undefined;
-      return { id: e.id, mediaId: e.media_id, season: e.season, number: e.number, title: e.title, duration: e.duration, ...(e.thumb ? { thumb: e.thumb } : {}), ...(p ? { progress: episodeProgress(p) } : {}) };
-    });
+  readonly details: DetailPolicy;
+  constructor(public db: Store) {
+    this.kids = new KidsPolicy(db);
+    this.details = new DetailPolicy(db);
   }
-  card(row: Record<string, any>, profile: string): MediaCard {
+  private episodeListing(id: string, profile: string) {
+    const available: Episode[] = [], history: Episode[] = [];
+    const rows = this.db.all(`SELECT e.*,p.position,p.duration AS progress_duration,p.completed,p.updated_at,w.episode_id AS withdrawn
+      FROM episodes e LEFT JOIN progress p ON p.episode_id=e.id AND p.profile_id=?
+      LEFT JOIN withdrawn_episodes w ON w.episode_id=e.id
+      WHERE e.media_id=? ORDER BY e.season,e.number,e.id`, profile,id);
+    for (const e of rows) {
+      const p = e.updated_at !== null ? { ...e, duration: e.progress_duration } : undefined;
+      const episode: Episode = { id: e.id, mediaId: e.media_id, season: e.season, number: e.number, title: e.title, duration: e.duration, ...(e.thumb ? { thumb: e.thumb } : {}), ...(p ? { progress: episodeProgress(p) } : {}) };
+      if (!e.withdrawn) available.push(episode);
+      if (episode.progress) history.push(episode);
+    }
+    return { available, history };
+  }
+  episodes(id: string, profile: string) { return this.episodeListing(id, profile).available; }
+  card(row: Record<string, any>, profile: string, listing = this.episodeListing(row.id, profile)): MediaCard {
     const { poster, backdrop, year, genres, provider, live } = JSON.parse(row.metadata);
-    const episodes = this.episodes(row.id, profile);
-    const resume = !live ? continueTarget(episodes, row.type === 'movie') : null;
+    const episodes = listing.available;
+    const resume = !live ? continueTarget(episodes, row.type === 'movie', listing.history) : null;
     const current = resume && episodes.find(e => e.id === resume.episodeId);
     return overlayCard(this.db, { id: row.id, title: this.db.displayTitle(row.id, row.title), type: row.type, provider: provider || LOCAL_PROVIDER, ...(live ? { badge: "LIVE" } : {}), addedAt: row.added_at,
       ...(poster ? { poster } : {}), ...(backdrop ? { backdrop } : {}), ...(year ? { year } : {}), ...(genres?.length ? { genres } : {}),
-      ...(row.type !== 'movie' ? { episodeCount: this.db.get('SELECT COUNT(*) AS n FROM episodes WHERE media_id=?', row.id)!.n } : {}),
+      ...(row.type !== 'movie' ? { episodeCount: episodes.length } : {}),
       inWatchlist: Boolean(this.db.get('SELECT 1 FROM watchlist WHERE profile_id=? AND media_id=?', profile, row.id)),
       ...(resume ? { resume } : {}),
       ...(current?.progress && !current.progress.completed && current.progress.position > 0
@@ -44,14 +56,14 @@ export class Catalog {
     const row = this.db.get('SELECT * FROM media WHERE id=?', id);
     if (!row) throw new ApiFailure(404, 'media-not-found');
     this.kids.assert(id, profile);
-    const episodes = this.episodes(id, profile), meta = JSON.parse(row.metadata);
+    const listing = this.episodeListing(id, profile), episodes = listing.available, meta = JSON.parse(row.metadata);
     const seasons = [...new Set(episodes.map(e => e.season))].map(number => ({ number, title: `시즌 ${number}`, episodes: episodes.filter(e => e.season === number) }));
-    const target = playTarget(episodes, row.type === 'movie');
+    const target = playTarget(episodes, row.type === 'movie', listing.history);
     const file = target && this.db.get('SELECT * FROM files WHERE episode_id=?', target.episodeId);
     const probe: Probe | undefined = file && JSON.parse(file.probe);
     const video = probe && videoStream(probe);
     const local = !meta.provider || meta.provider.kind === 'local';
-    const base: MediaDetail = { ...this.card(row, profile), ...meta, seasons, playTarget: target,
+    const base: MediaDetail = { ...this.card(row, profile, listing), ...meta, seasons, playTarget: target,
       ...(row.type === 'movie' ? { runtime: episodes[0]?.duration } : {}),
       ...(file && probe && video ? { fileInfo: { container: probe.container, video: video.codec_name || '', audio: probe.streams.filter(s => s.codec_type === 'audio').map(s => s.codec_name).join(', '), resolution: `${video.width}×${video.height}`, size: file.size } } : {}),
     };
@@ -103,7 +115,7 @@ export class Catalog {
       return !grouped || count === 0;
     });
     const paged = this.page(filtered, page);
-    return { ...paged, items: paged.items.map(p => ({ media: this.card(this.db.get('SELECT * FROM media WHERE id=?', p.media_id)!, profile), episode: this.episodes(p.media_id, profile).find(e => e.id === p.episode_id)!, watchedAt: p.updated_at, ...(grouped ? { groupedCount: counts.get(p.media_id)! } : {}) })) };
+    return { ...paged, items: paged.items.map(p => ({ media: this.card(this.db.get('SELECT * FROM media WHERE id=?', p.media_id)!, profile), episode: this.episodeListing(p.media_id, profile).history.find(e => e.id === p.episode_id)!, watchedAt: p.updated_at, ...(grouped ? { groupedCount: counts.get(p.media_id)! } : {}) })) };
   }
   search(profile: string, query: string, metadata: MetadataCandidate[] = []) {
     const q = normalize(query);

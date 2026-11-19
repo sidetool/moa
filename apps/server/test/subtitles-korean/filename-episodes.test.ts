@@ -37,3 +37,17 @@ test('file-only syntax does not broaden the global post-title episode parser', (
   assert.deepEqual(parseEpisodes('Example TV 01~03.zip'), [1, 2, 3]);
   assert.deepEqual(parseEpisodes('로봇 8호.ass'), []);
 });
+
+test('embedded numbers are excluded while numeric title aliases keep their bare episode suffixes', () => {
+  assert.deepEqual(parseSubtitleFilenameEpisodes('Room_12_Files_S01E03.srt'), [3]);
+  assert.deepEqual(parseSubtitleFilenameEpisodes('Room_12_Files_1080p_x264.srt'), []);
+  for (const name of ['Case_12_1080p_x264.srt', '[Release] Case.12 [1080p].srt', '86_[1080p].srt']) {
+    assert.deepEqual(parseSubtitleFilenameEpisodes(name, ['Case 12', '86']), [], name);
+  }
+  for (const name of ['Case_12_03_1080p.srt', 'Case 12 - 3.srt', '86 03.srt', '3.srt', '[03].srt']) {
+    assert.deepEqual(parseSubtitleFilenameEpisodes(name, ['Case 12', '86']), [3], name);
+  }
+  for (const name of ['Case_12_03_S01E04.srt', 'Case_12_03_04_[1080p].srt', 'Case 12 [03] S01E04.srt']) {
+    assert.deepEqual(parseSubtitleFilenameEpisodes(name, ['Case 12']).sort((a,b) => a-b), [3,4], name);
+  }
+});

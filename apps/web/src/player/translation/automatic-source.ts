@@ -5,6 +5,8 @@ import { isKorean, subtitleLanguage } from "../subtitles/subtitle-language";
 export function automaticTrackRank(track: SubtitleTrack): number | null {
   if (isKorean(track) || track.source === "translation") return null;
   const label = track.label.normalize("NFKC").replace(/[_-]/g, " ");
+  const noDialogue = /\b(?:no|without|excluding|non)\s+(?:spoken\s+)?dialog(?:ue)?s?\b|\bdialog(?:ue)?s?\s+(?:excluded|removed|omitted|free)\b|대사(?:가|는|를)?\s*(?:자막\s*)?(?:없|제외|미포함)/i.test(label);
+  if (noDialogue) return null;
   const dialogue = /\b(?:full|dialogue|dialog|complete)\b|전체|대사/i.test(label);
   // Inclusion and absence describe a full track's contents, not a partial-only track.
   const partialLabel = label
@@ -13,7 +15,8 @@ export function automaticTrackRank(track: SubtitleTrack): number | null {
     .replace(/(?:간판|노래|강제)\s*(?:포함|없음|제외)/g, " ");
   const partial = /\b(?:signs?|songs?|forced)\b|간판|노래|강제/i.test(partialLabel);
   // Full tracks commonly advertise that signs are included too.
-  if (partial && !dialogue) return null;
+  const partialOnly = /\b(?:signs?|songs?|forced)(?:\s+subtitles?)?\s+only\b|\bonly\s+(?:signs?|songs?|forced)\b|(?:간판|노래|강제)\s*(?:자막\s*)?(?:전용|만)/i.test(partialLabel);
+  if (partialOnly || partial && !dialogue) return null;
   if (/\b(?:AI|machine|auto(?:matic)?|dubtitles?)\b|기계\s*번역|자동\s*번역/i.test(label)) return 2;
   return dialogue ? 0 : 1;
 }

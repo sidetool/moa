@@ -19,7 +19,7 @@ export function createRenderer(video: HTMLVideoElement, onLost: () => void) {
   canvas.hidden = true;
   canvas.setAttribute('aria-hidden', 'true');
   const gl = canvas.getContext('webgl', { premultipliedAlpha: false, depth: false, stencil: false });
-  if (!gl) throw new Error('WebGL unavailable');
+  if (!gl) return;
 
   let upscaler: ImageUpscaler | undefined;
   let timer: TimerQuery | null = null;
@@ -40,7 +40,8 @@ export function createRenderer(video: HTMLVideoElement, onLost: () => void) {
     const longest = Math.max(video.videoWidth, video.videoHeight) * 2;
     if (longest > gl.getParameter(gl.MAX_TEXTURE_SIZE) || !gl.getExtension('OES_texture_float') ||
         !gl.getExtension('OES_texture_float_linear') || !gl.getExtension('EXT_color_buffer_half_float')) {
-      throw new Error('Unsupported texture dimensions or format');
+      destroy();
+      return;
     }
     timer = gl.getExtension('EXT_disjoint_timer_query');
     upscaler = new ImageUpscaler(ANIME4KJS_SIMPLE_S_2X);
@@ -62,7 +63,7 @@ export function createRenderer(video: HTMLVideoElement, onLost: () => void) {
         timer.deleteQueryEXT(query);
         query = null;
       } else if (performance.now() - queryStart > Math.max(250, 6 * budgetMs)) {
-        throw new Error('GPU backlog');
+        return null; // GPU backlog: skip this frame and fall back to the original video.
       }
     }
     const measure = timer && !query ? timer.createQueryEXT() : null;

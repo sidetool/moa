@@ -61,6 +61,8 @@ export interface MediaCard {
   groupMemberIds?: string[];
   /** Allowed member whose playback history supplies resume/progress for this group. */
   resumeMediaId?: string;
+  /** Saved representative whose group is managed when opening this watchlist card. */
+  watchlistMediaId?: string;
   seasonInfo?: SeasonInfo;
   audio?: 'sub' | 'dub';
   baseTitle?: string;

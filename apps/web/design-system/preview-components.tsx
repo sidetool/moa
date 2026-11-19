@@ -4,6 +4,7 @@ import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
 import { SubtitleSyncSettings } from '../src/features/settings/SubtitleAdvancedSettings';
+import { Anime4kStatusNote } from '../src/player/playback/Anime4kStatusNote';
 import { Anime4kSetting, NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -137,6 +138,10 @@ export function PlaybackExperimentsPreview() {
       save={patch => setSync(current => ({ ...current, ...patch }))} />
     <p className="settings-advanced-label">재생 · 이 기기에서만</p>
     <Anime4kSetting checked={anime4k} onChange={setAnime4k} />
+    {anime4k && <>
+      <p className="settings-advanced-label">플레이어 재생 설정 · 기본 자막 예시</p>
+      <div className="preview-player-panel panel-form"><Anime4kStatusNote status="captions" /></div>
+    </>}
   </div>;
 }
 
@@ -211,7 +216,8 @@ export function CatalogRefreshPattern() {
   return <div className="preview-stack">
     <div className="preview-row"><b>정보 갱신 빈도</b><Select aria-label="정보 갱신 빈도" value={interval} onChange={setInterval} options={[{ value: '15', label: '자주' }, { value: '60', label: '기본' }, { value: '360', label: '드물게' }]} /></div>
     <div className="preview-row"><b>내 목록</b><Select aria-label="내 목록 정렬" value={sort} onChange={setSort} options={[{ value: 'saved', label: '담은 순' }, { value: 'updated', label: '회차 업데이트순' }]} /></div>
-    <span>안 본 회차 2개</span>
+    <ol className="preview-results">{(sort === 'saved' ? ['여름의 끝에서', '새벽 기차'] : ['새벽 기차', '여름의 끝에서']).map(title =>
+      <li key={title}>{title}{title === '새벽 기차' && <small> · 안 본 회차 2개</small>}</li>)}</ol>
     <div className="preview-row"><b>회차</b><EpisodeRefreshButton state={state} onRefresh={() => setState('busy')} /><IconButton label={descending ? '1화부터 보기' : '최신화부터 보기'} onClick={() => setDescending(!descending)}><ArrowDownUp size={18} /></IconButton></div>
   </div>;
 }

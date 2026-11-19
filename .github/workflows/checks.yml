@@ -32,10 +32,16 @@ jobs:
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
         run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+      - name: Resume an interrupted video over local HTTP
+        env:
+          MOA_TEST_VIDEO: ${{ runner.temp }}/moa-resume.mp4
+        run: |
+          ffmpeg -v error -f lavfi -i testsrc2=size=640x360:rate=24 -t 5 -c:v libx264 -preset ultrafast -crf 15 -threads 2 -pix_fmt yuv420p -movflags +faststart "$MOA_TEST_VIDEO"
+          MOA_TEST_FFPROBE="$(command -v ffprobe)" pnpm --filter @moa/server exec tsx --test test/downloads-media.integration.ts
       - name: Metadata scheduling and automatic subtitle selection
         run: pnpm --filter @moa/server exec tsx --test test/tmdb.test.ts test/tmdb-settings.test.ts test/tmdb-scheduler.test.ts test/jimaku.test.ts ../web/tests/automatic-source.test.ts
       - name: Source playback integration
-        run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-quality.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/api.test.ts test/inline-hls.test.ts test/sources.test.ts test/source-quality.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Plugin history, discovery and people contracts
         run: |
           pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/catalog-refresh*.test.ts test/website-plugins.test.ts

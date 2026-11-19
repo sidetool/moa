@@ -30,6 +30,22 @@ export class DetailPolicy {
       }
     });
     if (!columns.includes('episodes_updated_at')) db.db.exec('ALTER TABLE source_detail_observations ADD COLUMN episodes_updated_at INTEGER');
+    // Cache invalidation can discard freshness without making a withdrawn episode playable.
+    if (!db.get("SELECT 1 FROM sqlite_master WHERE name='withdrawn_episodes'")) db.transaction(() => {
+      if (db.get("SELECT 1 FROM sqlite_master WHERE name='withdrawn_episodes'")) return;
+      db.db.exec(`CREATE TABLE withdrawn_episodes(episode_id TEXT PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE);
+        CREATE VIEW available_episodes AS SELECT e.* FROM episodes e
+        WHERE NOT EXISTS(SELECT 1 FROM withdrawn_episodes w WHERE w.episode_id=e.id)`);
+      const observations = db.db.prepare('SELECT media_id,episode_ids FROM source_detail_observations WHERE episode_ids IS NOT NULL');
+      for (const row of observations.iterate()) {
+        this.recordWithdrawals(row.media_id as string, row.episode_ids as string);
+      }
+    });
+  }
+  private recordWithdrawals(mediaId: string, currentIds: string) {
+    this.db.run('DELETE FROM withdrawn_episodes WHERE episode_id IN (SELECT value FROM json_each(?))', currentIds);
+    this.db.run(`INSERT OR IGNORE INTO withdrawn_episodes
+      SELECT id FROM episodes WHERE media_id=? AND id NOT IN (SELECT value FROM json_each(?))`, mediaId, currentIds);
   }
   observe(id: string, episodes: EpisodeIdentity[], completed: boolean) {
     const sorted = sortEpisodes(episodes);
@@ -38,8 +54,10 @@ export class DetailPolicy {
     const changed = old && old.fingerprint !== fingerprint;
     const previous = old?.episode_ids ? new Set<string>(JSON.parse(old.episode_ids)) : null;
     const added = previous && sorted.some(episode=>!previous.has(episode.id));
+    const ids = JSON.stringify(sorted.map(episode => episode.id));
+    if (!old?.episode_ids || changed) this.recordWithdrawals(id, ids);
     this.db.run('INSERT OR REPLACE INTO source_detail_observations(media_id,fingerprint,episode_count,last_episode_id,changed_at,observed_at,completed,reset_until,episode_ids,episodes_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id, fingerprint,
-      sorted.length, sorted.at(-1)?.id ?? null, !old || changed ? now : old.changed_at, now, Number(completed), changed ? now + 21*DAY : old?.reset_until ?? 0, JSON.stringify(sorted.map(episode=>episode.id)), added ? now : old?.episodes_updated_at ?? null);
+      sorted.length, sorted.at(-1)?.id ?? null, !old || changed ? now : old.changed_at, now, Number(completed), changed ? now + 21*DAY : old?.reset_until ?? 0, ids, added ? now : old?.episodes_updated_at ?? null);
   }
   invalidateSource(source: string) {
     this.db.run('DELETE FROM source_detail_observations WHERE media_id IN (SELECT media_id FROM source_media WHERE source_id=?)', source);

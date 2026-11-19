@@ -9,13 +9,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { SourceVideo } from '../src/sources/extensions/index.js';
 import { Store } from '../src/db.js';
+import { ApiFailure } from '../src/util.js';
 import { Catalog } from '../src/catalog/service.js';
 import { Sources } from '../src/sources/service.js';
 import { Playback } from '../src/playback/service.js';
 import { Downloads } from '../src/downloads/service.js';
 import { preferredQuality, qualityHeight } from '../src/downloads/quality.js';
 import { transferVideo } from '../src/downloads/transfer.js';
-import { readCheckpoint, checkpointTTL } from '../src/downloads/checkpoint.js';
+import { readCheckpoint, checkpointTTL, urlDigest } from '../src/downloads/checkpoint.js';
 import { config } from '../src/config.js';
 import { buildApp } from '../src/app.js';
 
@@ -123,7 +124,196 @@ test('same-job direct retry sends Range/If-Range, preserves exact bytes and coun
   assert.deepEqual(released, ['lease-1', 'lease-2', 'lease-3']);
 });
 
-for (const kind of ['ignored-range', 'unsatisfiable', 'wrong-offset', 'wrong-total', 'etag-changed', 'encoded'] as const) {
+test('range retry discards bytes from a different final URL even with identical validators and length', async t => {
+  const oldVideo = Buffer.from('AAAABBBB'), newVideo = Buffer.from('CCCCDDDD'), offset = 4;
+  const oldUrl = 'https://cdn.test/red?signature=old', newUrl = 'https://cdn.test/blue?signature=new';
+  const headers = { etag: '"same"', 'content-length': String(oldVideo.length) };
+  const calls: Array<string | undefined> = [];
+  const { downloads, cfg, create } = await fixture(t, async (_url, requestHeaders) => {
+    const range = requestHeaders.Range;
+    calls.push(range);
+    if (calls.length === 1) return { url: oldUrl, response: incoming(oldVideo.subarray(0, offset), 'video/mp4', 200, headers) };
+    if (range) return { url: newUrl, response: incoming(newVideo.subarray(offset), 'video/mp4', 206, {
+      etag: headers.etag, 'content-range': 'bytes 4-7/8',
+    }) };
+    return { url: newUrl, response: incoming(newVideo, 'video/mp4', 200, headers) };
+  });
+  const job = await create();
+  assert.equal((await settled(downloads, job.id)).error, 'download-truncated');
+  const dir = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  const sidecar = await readFile(path.join(dir, 'checkpoint.json'), 'utf8');
+  assert.doesNotMatch(sidecar, /https:|source\.test|cdn\.test|signature/);
+  assert.equal(JSON.parse(sidecar).finalUrlDigest, urlDigest(oldUrl));
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).state, 'ready');
+  assert.deepEqual(calls, [undefined, 'bytes=4-', undefined]);
+  assert.deepEqual(await readFile(path.join(dir, 'video.mp4')), newVideo);
+});
+
+test('transient range failures keep the same checkpoint and send only one request per retry', async t => {
+  const payload = Buffer.from('0123456789'), offset = 4, etag = '"stable"';
+  const calls: Array<{ range?: string; ifRange?: string }> = [];
+  const failures = [503, 429, 408, 425, 'reset'] as const;
+  const { downloads, cfg, create } = await fixture(t, async (url, headers) => {
+    calls.push({ range: headers.Range, ifRange: headers['If-Range'] });
+    if (calls.length === 1) return { url, response: incoming(payload.subarray(0, offset), 'video/mp4', 200, {
+      etag, 'content-length': String(payload.length),
+    }) };
+    const failure = failures[calls.length - 2];
+    if (failure === 'reset') throw new Error('synthetic connection reset');
+    if (failure) return { url: 'https://errors.test/temporary', response: incoming('retry later', 'text/plain', failure) };
+    return { url, response: incoming(payload.subarray(offset), 'video/mp4', 206, { etag, 'content-range': 'bytes 4-9/10' }) };
+  });
+  await downloads.configureSettings({ quotaBytes: payload.length });
+  const job = await create(), dir = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  assert.equal((await settled(downloads, job.id)).error, 'download-truncated');
+  const checkpoint = await readFile(path.join(dir, 'checkpoint.json'));
+  for (const i of failures.keys()) {
+    downloads.retry(job.id, 'viewer');
+    const failed = await settled(downloads, job.id);
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.bytes, offset);
+    assert.equal(calls.length, i + 2);
+    assert.deepEqual(await readFile(path.join(dir, 'checkpoint.json')), checkpoint);
+    assert.deepEqual(await readFile(path.join(dir, 'input.mp4')), payload.subarray(0, offset));
+    assert.equal((await downloads.status()).usedBytes, offset);
+  }
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).state, 'ready');
+  assert.deepEqual(calls, [{range: undefined, ifRange: undefined}, ...Array.from({length: failures.length + 1}, () => ({ range: 'bytes=4-', ifRange: etag }))]);
+  assert.deepEqual(await readFile(path.join(dir, 'video.mp4')), payload);
+});
+
+test('a busy or unavailable source can resolve later and resume the original bytes', async t => {
+  const payload = Buffer.from('a synthetic video'), offset = 5, etag = '"stable"';
+  const url = 'https://source.test/media?signature=synthetic-secret';
+  const calls: Array<{ range?: string; validator?: string }> = [];
+  const { downloads, cfg, db, create, sources } = await fixture(t, async (_url, headers) => {
+    calls.push({ range: headers.Range, validator: headers['If-Range'] });
+    return { url, response: calls.length === 1
+      ? incoming(payload.subarray(0, offset), 'video/mp4', 200, { etag, 'content-length': String(payload.length) })
+      : incoming(payload.subarray(offset), 'video/mp4', 206, { etag, 'content-range': `bytes ${offset}-${payload.length - 1}/${payload.length}` }) };
+  }, { url, quality: '720p' });
+  await downloads.configureSettings({ quotaBytes: payload.length });
+  const job = await create(), dir = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  assert.equal((await settled(downloads, job.id)).error, 'download-truncated');
+  const original = sources.videos, checkpoint = await readFile(path.join(dir, 'checkpoint.json'), 'utf8');
+  assert.doesNotMatch(checkpoint, /source\.test|signature|synthetic-secret/);
+  for (const failure of [new ApiFailure(429, 'source-busy', url), new ApiFailure(503, 'apk-bridge-unavailable', url)]) {
+    sources.videos = async () => { throw failure; };
+    downloads.retry(job.id, 'viewer');
+    const failed = await settled(downloads, job.id);
+    assert.equal(failed.error, 'download-upstream-unavailable');
+    assert.equal(failed.bytes, offset);
+    assert.equal(failed.totalBytes, payload.length);
+    assert.equal((await downloads.status()).usedBytes, offset);
+    assert.equal(calls.length, 1);
+    assert.equal(await readFile(path.join(dir, 'checkpoint.json'), 'utf8'), checkpoint);
+    assert.deepEqual(await readFile(path.join(dir, 'input.mp4')), payload.subarray(0, offset));
+    assert.doesNotMatch(JSON.stringify(db.get('SELECT * FROM download_jobs WHERE id=?', job.id)), /source\.test|signature|synthetic-secret/);
+  }
+  sources.videos = original;
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).state, 'ready');
+  assert.deepEqual(calls, [{ range: undefined, validator: undefined }, { range: `bytes=${offset}-`, validator: etag }]);
+  assert.deepEqual(await readFile(path.join(dir, 'video.mp4')), payload);
+  assert.equal((await downloads.status()).usedBytes, payload.length);
+});
+
+test('a permanent format rejection during source resolution removes the retained file', async t => {
+  const { downloads, cfg, create, sources } = await fixture(t, async url => ({
+    url, response: incoming('prefix', 'video/mp4', 200, { etag: '"video"', 'content-length': '24' }),
+  }));
+  const job = await create();
+  assert.equal((await settled(downloads, job.id)).bytes, 6);
+  sources.videos = async () => { throw new ApiFailure(502, 'unsupported-stream-format'); };
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).error, 'unsupported-stream-format');
+  assert.deepEqual(await readdir(cfg.downloadRoot!), []);
+  assert.equal((await downloads.status()).usedBytes, 0);
+});
+
+test('short 200 replies for the same final URL and ETag cannot replace the complete video', async t => {
+  const payload = Buffer.from('first half, second half'), offset = 12, etag = '"unchanged"';
+  const ranges: Array<string | undefined> = [];
+  const { downloads, cfg, create } = await fixture(t, async (url, headers) => {
+    ranges.push(headers.Range);
+    if (ranges.length === 1) return { url, response: incoming(payload.subarray(0, offset), 'video/mp4', 200, { etag, 'content-length': String(payload.length) }) };
+    const body = ranges.length < 4 ? payload.subarray(offset) : payload;
+    return { url, response: incoming(body, 'video/mp4', 200, { etag }) };
+  });
+  const job = await create(), dir = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  assert.equal((await settled(downloads, job.id)).error, 'download-truncated');
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).error, 'download-range-invalid');
+  assert.equal(await downloads.asset('ep'), undefined);
+  assert.deepEqual(ranges, [undefined, `bytes=${offset}-`, undefined]);
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).state, 'ready');
+  assert.deepEqual(ranges, [undefined, `bytes=${offset}-`, undefined, `bytes=${offset}-`]);
+  assert.deepEqual(await readFile(path.join(dir, 'video.mp4')), payload);
+});
+
+for (const change of ['final URL', 'ETag'] as const) test(`a complete 200 can replace the old length after a changed ${change}`, async t => {
+  const ranges: Array<string | undefined> = [];
+  const replacement = Buffer.from('a much shorter video');
+  const { downloads, cfg, create } = await fixture(t, async (url, headers) => {
+    ranges.push(headers.Range);
+    if (ranges.length === 1) return { url, response: incoming('original', 'video/mp4', 200, { etag: '"old"', 'content-length': '100' }) };
+    return {
+      url: change === 'final URL' ? 'https://cdn.test/replacement' : url,
+      response: incoming(replacement, 'video/mp4', 200, { etag: change === 'ETag' ? '"new"' : '"old"' }),
+    };
+  });
+  const job = await create();
+  assert.equal((await settled(downloads, job.id)).error, 'download-truncated');
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).state, 'ready');
+  assert.deepEqual(ranges, [undefined, 'bytes=8-']);
+  assert.deepEqual(await readFile(path.join(cfg.downloadRoot!, `job-${job.id}`, 'video.mp4')), replacement);
+});
+
+test('unconditional 200 carrying a partial Content-Range is rejected', async t => {
+  const { downloads, create } = await fixture(t, async url => ({
+    url, response: incoming('suffix', 'video/mp4', 200, { 'content-range': 'bytes 4-9/10' }),
+  }));
+  const job = await create();
+  assert.equal((await settled(downloads, job.id)).error, 'download-range-invalid');
+  assert.equal(await downloads.asset('ep'), undefined);
+});
+
+test('immediately cancelling a queued retry removes its previous checkpoint', async t => {
+  const { downloads, cfg, create } = await fixture(t, async url => ({
+    url, response: incoming('partial', 'video/mp4', 200, { etag: '"old"', 'content-length': '20' }),
+  }));
+  const job = await create();
+  assert.equal((await settled(downloads, job.id)).bytes, 7);
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await downloads.cancel(job.id)).state, 'cancelled');
+  assert.deepEqual(await readdir(cfg.downloadRoot!), []);
+  assert.equal((await downloads.status()).usedBytes, 0);
+});
+
+test('a v1 checkpoint without the final URL is discarded before requesting the file', async t => {
+  let fresh = false;
+  const { downloads, cfg, create } = await fixture(t, async (url, headers) => {
+    assert.equal(headers.Range, undefined);
+    assert.equal(headers['If-Range'], undefined);
+    return { url, response: incoming(fresh ? 'new video' : 'old', 'video/mp4', 200, { etag: '"unchanged"', 'content-length': '9' }) };
+  });
+  const job = await create(), dir = path.join(cfg.downloadRoot!, `job-${job.id}`);
+  assert.equal((await settled(downloads, job.id)).error, 'download-truncated');
+  const meta = JSON.parse(await readFile(path.join(dir, 'checkpoint.json'), 'utf8'));
+  meta.version = 1;
+  delete meta.finalUrlDigest;
+  await writeFile(path.join(dir, 'checkpoint.json'), JSON.stringify(meta));
+  fresh = true;
+  downloads.retry(job.id, 'viewer');
+  assert.equal((await settled(downloads, job.id)).state, 'ready');
+  assert.equal(await readFile(path.join(dir, 'video.mp4'), 'utf8'), 'new video');
+});
+
+for (const kind of ['ignored-range', 'partial-200', 'precondition-failed', 'unsatisfiable', 'wrong-offset', 'wrong-total', 'etag-changed', 'encoded'] as const) {
   test(`direct retry restarts once when the range response is ${kind}`, async t => {
     const { dir, cfg } = await layout(); t.after(() => rm(dir, { recursive: true, force: true }));
     const target = path.join(cfg.downloadRoot!, kind); await mkdir(target);
@@ -136,13 +326,14 @@ for (const kind of ['ignored-range', 'unsatisfiable', 'wrong-offset', 'wrong-tot
     const calls: Array<{ range?: string; ifRange?: string }> = [];
     await transferVideo(cfg, target, item, async (url, range, ifRange) => {
       calls.push({ range, ifRange });
-      if (calls.length === 2) return { url, response: incoming(payload, 'video/mp4', 200, { etag: '"version-2"' }) };
+      if (calls.length === 2 || kind === 'ignored-range') return { url, response: incoming(payload, 'video/mp4', 200, { etag: '"version-2"' }) };
       const headers = { etag: kind === 'etag-changed' ? '"version-2"' : '"version-1"',
         'content-range': `bytes ${kind === 'wrong-offset' ? offset + 1 : offset}-${payload.length - 1}/${kind === 'wrong-total' ? payload.length + 1 : payload.length}`,
         ...(kind === 'encoded' ? { 'content-encoding': 'gzip' } : {}) };
-      return { url, response: incoming(payload.subarray(offset), 'video/mp4', kind === 'ignored-range' ? 200 : kind === 'unsatisfiable' ? 416 : 206, headers) };
+      return { url, response: incoming(payload.subarray(offset), 'video/mp4', kind === 'partial-200' ? 200 : kind === 'precondition-failed' ? 412 : kind === 'unsatisfiable' ? 416 : 206, headers) };
     }, signal, async () => {}, () => {}, 'best', identity);
-    assert.deepEqual(calls, [{ range: `bytes=${offset}-`, ifRange: '"version-1"' }, { range: undefined, ifRange: undefined }]);
+    const expected = [{ range: `bytes=${offset}-`, ifRange: '"version-1"' }];
+    assert.deepEqual(calls, kind === 'ignored-range' ? expected : [...expected, { range: undefined, ifRange: undefined }]);
     assert.deepEqual(await readFile(path.join(target, 'video.mp4')), payload);
   });
 }

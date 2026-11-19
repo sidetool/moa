@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -65,6 +66,24 @@ test('HTTP My List uses the watched edition’s observed additions and excludes 
   const baseline = await myList();
   assert.equal(baseline.id, saved);
   assert.equal(baseline.resumeMediaId, watched, 'the fully watched edition remains the comparison and click target');
+  assert.equal(baseline.watchlistMediaId, saved);
+  assert.equal((await request('/api/media/' + watched, { headers: viewerHeaders })).inWatchlist, false);
+  const groupedToggle = '/api/watchlist/' + watched + '/group?savedEdition=' + baseline.watchlistMediaId;
+  assert.deepEqual(await request(groupedToggle, { headers: viewerHeaders }), { grouped: true, inWatchlist: true });
+  await request('/api/watchlist/' + watched, { method: 'PUT', headers: viewerHeaders });
+  assert.equal((await myList()).groupMemberIds.length, 2);
+  await request(groupedToggle, { method: 'DELETE', headers: viewerHeaders });
+  assert.deepEqual(await request(groupedToggle, { headers: viewerHeaders }), { grouped: true, inWatchlist: false });
+  assert.equal(await myList(), undefined);
+  assert.equal((await myList(other)).id, saved);
+  await request(groupedToggle, { method: 'PUT', headers: viewerHeaders });
+  assert.deepEqual((await myList()).groupMemberIds, [saved]);
+  await request('/api/media/' + watched + '/group', { method: 'PATCH', headers: { 'x-moa-profile': other, 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'separate' }) });
+  assert.deepEqual(await request(groupedToggle, { headers: { 'x-moa-profile': other } }), { grouped: false, inWatchlist: false });
+  const stale = await fetch(base + groupedToggle, { method: 'DELETE', headers: { 'x-moa-profile': other } });
+  assert.equal(stale.status, 409);
+  assert.equal((await myList(other)).id, saved);
   assert.equal(baseline.episodesUpdatedAt, undefined);
   assert.equal(baseline.unseenEpisodeCount, undefined);
 
@@ -84,6 +103,137 @@ test('HTTP My List uses the watched edition’s observed additions and excludes 
   assert.equal(withdrawn.unseenEpisodeCount, 1);
   assert.equal(withdrawn.episodesUpdatedAt, added.episodesUpdatedAt, 'a removal does not move the title up the update sort');
   assert.equal(db.get('SELECT COUNT(*) AS n FROM episodes WHERE media_id=?', watched)?.n, 4, 'withdrawn catalog rows can remain for playback history');
+});
+
+test('successful source listings drive detail, resume and playback while keeping history and saved media', async t => {
+  const dir = await workDirectory();
+  const downloadRoot = join(dir, 'downloads'), mediaRoot = join(dir, 'media');
+  await Promise.all([downloadRoot, mediaRoot].map(path => mkdir(path)));
+  const { app, db, sources, downloads } = await buildApp({ dataDir: join(dir, 'data'), downloadRoot, mediaRoot, webDir: dir }, false, { tmdb: { token: '', key: '' } });
+  t.after(async () => { await app.close(); await rm(dir, { recursive: true }); });
+  const profile = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Viewer' } })).json().id;
+  const headers = { 'x-moa-profile': profile };
+  let chapters: number[] | null = [1, 2, 3, 4];
+  t.mock.method(sources as unknown as { runtime: typeof invokeMangayomi }, 'runtime', async input => {
+    if (input.action === 'list') return { result: { list: [{ name: 'Synthetic series', link: '/series' }], hasNextPage: false }, changes: {} };
+    if (input.action === 'videos') return { result: [{ url: 'https://fixture.invalid/stream.mp4' }], changes: {} };
+    return { result: { name: 'Synthetic series', chapters: chapters?.map(number => ({ number, name: number + '화', url: '/episode/' + number })) }, changes: {} };
+  });
+  seedSource(db, 'fixture');
+  const id = (await sources.browse('fixture', profile)).items[0].id;
+  const detail = () => app.inject({ url: '/api/media/' + id, headers }).then(r => r.json());
+  const refresh = () => app.inject({ method: 'POST', url: '/api/media/' + id + '/refresh', headers }).then(r => r.json());
+  const ongoing = async () => (await app.inject({ url: '/api/home', headers })).json().rows.find(row => row.id === 'continue')?.items[0]?.resume;
+  const first = await detail(), [one, two, three, four] = first.seasons[0].episodes;
+  const activity = (episodeId: string, position: number) => app.inject({ method: 'POST', url: '/api/progress', headers, payload: { episodeId, position, duration: 1200 } });
+  assert.equal((await activity(two.id, 1200)).statusCode, 200);
+  const job = randomUUID(), relative = 'job-' + job + '/video.mp4', bytes = 'synthetic saved media';
+  const probe = { duration: 1200, container: 'mov,mp4', streams: [{ index: 0, codec_type: 'video', codec_name: 'h264', width: 640, height: 360 }] };
+  await mkdir(join(downloadRoot, 'job-' + job));
+  await writeFile(join(downloadRoot, relative), bytes);
+  db.run('INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+    job, three.id, id, 'fixture', profile, 'ready', '720p', 'synthetic', '2026', '2026');
+  db.run('INSERT INTO download_assets VALUES(?,?,?,?,?,?)', three.id, job, relative, bytes.length, JSON.stringify(probe), '[]');
+  chapters = [1, 2, 4];
+  const removed = await refresh();
+  assert.deepEqual(removed.errors, []);
+  for (const title of [removed.detail, await detail()]) {
+    assert.equal(title.episodeCount, 3);
+    assert.deepEqual(title.seasons[0].episodes.map(ep => ep.id), [one.id, two.id, four.id]);
+    assert.equal(title.playTarget.episodeId, four.id);
+  }
+  assert.equal((await ongoing()).episodeId, four.id);
+  await downloads.configureSettings({ enabled: true, quotaBytes: 1024 ** 3 });
+  const batch = await app.inject({ url: '/api/admin/downloads/batch?mediaId=' + id, headers });
+  assert.deepEqual(batch.json(), { total: 3, eligible: 3, skipped: 0 });
+  const play = (episodeId: string, location: string) => app.inject({ method: 'POST', url: '/api/playback', headers,
+    payload: { episodeId, location, capabilities: { h264: true, hevc: false, av1: false } } });
+  assert.equal((await play(two.id, 'source')).json().next.episodeId, four.id);
+  assert.equal((await play(three.id, 'source')).statusCode, 404);
+  const asset = (await play(three.id, 'saved')).json();
+  assert.equal(asset.saved, true);
+  assert.equal(asset.next.episodeId, four.id);
+  assert.equal((await app.inject({ url: asset.url, headers })).body, bytes);
+  assert.equal((await activity(three.id, 300)).statusCode, 200);
+  assert.equal((await ongoing()).episodeId, four.id, 'a withdrawn episode can anchor the next available episode');
+  const history = (await app.inject({ url: '/api/history', headers })).json();
+  assert.equal(history.items[0].episode.id, three.id);
+  assert.equal(history.items[0].episode.progress.position, 300);
+
+  sources.invalidate('fixture');
+  chapters = null;
+  const failed = await refresh();
+  assert.deepEqual(failed.errors, ['source']);
+  assert.deepEqual(failed.detail.seasons[0].episodes.map(ep => ep.id), [one.id, two.id, four.id]);
+  chapters = [];
+  const empty = await refresh();
+  assert.deepEqual(empty.errors, []);
+  for (const title of [empty.detail, await detail()]) {
+    assert.equal(title.episodeCount, 0);
+    assert.deepEqual(title.seasons, []);
+    assert.equal(title.playTarget, null);
+  }
+  assert.equal(await ongoing(), undefined);
+  assert.equal((await play(three.id, 'saved')).json().next, null);
+  chapters = [1, 2, 3, 4];
+  const restored = (await refresh()).detail;
+  assert.equal(restored.playTarget.episodeId, three.id);
+  assert.equal(restored.playTarget.position, 300);
+});
+
+test('existing listing snapshots restore availability on upgrade and survive restart', async t => {
+  const dir = await workDirectory();
+  let db = new Store(dir);
+  t.after(async () => { db.close(); await rm(dir, { recursive: true }); });
+  db.db.exec(`CREATE TABLE source_detail_observations(media_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+    episode_count INTEGER NOT NULL, last_episode_id TEXT, changed_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
+    completed INTEGER NOT NULL, reset_until INTEGER DEFAULT 0, episode_ids TEXT, episodes_updated_at INTEGER)`);
+  for (const id of ['partial', 'empty', 'unknown']) {
+    db.run("INSERT INTO media VALUES(?,NULL,?,'series','{}','2026')", id, id);
+    for (const number of [1, 2]) db.run("INSERT INTO episodes VALUES(?,?,1,?,'Fixture',1200,NULL)", id + number, id, number);
+  }
+  db.run("INSERT INTO source_detail_observations VALUES('partial','old',1,NULL,0,0,0,0,?,NULL)", '["partial2"]');
+  db.run("INSERT INTO source_detail_observations VALUES('empty','old',0,NULL,0,0,0,0,'[]',NULL)");
+  db.run("INSERT INTO source_detail_observations VALUES('unknown','old',1,NULL,0,0,0,0,NULL,NULL)");
+  for (let i = 0; i < 2; i++) {
+    const catalog = new Catalog(db);
+    assert.deepEqual(catalog.episodes('partial', 'viewer').map(e => e.number), [2]);
+    assert.deepEqual(catalog.episodes('empty', 'viewer'), []);
+    assert.deepEqual(catalog.episodes('unknown', 'viewer').map(e => e.number), [1, 2]);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM episodes')?.n, 6);
+    db.close();
+    db = new Store(dir);
+  }
+});
+
+test('catalog and search only report active TMDB work for eligible titles', async t => {
+  const dir = await workDirectory();
+  let release!: () => void, calls = 0;
+  const gate = new Promise<void>(done => { release = done; });
+  const { app, db } = await buildApp({ dataDir: dir, mediaRoot: dir, webDir: dir }, false, { tmdb: { token: 'synthetic', fetch: async () => {
+    calls++;
+    await gate;
+    return Response.json({ results: [] });
+  } } });
+  t.after(async () => { release(); await app.close(); await rm(dir, { recursive: true }); });
+  const profile = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Viewer' } })).json().id;
+  const read = async (path: string) => {
+    const r = await app.inject({ url: path, headers: { 'x-moa-profile': profile } });
+    assert.equal(r.statusCode, 200, r.body);
+    return r.json();
+  };
+  for (const [title, live] of [['Fixture live', true], ['Fixture truncated...', false], ['Fixture clipped…', false]]) {
+    db.run("INSERT INTO media VALUES(?,NULL,?,'series',?,'2026')", title, title, JSON.stringify({ live }));
+  }
+  for (let i = 0; i < 2; i++) for (const path of ['/api/media', '/api/search?q=Fixture']) assert.equal((await read(path)).refreshing, false);
+  assert.equal(calls, 0);
+  db.run("INSERT INTO media VALUES('eligible',NULL,'Fixture eligible','series','{}','2026')");
+  for (const path of ['/api/media', '/api/search?q=Fixture']) assert.equal((await read(path)).refreshing, true);
+  assert.ok(calls > 0);
+  assert.equal((await read('/api/search?q=truncated')).refreshing, false, 'unrelated pending work stays scoped to its media');
+  release();
+  for (let i = 0; i < 100 && !db.get("SELECT 1 FROM tmdb_links WHERE media_id='eligible'"); i++) await setTimeout(5);
+  for (const path of ['/api/media', '/api/search?q=Fixture']) assert.equal((await read(path)).refreshing, false);
 });
 
 test('watchlist scheduler queues other profiles, skips removals and respects changed cooldowns', async t => {

@@ -359,8 +359,11 @@ export class Tmdb {
       if (row.fetched_at <= Date.now()-catalogFreshMs(this.db,TITLE_TTL)) void this.title(row.kind,row.tmdb_id).catch(() => {});
       return Promise.resolve();
     }
-    const context = {...this.currentWork()}; this.linkContexts.set(id, context);
-    const work = this.context.run(context, () => !retry && accepted ? this.title(row.kind,row.tmdb_id).then(() => {}) : this.match(id,force))
+    const context = {...this.currentWork()};
+    const pending = this.context.run(context, () => !retry && accepted ? this.title(row.kind,row.tmdb_id).then(() => {}) : this.match(id,force));
+    if (!pending) return Promise.resolve();
+    this.linkContexts.set(id, context);
+    const work = pending
       .catch(error => {
         if (this.validRevision(context.revision)) {
           if (context.priority === 'background') this.backoff('match:'+id);
@@ -372,20 +375,23 @@ export class Tmdb {
     this.inflight.set(id, work);
     return work;
   }
-  private async match(id: string, force = false) {
-    const revision = this.currentWork().revision;
-    const previous = JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
-    const unchanged = () => this.validRevision(revision) && Boolean(this.db.get('SELECT 1 FROM media WHERE id=?', id)) && previous === JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
+  private match(id: string, force: boolean) {
     const media = this.db.get('SELECT title,type,metadata FROM media WHERE id=?', id);
     if (!media) return;
     const meta = JSON.parse(media.metadata);
     // Live channels and truncated listing titles cannot be matched reliably.
     if (meta.live || /(?:\.{3}|…)\s*$/.test(media.title)) return;
+    return this.matchTitle(id, media, meta.year, force);
+  }
+  private async matchTitle(id: string, media: Record<string, any>, year: number | undefined, force: boolean) {
+    const revision = this.currentWork().revision;
+    const previous = JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
+    const unchanged = () => this.validRevision(revision) && Boolean(this.db.get('SELECT 1 FROM media WHERE id=?', id)) && previous === JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
     const terms = searchTerms(media.title);
     const source = foreignSource(this.db, id);
     const letters = media.title.match(/\p{L}/gu) || [];
     const english = source.foreign || letters.filter((c: string) => /\p{Script=Latin}/u.test(c)).length > letters.length / 2;
-    const expected = { type: source.anime && media.type === 'series' ? 'anime' : media.type, movieHint: terms.movieHint, year: meta.year || terms.year };
+    const expected = { type: source.anime && media.type === 'series' ? 'anime' : media.type, movieHint: terms.movieHint, year: year || terms.year };
     let best: { result: SearchResult; score: number; season?: number } | undefined;
     for (const target of terms.targets.slice(0, 4)) {
       for (const language of english ? ['ko-KR', 'en-US'] : ['ko-KR']) {

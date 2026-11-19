@@ -80,3 +80,17 @@ test('negated or included signs and songs do not label an ordinary dialogue trac
   assert.equal(automaticTrackRank(track('only', 'English Signs only')), null);
   assert.equal(automaticTrackRank(track('only', 'English Songs only')), null);
 });
+
+test('explicit absence of dialogue or a signs-only designation keeps the current ordinary source', () => {
+  const english = track('ordinary', 'English');
+  for (const label of [
+    'English Signs & Songs (No Dialogue)', 'English (without dialogue)', 'English (Dialogue excluded)',
+    '영어 간판·노래 (대사 없음)', '영어 대사가 없는 자막', '전체 간판 전용', 'English Full Signs & Songs Only',
+  ]) {
+    const partial = track('partial', label);
+    assert.equal(selectAutomaticTrack([partial, english], english), english, label);
+    assert.equal(selectAutomaticTrack([partial], partial), null, label);
+  }
+  const dialogue = track('full', 'English Full Dialogue (No Signs)');
+  assert.equal(selectAutomaticTrack([english, dialogue], english), dialogue);
+});

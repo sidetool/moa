@@ -72,6 +72,27 @@ function installFixture() {
           return json({ page: 1, hasNextPage: false, items: [{ ...detail, title: !state.sourceReady ? '저장한 소스 목록' : '확인한 소스 목록' }],
             refreshing: !state.sourceReady });
         }
+        if (localStorage.getItem('verify.savedGroup') && url.pathname === '/api/watchlist') {
+          const response = await mock(input, init);
+          const [card] = await response.json();
+          return json(localStorage.getItem('verify.groupRemoved') ? [] : [{ ...card, id: 'saved-edition', inWatchlist: true,
+            groupId: 'manual:fixture', groupMemberIds: ['saved-edition'], watchlistMediaId: 'saved-edition', resumeMediaId: 'demo-1' }]);
+        }
+        if (localStorage.getItem('verify.savedGroup') && url.pathname === '/api/watchlist/demo-1/group' && url.searchParams.get('savedEdition') === 'saved-edition') {
+          if (method === 'GET') {
+            if (localStorage.getItem('verify.failGroupRead')) return json({ error: 'fixture-unavailable' }, 503);
+            const grouped = !localStorage.getItem('verify.groupSeparated');
+            return json({ grouped, inWatchlist: grouped && !localStorage.getItem('verify.groupRemoved') });
+          }
+          if (method === 'DELETE') {
+            if (localStorage.getItem('verify.failGroupWrite')) {
+              state.groupWriteFailed = true;
+              return json({ error: 'fixture-unavailable' }, 503);
+            }
+            localStorage.setItem('verify.groupRemoved', '1');
+          } else if (method === 'PUT') localStorage.removeItem('verify.groupRemoved');
+          return new Response(null, { status: 204 });
+        }
         if (url.pathname === '/api/watchlist/refresh-status') {
           state.statusReads++;
           if (state.statusGate) await state.statusGate;
@@ -83,6 +104,12 @@ function installFixture() {
           if (profile === 'p1' && state.holdList) await wait('finishList');
           const response = await mock(input, init);
           const [first, second] = await response.json();
+          if (state.longList) {
+            const cards = Array.from({ length: 72 }, (_, i) => ({
+              ...first, id: i === 55 ? 'demo-1' : `list-${i}`, title: `작품 ${i + 1}`, resumeMediaId: undefined
+            }));
+            return json(sort === 'updated' ? cards.reverse() : cards);
+          }
           const saved = profile === 'p2' ? { ...first, id: 'demo-1', title: '가족의 목록' } : { ...first, title: '먼저 저장한 작품' };
           const updated = { ...second, title: '회차 갱신 작품', unseenEpisodeCount: state.observed };
           return json(profile === 'p2' ? [saved] : sort === 'updated' ? [updated, saved] : [saved, updated]);
@@ -261,6 +288,89 @@ try {
     });
   }
 
+  await scenario('list-remote-navigation', 1280, async page => {
+    await open(page, '/');
+    await openList(page);
+    const cards = page.locator('main a.poster-card');
+    const sort = control(page, '내 목록 정렬');
+    const menu = page.getByRole('listbox', { name: '내 목록 정렬' });
+    const remoteKey = (key, keyCode) => page.evaluate(({ key, keyCode }) =>
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key, keyCode, bubbles: true, cancelable: true })), { key, keyCode });
+    await sort.focus();
+    await page.keyboard.press('ArrowDown');
+    await menu.waitFor();
+    assert.equal(await page.locator('html[data-tv]').count(), 0, 'keyboard selection does not activate spatial navigation');
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    await cards.first().focus();
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.locator('html[data-tv]').count(), 1, 'directional navigation from a poster activates TV mode');
+    assert.ok(await sort.evaluate(el => el === document.activeElement));
+    await remoteKey('Select', 23);
+    await menu.waitFor();
+    await page.keyboard.press('ArrowRight');
+    assert.ok(await sort.evaluate(el => el === document.activeElement));
+    await page.keyboard.press('ArrowDown');
+    await fixture(page, () => { window.catalogFixture.holdList = true; });
+    await remoteKey('Select', 23);
+    await page.waitForFunction(() => typeof window.catalogFixture.finishList === 'function');
+    assert.ok(await sort.evaluate(el => el === document.activeElement && el.getAttribute('aria-expanded') === 'false'));
+    await fixture(page, () => {
+      window.catalogFixture.holdList = false;
+      window.catalogFixture.finishList();
+    });
+    await cards.first().filter({ hasText: '회차 갱신 작품' }).waitFor();
+    await sort.filter({ hasText: '회차 업데이트순' }).waitFor();
+    await page.keyboard.press('ArrowDown');
+    assert.ok(await cards.evaluateAll(els => els.includes(document.activeElement)), 'down returns to a poster');
+    await page.keyboard.press('ArrowUp');
+    for (const [key, code] of [['Unidentified', 461], ['BrowserBack', 0], ['Backspace', 8]]) {
+      await page.keyboard.press('Enter');
+      await menu.waitFor();
+      await page.keyboard.press('ArrowUp');
+      await remoteKey(key, code);
+      await menu.waitFor({ state: 'hidden' });
+      assert.ok(await sort.evaluate(el => el === document.activeElement && el.textContent === '회차 업데이트순'));
+      assert.equal(new URL(page.url()).pathname, '/my-list');
+    }
+    await remoteKey('Unidentified', 10009);
+    await page.waitForURL(url => url.pathname === '/');
+    await openList(page);
+    await sort.filter({ hasText: '담은 순' }).waitFor();
+  });
+
+  for (const width of [390, 1280]) {
+    await scenario(`list-history-${width}`, width, async page => {
+      await open(page, '/');
+      await fixture(page, () => { window.catalogFixture.longList = true; });
+      await openList(page);
+      await choose(page, '내 목록 정렬', '회차 업데이트순', width === 1280);
+      const cards = page.locator('main a.poster-card');
+      await cards.first().filter({ hasText: '작품 72' }).waitFor();
+      const cardOrder = () => cards.evaluateAll(els => els.map(el => el.getAttribute('aria-label')));
+      const beforeOrder = await cardOrder();
+      const selected = cards.nth(16);
+      assert.equal(await selected.evaluate(link => link.pathname), '/title/demo-1');
+      await selected.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+      const before = await selected.evaluate(el => ({ top: el.getBoundingClientRect().top, scroll: scrollY }));
+      assert.ok(before.scroll > 0 && before.top >= 0);
+      if (width === 1280) {
+        await selected.focus();
+        await page.keyboard.press('Enter');
+      } else await selected.tap();
+      await heading(page, '저장한 작품');
+      if (width === 1280) await page.keyboard.press('Escape');
+      else await page.goBack();
+      await control(page, '내 목록 정렬').filter({ hasText: '회차 업데이트순' }).waitFor();
+      await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '작품 56');
+      assert.deepEqual(await cardOrder(), beforeOrder, 'Back restores the same order');
+      const after = await selected.evaluate(el => ({ top: el.getBoundingClientRect().top, scroll: scrollY }));
+      assert.ok(Math.abs(after.scroll - before.scroll) <= 2 && Math.abs(after.top - before.top) <= 2,
+        JSON.stringify({ before, after }));
+      assert.ok(after.top >= 0 && after.top < 900, 'focused card remains in view');
+    }, width === 1280 ? () => localStorage.setItem('moa.remoteMode', 'on') : undefined);
+  }
+
   await scenario('episode-range-shrinks', 390, async page => {
     await open(page, '/title/demo-1');
     await page.getByRole('tab', { name: '101–150', exact: true }).click();
@@ -292,6 +402,47 @@ try {
       assert.equal(await page.getByRole('button', { name: '회차 새로고침' }).count(), 0);
     }
   }, () => localStorage.setItem('verify.episodeCase', 'live'));
+
+  await scenario('watched-detail-manages-saved-edition', 1280, async page => {
+    await open(page, '/my-list');
+    const card = page.locator('main a.poster-card').first();
+    const path = '/title/demo-1?savedEdition=saved-edition';
+    assert.equal(await card.getAttribute('href'), path);
+    await card.click();
+    const saved = page.getByRole('button', { name: '내 목록에 있음', exact: true });
+    await saved.waitFor();
+    assert.equal(await saved.getAttribute('aria-pressed'), 'true');
+    const direct = await page.context().newPage();
+    await open(direct, path);
+    await direct.getByRole('button', { name: '내 목록에 있음', exact: true }).waitFor();
+    await direct.close();
+    await fixture(page, () => localStorage.setItem('verify.failGroupWrite', '1'));
+    await saved.click();
+    await page.waitForFunction(() => window.catalogFixture.groupWriteFailed && document.querySelector('.hero-actions [aria-pressed]')?.disabled === false);
+    assert.equal(await saved.getAttribute('aria-pressed'), 'true');
+    await fixture(page, () => localStorage.removeItem('verify.failGroupWrite'));
+    await saved.click();
+    const removed = page.getByRole('button', { name: '내 목록', exact: true });
+    await removed.waitFor();
+    assert.equal(await removed.getAttribute('aria-pressed'), 'false');
+    await page.reload();
+    await removed.waitFor();
+    await removed.click();
+    await saved.waitFor();
+    await fixture(page, () => localStorage.setItem('verify.failGroupRead', '1'));
+    await page.reload();
+    const retry = page.getByRole('button', { name: '내 목록 상태 다시 확인', exact: true });
+    await retry.waitFor();
+    await fixture(page, () => localStorage.removeItem('verify.failGroupRead'));
+    await retry.click();
+    await saved.waitFor();
+    await fixture(page, () => localStorage.setItem('verify.groupSeparated', '1'));
+    await page.reload();
+    await removed.waitFor();
+    await removed.click();
+    await saved.waitFor();
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), null);
+  }, () => localStorage.setItem('verify.savedGroup', '1'));
 
   await scenario('list-already-refreshed', 1280, async page => {
     await open(page, '/');

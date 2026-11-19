@@ -1,3 +1,4 @@
+import { episodeOrder } from '../profiles/progress.js';
 import { playbackMediaType } from '../metadata/tmdb.js';
 import { randomUUID } from 'node:crypto';
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
@@ -93,8 +94,8 @@ export class Playback {
     const fontSources: Session['fontSources'] = new Map();
     for (const font of probe.streams.filter(s => s.codec_type === 'attachment' && (/\.(ttf|otf|woff2?)$/i.test(s.tags?.filename || '') || ['ttf', 'otf'].includes(s.codec_name || '')))) fontSources.set(String(font.index), font.index);
     const episode = this.db.get('SELECT e.*,m.type,m.title AS media_title FROM episodes e JOIN media m ON m.id=e.media_id WHERE e.id=?', episodeId)!;
-    const episodes = this.catalog.episodes(episode.media_id, profile), index = episodes.findIndex(e => e.id === episodeId);
-    const next = episode.type === 'movie' ? undefined : episodes[index + 1];
+    const episodes = this.catalog.episodes(episode.media_id, profile);
+    const next = episode.type === 'movie' ? undefined : episodes.find(e => episodeOrder(e, { season: episode.season, number: episode.number, id: episodeId }) > 0);
     const audioTracks: AudioTrack[] = audioStreams.map(a => ({ id: String(a.index), label: a.tags?.title || `${a.tags?.language || '오디오'} · ${a.codec_name} ${a.channels || 0}ch`, lang: a.tags?.language, default: a.index === audio?.index }));
     const markers = await this.enrichment?.markers(episodeId);
     const response: PlaybackSession = { ...(saved ? {saved:true} : {}), sessionId, episodeId, mediaId: episode.media_id, mediaTitle: this.db.displayTitle(episode.media_id, episode.media_title, episode.season), mediaType: playbackMediaType(this.db, episode.media_id, episode.type),

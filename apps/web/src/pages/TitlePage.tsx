@@ -6,7 +6,7 @@ import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, Shi
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { DownloadBatchResult, DownloadQuality, Episode, MediaDetail } from "@moa/shared";
-import { useMe, useMedia, useWatchlistToggle } from "../api/queries";
+import { useGroupWatchlist, useMe, useMedia, useWatchlistToggle } from "../api/queries";
 import { jobsByEpisode, useDownloadStatus } from "../api/downloads";
 import { useOneTapDownload } from "../features/title/ServerSave";
 import { BatchDownload, BatchDownloadResultLine, DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../features/title/ServerSave";
@@ -205,6 +205,8 @@ export function TitlePage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const media = useMedia(id);
+  const savedEdition = new URLSearchParams(useLocation().search).get("savedEdition");
+  const savedGroup = useGroupWatchlist(id, savedEdition);
   const toggle = useWatchlistToggle();
   const [expanded, setExpanded] = useState(false);
   const [trailer, setTrailer] = useState(false);
@@ -224,6 +226,8 @@ export function TitlePage() {
   }
 
   const m = media.data;
+  const inWatchlist = savedGroup.data?.grouped ? savedGroup.data.inWatchlist : m.inWatchlist;
+  const retryGroupRead = Boolean(savedEdition && savedGroup.isError && !savedGroup.data);
   const isMovie = m.type === "movie";
   const trailers = trailerKeys(m);
   const lang = foreignLang(m), season = seasonInfo(m);
@@ -273,13 +277,15 @@ export function TitlePage() {
             )}
             <Button
               variant="secondary" size="l"
-              icon={m.inWatchlist ? <Check size={22} /> : <Plus size={22} />}
-              aria-pressed={Boolean(m.inWatchlist)}
-              onClick={() => toggle.mutate({ id: m.id, add: !m.inWatchlist })}
-            >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
+              icon={inWatchlist ? <Check size={22} /> : <Plus size={22} />}
+              aria-pressed={Boolean(inWatchlist)}
+              disabled={toggle.isPending || Boolean(savedEdition && !savedGroup.data && !retryGroupRead)}
+              onClick={() => retryGroupRead ? void savedGroup.refetch() : toggle.mutate({ id: m.id, add: !inWatchlist, savedEdition: savedGroup.data?.grouped ? savedEdition! : undefined })}
+            >{retryGroupRead ? "내 목록 상태 다시 확인" : inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
+          {toggle.isError && toggle.variables.savedEdition && toggle.variables.id === id && <p role="alert">내 목록을 변경하지 못했어요. 다시 시도해 주세요.</p>}
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
           {m.overview && (

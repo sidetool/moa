@@ -14,9 +14,10 @@ function metaLine(card: MediaCard) {
 export function PosterCard({ card, eager, identity, showUnseen }: { card: MediaCard; eager?: boolean; identity?: string; showUnseen?: boolean }) {
   const lang = foreignLang(card), season = seasonInfo(card);
   const description = useId();
+  const savedEdition = card.watchlistMediaId ? `?savedEdition=${encodeURIComponent(card.watchlistMediaId)}` : "";
   const unseen = showUnseen && card.unseenEpisodeCount ? `안 본 회차 ${card.unseenEpisodeCount}개` : undefined;
   return (
-    <Link to={`/title/${encodeURIComponent(card.resumeMediaId ?? card.id)}`} data-remote-id={identity} className="card poster-card" aria-label={card.title} aria-describedby={unseen ? description : undefined}>
+    <Link to={`/title/${encodeURIComponent(card.resumeMediaId ?? card.id)}${savedEdition}`} data-remote-id={identity} className="card poster-card" aria-label={card.title} aria-describedby={unseen ? description : undefined}>
       <div className="card-frame">
         <Artwork src={card.poster} fallbackSrc={card.backdrop} title={card.title} ratio="poster" width={342} eager={eager} />
         {(card.badge || (card.sourceCount || 0) > 1) && <span className="card-badge">{card.badge || `소스 ${card.sourceCount}개`}</span>}

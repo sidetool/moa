@@ -12,7 +12,7 @@ import { KidsPolicy } from '../profiles/kids.js';
 import { APK_RELAY } from '../sources/apk-bridge.js';
 import { ApiFailure, hash, safePath, contained } from '../util.js';
 import { DOWNLOAD_QUALITIES, preferredQuality, qualityHeight } from './quality.js';
-import { transferVideo } from './transfer.js';
+import { transferVideo, rethrowUpstreamFailure } from './transfer.js';
 
 const MAX_QUEUED_DOWNLOADS=500;
 const activeStates=['queued','resolving','downloading','finalizing'];
@@ -195,7 +195,7 @@ export class Downloads {
   }
   private batchScope(mediaId:string,profile:string,season?:number){
     if(typeof mediaId!=='string'||!mediaId||mediaId.length>512||season!==undefined&&(!Number.isSafeInteger(season)||season<0||season>10000))throw new ApiFailure(400,'download-query-invalid');
-    const rows=this.db.all(`SELECT id FROM episodes WHERE media_id=? ${season===undefined?'':'AND season=?'} ORDER BY season,number,id`,mediaId,...(season===undefined?[]:[season]));
+    const rows=this.db.all(`SELECT id FROM available_episodes WHERE media_id=? ${season===undefined?'':'AND season=?'} ORDER BY season,number,id`,mediaId,...(season===undefined?[]:[season]));
     if(!rows.length)throw new ApiFailure(404,'episode-not-found');
     this.assertRequest(rows[0].id,profile);
     const live=new Set(this.db.all("SELECT episode_id FROM download_jobs WHERE media_id=? AND state IN ('queued','resolving','downloading','finalizing','ready')",mediaId).map(r=>r.episode_id));
@@ -242,11 +242,11 @@ export class Downloads {
     let dir:string|undefined,lease:string|undefined,timer:NodeJS.Timeout|undefined,renewing=false,leaseError=false,bytes=0,lastFlush=0;
     const priorBytes=this.partialBytes.get(row.id)||0;
     try{
-      const mapping=this.assertRequest(row.episode_id,row.profile_id);const root=await this.storage();signal.throwIfAborted();
+      const mapping=this.assertRequest(row.episode_id,row.profile_id);const root=await this.storage();
       dir=path.join(root,`job-${row.id}`);await mkdir(dir,{mode:0o700,recursive:true});await safePath(root,dir,true);
-      this.partialBytes.delete(row.id);
+      signal.throwIfAborted();
       this.change(row.id,'resolving');
-      const videos=await this.sources.videos(row.episode_id);lease=videos.apkLease;signal.throwIfAborted();this.assertRequest(row.episode_id,row.profile_id);
+      const videos=await this.sources.videos(row.episode_id).catch(rethrowUpstreamFailure);lease=videos.apkLease;signal.throwIfAborted();this.assertRequest(row.episode_id,row.profile_id);
       const automatic=row.selection.startsWith('auto:')?row.selection.slice(5) as DownloadQuality:undefined;
       const matched=automatic?[]:videos.filter(v=>fingerprint(v)===row.selection);
       if(!automatic&&matched.length!==1)throw new ApiFailure(410,'download-selection-changed');
@@ -262,6 +262,7 @@ export class Downloads {
         if(bytes>20*1024**3||this.used()+bytes>this.quota())throw new ApiFailure(507,'download-quota-exceeded');
         if(Date.now()-lastFlush>1000||lastFlush===0){const disk=await statfs(root);if(disk.bavail*disk.bsize<Math.max(512*1024**2,n))throw new ApiFailure(507,'download-space-low');lastFlush=Date.now();this.db.run('UPDATE download_jobs SET bytes=?,updated_at=? WHERE id=?',bytes,new Date().toISOString(),row.id);}
       };
+      this.partialBytes.delete(row.id); // The transfer budget accounts for the resumed offset.
       await budget(0);this.change(row.id,'downloading');
       const initial=new URL(item.url).origin,proxy=this.sources.proxy(mapping.source_id);
       const fetcher=async(url:string,range?:string,ifRange?:string)=>{
@@ -284,9 +285,12 @@ export class Downloads {
       this.change(row.id,['download-interrupted','download-disabled'].includes(code)?'interrupted':code==='download-cancelled'?'cancelled':'failed',code);
       // Stop the remaining queue on server-wide storage failure instead of extracting hundreds of doomed jobs.
       if(['download-quota-exceeded','download-space-low','download-storage-unavailable','download-storage-unconfigured','download-storage-overlap'].includes(code))this.db.run("UPDATE download_jobs SET state='interrupted',error=?,updated_at=? WHERE state='queued'",code,new Date().toISOString());
-      const retain=['download-failed','download-truncated','download-interrupted'].includes(code);
+      const retain=['download-failed','download-upstream-unavailable','download-range-invalid','download-truncated','download-interrupted'].includes(code);
       const checkpoint=dir&&retain?await readCheckpoint(dir,row.id,row.episode_id):undefined;
-      if(checkpoint)this.partialBytes.set(row.id,checkpoint.confirmedOffset);
+      if(checkpoint){
+        this.partialBytes.set(row.id,checkpoint.confirmedOffset);
+        this.db.run('UPDATE download_jobs SET bytes=?,total_bytes=? WHERE id=?',checkpoint.confirmedOffset,checkpoint.totalBytes,row.id);
+      }
       else if(dir){try{await rm(dir,{recursive:true,force:true});this.partialBytes.delete(row.id);}catch{this.partialBytes.set(row.id,Math.max(priorBytes,bytes));}}
     }finally{clearInterval(timer);await this.sources.apk.release(lease);}
   }

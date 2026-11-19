@@ -1,5 +1,6 @@
 import { mergePlaybackMarkers } from '../player/playback/skip-markers';
 import { nextUpTiming } from '../player/playback/next-up';
+import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
 import { attachAnime4k } from '../player/playback/anime4k';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
@@ -208,11 +209,23 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ key: number; side: "left" | "right" | "center"; label: string } | null>(null);
   const prefs = useDevicePrefs();
-  const failedAnime4kSession = useRef<string | null>(null);
+  const [anime4kStatus, setAnime4kStatus] = useState<Anime4kStatus>('waiting');
+  const failedAnime4kSession = useRef<{ id: string; reason: Anime4kFailure } | null>(null);
   useLayoutEffect(() => {
     if (prefs.experimentalAnime4k !== true) { failedAnime4kSession.current = null; return; }
-    if (!session || session.sessionId === failedAnime4kSession.current || session.live || casting || airplayMedia || pipWindow || fatal || !video.current) return;
-    return attachAnime4k(video.current, session.url, () => { failedAnime4kSession.current = session.sessionId; });
+    if (!session || !video.current) { setAnime4kStatus('waiting'); return; }
+    if (fatal) { setAnime4kStatus('videoError'); return; }
+    if (session.live) { setAnime4kStatus('live'); return; }
+    if (casting || airplayMedia) { setAnime4kStatus('remote'); return; }
+    if (pipWindow) { setAnime4kStatus('pip'); return; }
+    const failure = failedAnime4kSession.current;
+    if (failure?.id === session.sessionId) { setAnime4kStatus(failure.reason); return; }
+    return attachAnime4k(video.current, session.url, status => {
+      if (status === 'unsupported' || status === 'filterError' || status === 'performance') {
+        failedAnime4kSession.current = { id: session.sessionId, reason: status };
+      }
+      setAnime4kStatus(status);
+    });
   }, [prefs.experimentalAnime4k, session, casting, airplayMedia, pipWindow, fatal]);
   const shortcutLabel = (action: PlayerShortcutAction, label: string) => {
     const key = playerShortcutLabel(prefs.playerShortcuts[action]);
@@ -1697,6 +1710,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               <QualityControl levels={levels} level={level} onLevel={index => { setLevel(index); engine.current?.setLevel(index); }}
                 streams={session.streams} streamId={session.streamId} onStream={switchServer}
                 playingHeight={playingHeight} transcode={session.mode === "transcode"} />
+              {prefs.experimentalAnime4k && <Anime4kStatusNote status={anime4kStatus} />}
               <ServerControl streams={session.streams} streamId={session.streamId} onStream={switchServer} />
               {!!session.streams?.length && (
                 <button className="panel-link" onClick={() => { setPanel(null); setSourcePicker(true); }}><Shuffle size={18} /><span>다른 소스 선택</span><ChevronRight size={18} /></button>

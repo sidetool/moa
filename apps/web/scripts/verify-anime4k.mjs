@@ -117,13 +117,24 @@ try {
   });
   const openPanel = name => page.getByRole('button', { name, exact: true }).dispatchEvent('click');
 
+  const settingsPanel = page.getByRole('dialog', { name: '재생 설정' });
+  const status = text => settingsPanel.getByText('Anime4K ' + text, { exact: true }).waitFor();
+  const fallback = reason => status('원본 재생 · ' + reason);
+  const active = () => status('적용 중');
+
   await page.goto(base + '/watch/fixture?t=0');
   await playing();
   await page.waitForFunction(() => document.querySelector('video').textTracks[0]?.mode === 'showing');
   await video.evaluate(v => { window.initialVideo = v; });
   assert.ok(!requests.some(path => /anime4k-renderer|anime4k_js/.test(path)), 'disabled by default: no renderer download');
   assert.equal(await layer.count(), 0);
+  await openPanel('재생 설정');
+  await settingsPanel.waitFor();
+  assert.equal(await page.getByText(/^Anime4K /).count(), 0, 'no status without opt-in');
   await change({ experimentalAnime4k: true });
+  await fallback('브라우저 자막 표시 중');
+  await change({ subtitleScale: 125, subtitleHeight: 10 });
+  await fallback('브라우저 자막 표시 중');
   assert.equal(await layer.count(), 0, 'native VTT uses original video');
   assert.ok(!requests.some(path => /anime4k-renderer|anime4k_js/.test(path)));
 
@@ -133,14 +144,32 @@ try {
   await page.route('**/anime4k-renderer.ts*', route => intercept(route), { times: 1 });
   await change({ subtitleBackground: 'soft' });
   const delayed = await Promise.race([pending, page.waitForTimeout(15000).then(() => { throw new Error('Expected deferred renderer request'); })]);
+  await fallback('보정 준비 중');
   await change({ experimentalAnime4k: false });
   const loaded = page.waitForEvent('requestfinished', req => req.url() === delayed.request().url());
   await delayed.continue();
   await loaded;
   await video.evaluate(v => new Promise(resolve => v.requestVideoFrameCallback(() => v.requestVideoFrameCallback(resolve))));
   assert.equal(await layer.count(), 0, 'a stale import cannot attach');
+  assert.equal(await page.getByText(/^Anime4K /).count(), 0);
+  // Keep the renderer module available, but hold back the first decoded-frame callback.
+  await video.evaluate(v => {
+    v.requestVideoFrameCallback = callback => {
+      window.firstFilterFrame = callback;
+      return 0;
+    };
+  });
   await change({ experimentalAnime4k: true });
+  await page.waitForFunction(() => Boolean(window.firstFilterFrame));
+  await fallback('보정 준비 중');
+  await original();
+  await video.evaluate(v => {
+    delete v.requestVideoFrameCallback;
+    v.requestVideoFrameCallback(window.firstFilterFrame);
+    delete window.firstFilterFrame;
+  });
   await showing();
+  await active();
   assert.deepEqual(await layer.evaluate(c => [c.width, c.height, getComputedStyle(c).pointerEvents]), [192, 128, 'none']);
   await page.getByText('Synthetic subtitle', { exact: true }).waitFor();
   assert.ok(await page.evaluate(() => Number(getComputedStyle(document.querySelector('.subtitle-overlay')).zIndex) > Number(getComputedStyle(document.querySelector('.player-anime4k')).zIndex)));
@@ -148,21 +177,30 @@ try {
 
   await video.evaluate(v => v.pause());
   await original();
+  await fallback('일시정지');
   await video.evaluate(v => new Promise(resolve => { v.addEventListener('seeked', resolve, { once: true }); v.currentTime = 12; }));
   await original();
   assert.ok(await video.evaluate(v => v.paused && Math.abs(v.currentTime - 12) < .25));
+  await fallback('일시정지');
+  await openPanel('닫기');
+  assert.equal(await page.getByText(/^Anime4K /).count(), 0, 'status stays inside settings');
   await page.locator('.center-play').dispatchEvent('click');
   await showing();
+  await openPanel('재생 설정');
+  await active();
   await change({ subtitleBackground: 'original' });
   await original();
   await page.waitForFunction(() => document.querySelector('video').textTracks[0]?.mode === 'showing');
+  await fallback('브라우저 자막 표시 중');
   await change({ subtitleBackground: 'soft', videoFill: true });
   await showing();
   await page.waitForFunction(() => {
     const v = document.querySelector('video'), c = document.querySelector('.player-anime4k');
     return v.style.transform && v.style.transform === c.style.transform;
   });
+  await active();
   await openPanel('자막 및 음성');
+  assert.equal(await page.getByText(/^Anime4K /).count(), 0);
   await page.getByRole('button', { name: /Fixture ASS/ }).click();
   await page.locator('canvas.JASSUB').waitFor({ state: 'visible' });
   await showing();
@@ -174,34 +212,55 @@ try {
 
   // Use the product server switch, preserving time and reconstructing at the new decoded size.
   await openPanel('재생 설정');
+  await active();
   await page.getByRole('button', { name: '72p', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.player-anime4k:not([hidden])')?.width === 256);
   assert.equal(await layer.count(), 1);
   assert.equal(await layer.evaluate(c => c.height), 144);
   assert.ok(await video.evaluate(v => v.currentTime >= 12 && !v.paused));
   assert.equal(sessions, 2);
+  await openPanel('재생 설정');
+  await active();
+  await video.evaluate(v => v.requestPictureInPicture());
+  await original();
+  await fallback('화면 속 화면');
+  await page.evaluate(() => document.exitPictureInPicture());
+  await showing();
+  await active();
+  await video.evaluate(v => v.requestFullscreen());
+  await original();
+  // Native fullscreen hides the settings dialog along with the rest of the page.
+  await settingsPanel.getByText('Anime4K 원본 재생 · 기본 플레이어로 재생 중', { exact: true }).waitFor({ state: 'attached' });
+  await page.evaluate(() => document.exitFullscreen());
+  await showing();
+  await active();
   // A real GPU context loss must affect only the optional layer, even after pause/resume.
   const atLoss = await layer.evaluate(c => {
     c.getContext('webgl').getExtension('WEBGL_lose_context').loseContext();
     return document.querySelector('video').currentTime;
   });
   await layer.waitFor({ state: 'detached' });
+  await fallback('화질 보정 오류');
   await video.evaluate(async v => { v.pause(); await v.play(); });
   await page.waitForFunction(at => document.querySelector('video').currentTime > at + .5, atLoss);
   assert.equal(await layer.count(), 0);
   // Document PiP changes WatchPlayer props and reconstructs the optional attachment on return.
   // A session that has already lost its context must keep the original even across that transition.
   await page.setViewportSize({ width: 1280, height: 800 });
+  await openPanel('닫기');
   await page.mouse.move(640, 360);
   await page.getByRole('button', { name: 'PIP', exact: true }).click();
   await page.waitForFunction(() => window.documentPictureInPicture?.window?.document.querySelector('video'));
+  await page.evaluate(() => window.documentPictureInPicture.window.document.querySelector('button[aria-label="재생 설정"]').click());
+  await page.waitForFunction(() => window.documentPictureInPicture.window.document.querySelector('.panel-settings')?.textContent.includes('Anime4K 원본 재생 · 화면 속 화면'));
   await page.evaluate(() => window.documentPictureInPicture.window.close());
   await page.waitForFunction(() => document.querySelector('video') === window.initialVideo);
   await video.evaluate(v => v.play());
   await video.evaluate(v => new Promise(resolve => v.requestVideoFrameCallback(() => v.requestVideoFrameCallback(resolve))));
+  await fallback('화질 보정 오류');
   assert.equal(await layer.count(), 0, 'returning from Document PiP cannot retry a failed filter');
   assert.equal(sessions, 2);
-  console.log('PASS product source switch and terminal context loss across playback and Document PiP');
+  console.log('PASS settings status for source switch, native fullscreen, video PiP and terminal context loss across Document PiP');
 
   await change({ experimentalAnime4k: false });
   await change({ experimentalAnime4k: true });
@@ -213,6 +272,9 @@ try {
   await playing();
   await page.evaluate(async () => { const { setRemotePreference } = await import('/src/lib/remote.ts'); setRemotePreference('off'); });
   await showing();
+  // TV navigation can close the dialog. Read feedback from the actual settings panel.
+  if (!(await settingsPanel.count())) await openPanel('재생 설정');
+  await active();
   // Report sustained decoder frame loss while media time advances; no timing-dependent busy loop.
   await video.evaluate(v => {
     const read = v.getVideoPlaybackQuality.bind(v);
@@ -221,18 +283,35 @@ try {
   });
   await layer.waitFor({ state: 'detached' });
   await playing();
+  await fallback('처리 속도 부족');
   assert.equal(sessions, 2, 'slow fallback never recreates the playback session');
   await video.evaluate(v => { delete v.getVideoPlaybackQuality; });
   await change({ experimentalAnime4k: false });
   await change({ experimentalAnime4k: true });
   await showing();
+  // Delayed WebGL errors surface during the periodic draw check, without a context-lost event.
+  await layer.evaluate(c => c.getContext('webgl').enable(0xffffffff));
+  await layer.waitFor({ state: 'detached' });
+  await fallback('화질 보정 오류');
+  await change({ experimentalAnime4k: false });
+  await page.evaluate(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+      if (type === 'webgl' && this.classList.contains('player-anime4k')) return null;
+      return getContext.call(this, type, ...args);
+    };
+  });
+  await change({ experimentalAnime4k: true });
+  await fallback('이 기기는 보정 미지원');
+  assert.equal(await layer.count(), 0);
+  await playing();
   await openPanel('뒤로');
   await page.waitForURL(base + '/title/m');
   await page.locator('.title-page .title-hero-copy').getByRole('heading', { name: 'Filter test' }).waitFor();
   assert.equal(await video.count(), 0);
   assert.equal(await layer.count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS TV navigation, sustained frame-loss fallback and player teardown (software WebGL; hardware performance unmeasured)');
+  console.log('PASS TV navigation, sustained frame-loss reason, late WebGL error, unsupported device and teardown (software WebGL)');
 } finally {
   await browser?.close();
   await web?.close();

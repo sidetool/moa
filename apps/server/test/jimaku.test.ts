@@ -137,3 +137,29 @@ test('Jimaku aliases, episode/season filtering, source cache, ownership and Japa
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('Jimaku verifies explicit episodes without using numbers from the series title or its entry aliases', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-jimaku-numeric-'));
+  const series = { name: 'Room 12 Files', english_name: 'Case 12', japanese_name: '第12の部屋' };
+  const exact = ['Room_12_Files S01E03.ja.srt', '[Group] Case_12_03_1080p_x264.ja.srt', '03.ja.srt'];
+  const unnumbered = ['Room_12_Files_1080p_x264.ja.srt', 'Case_12_1080p_x264.ja.srt'];
+  const conflicting = ['Case_12_S01E03_E04.ja.srt', 'Room_12_Files_S02E03.ja.srt'];
+  const env = await buildApp({ dataDir: dir, mediaRoot: dir }, false, {
+    jimakuFetch: async url => new Response(String(url).endsWith('/')
+      ? entry(series, '/entry/9001') : [...exact, ...unnumbered, ...conflicting].map(name => file(name)).join('')),
+  });
+  try {
+    const profile = (await env.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Synthetic' } })).json();
+    env.db.run("INSERT INTO media VALUES('room',NULL,'Room 12 Files','anime','{}','2026')");
+    for (const number of [3, 12]) {
+      const id = 'room-' + number;
+      env.db.run("INSERT INTO episodes VALUES(?,'room',1,?,?,100,NULL)", id, number, String(number));
+      const response = await env.app.inject({ url: '/api/episodes/' + id + '/subtitles/jimaku', headers: { 'x-moa-profile': profile.id } });
+      assert.equal(response.statusCode, 200, response.body);
+      const candidates = response.json().candidates as { filename: string; match: string }[];
+      assert.deepEqual(candidates.filter(item => item.match === 'episode').map(item => item.filename).sort(), number === 3 ? [...exact].sort() : []);
+      assert.deepEqual(candidates.filter(item => item.match === 'unverified').map(item => item.filename).sort(), [...unnumbered].sort());
+      assert.ok(candidates.every(item => !conflicting.includes(item.filename)));
+    }
+  } finally { await env.app.close(); await rm(dir, { recursive: true, force: true }); }
+});

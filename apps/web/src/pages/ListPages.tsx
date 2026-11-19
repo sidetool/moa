@@ -52,7 +52,15 @@ export function SearchPage() {
 }
 
 export function MyListPage() {
-  const [sort, setSort] = useState<'saved' | 'updated'>('saved');
+  const [params, setParams] = useSearchParams();
+  const sort = params.get('sort') === 'updated' ? 'updated' : 'saved';
+  function setSort(value: string) {
+    if (value === sort) return;
+    const next = new URLSearchParams(params);
+    if (value === 'updated') next.set('sort', value);
+    else next.delete('sort');
+    setParams(next, { replace: true });
+  }
   const list = useWatchlist(sort);
   const client = useQueryClient();
   const profile = currentProfileId();
@@ -81,11 +89,11 @@ export function MyListPage() {
   const navigate = useNavigate();
   return (
     <div className="page-pad">
-      <header className="page-head page-head-row"><h1>내 목록</h1>{!!list.data?.length && <Select aria-label="내 목록 정렬" value={sort} onChange={value => setSort(value as typeof sort)} options={[{ value: "saved", label: "담은 순" }, { value: "updated", label: "회차 업데이트순" }]} />}</header>
+      <header className="page-head page-head-row"><h1>내 목록</h1>{!!list.data?.length && <Select aria-label="내 목록 정렬" value={sort} onChange={setSort} options={[{ value: "saved", label: "담은 순" }, { value: "updated", label: "회차 업데이트순" }]} />}</header>
       {list.isError && <p className="settings-error" role="alert">목록을 불러오지 못했어요. <button className="text-btn" onClick={() => void list.refetch()}>다시 시도</button></p>}
       {list.isPending && <GridSkeleton />}
       {list.data?.length === 0 && <EmptyState icon={<Bookmark size={40} />} title="아직 담은 작품이 없습니다" body="작품 상세 화면에서 '내 목록'을 누르면 여기에 모입니다." action={<Button variant="primary" onClick={() => navigate("/")}>둘러보기</Button>} />}
-      {!!list.data?.length && <div className="grid">{list.data.map(card => <PosterCard key={card.id} card={card} showUnseen />)}</div>}
+      {!!list.data?.length && <div className="grid">{list.data.map(card => <PosterCard key={card.id} identity={card.id} card={card} showUnseen />)}</div>}
     </div>
   );
 }

@@ -49,6 +49,7 @@ export class TitleGroups {
       INSERT INTO title_group_revision SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM title_group_revision);`);
     const inputs: Record<string, string[]> = {
       media: ['id','title','type','metadata'], episodes: ['id','media_id','season'],
+      withdrawn_episodes: ['episode_id'],
       tmdb_links: ['media_id','kind','tmdb_id','season','status'], tmdb_titles: ['kind','tmdb_id','card'],
       source_entries: ['id','enabled'], profiles: ['id','kids'],
       title_group_overrides: ['profile_id','media_id','group_id'],
@@ -62,15 +63,15 @@ export class TitleGroups {
         BEGIN UPDATE title_group_revision SET value=value+1; END;`);
     }
   }
-  mapping(profile: string) {
+  mapping(profile: string, beforeGroupChanges = false) {
     const db = this.catalog.db;
     // Other connections cannot run our TEMP triggers; data_version invalidates
     // conservatively for their commits. Local writes use only grouping inputs.
     const revision = `${db.get('SELECT value FROM title_group_revision')!.value}:${db.get('PRAGMA data_version')!.data_version}`;
     if (revision !== this.mappingRevision) { this.mappings.clear(); this.mappingRevision = revision; }
     const cached = this.mappings.get(profile);
-    if (cached && db.db.isTransaction === false) return cached;
-    const rows = db.all(`SELECT m.*,l.kind AS tmdb_kind,l.tmdb_id,l.season AS tmdb_season, t.card AS tmdb_card, (SELECT COUNT(*) FROM episodes e WHERE e.media_id=m.id) AS episode_count
+    if (cached && (db.db.isTransaction === false || beforeGroupChanges)) return cached;
+    const rows = db.all(`SELECT m.*,l.kind AS tmdb_kind,l.tmdb_id,l.season AS tmdb_season, t.card AS tmdb_card, (SELECT COUNT(*) FROM available_episodes e WHERE e.media_id=m.id) AS episode_count
       FROM media m LEFT JOIN tmdb_links l ON l.media_id=m.id AND l.status IN ('auto','manual')
       LEFT JOIN tmdb_titles t ON t.kind=l.kind AND t.tmdb_id=l.tmdb_id`);
     const overrides = new Map(db.all('SELECT * FROM title_group_overrides WHERE profile_id=?',profile).map(r => [r.media_id,r.group_id]));
@@ -185,8 +186,16 @@ export class TitleGroups {
     }
     return watched;
   }
-  saved(profile: string) {
-    return this.resolveMapped(this.savedIds(profile), profile, this.mapping(profile), undefined, true);
+  saved(profile: string, ids = this.savedIds(profile)) {
+    return this.resolveMapped(ids, profile, this.mapping(profile), undefined, true)
+      .map(card => ({ ...card, watchlistMediaId: card.id }));
+  }
+  savedMembers(profile: string, detailId: string, savedEdition: string) {
+    // This read precedes the watchlist write. The transaction has made no grouping
+    // changes, and mapping() checks the revision and other connections' data_version.
+    const mapping = this.mapping(profile, true), group = mapping.get(detailId);
+    if (!group || mapping.get(savedEdition) !== group) return undefined;
+    return this.savedIds(profile).filter(id => mapping.get(id) === group);
   }
   resolve(ids: string[], profile: string, query?: string): MediaCard[] {
     return this.resolveMapped(ids,profile,this.mapping(profile),query);

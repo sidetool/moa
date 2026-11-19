@@ -96,6 +96,22 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
     if (query(req).sort === 'updated') result.sort((a,b) => (b.episodesUpdatedAt ?? '').localeCompare(a.episodesUpdatedAt ?? ''));
     return reply.header('Cache-Control', 'private, no-store').send(result);
   });
+  const groupWatchlistSchema = { params: idParams('mediaId'), querystring: object({ savedEdition: string }, ['savedEdition']) };
+  app.get('/api/watchlist/:mediaId/group', { schema: groupWatchlistSchema }, async (req, reply) => {
+    const members = groups.savedMembers(profile(req), params(req).mediaId, query(req).savedEdition);
+    return reply.header('Cache-Control', 'private, no-store').send({ grouped: Boolean(members), inWatchlist: Boolean(members?.length) });
+  });
+  app.route({ method: ['PUT', 'DELETE'], url: '/api/watchlist/:mediaId/group', schema: groupWatchlistSchema, handler: async (req, reply) => {
+    const viewer = profile(req), anchor = query(req).savedEdition;
+    db.transaction(() => {
+      const members = groups.savedMembers(viewer, params(req).mediaId, anchor);
+      if (!members) throw new ApiFailure(409, 'watchlist-group-changed');
+      if (req.method === 'DELETE') {
+        db.run('DELETE FROM watchlist WHERE profile_id=? AND media_id IN (SELECT value FROM json_each(?))', viewer, JSON.stringify(members));
+      } else if (!members.length) db.run('INSERT INTO watchlist VALUES(?,?,?)', viewer, anchor, now());
+    });
+    return reply.code(204).send();
+  } });
   app.put('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
     const id = params(req).mediaId; if (!db.get('SELECT id FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
     db.run('INSERT OR IGNORE INTO watchlist VALUES(?,?,?)', profile(req), id, now()); return reply.code(204).send();
@@ -114,7 +130,7 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
   app.post('/api/progress', { schema: { body: object({ episodeId: string, position: { type: 'number', minimum: 0 }, duration: { type: 'number', exclusiveMinimum: 0 } }, ['episodeId', 'position', 'duration']) } }, async req => {
     const body = req.body as { episodeId: string; position: number; duration: number };
     if (!db.get('SELECT id FROM episodes WHERE id=?', body.episodeId)) throw new ApiFailure(404, 'episode-not-found');
-    const remote = sources.remoteEpisode(body.episodeId);
+    const remote = sources.remoteEpisode(body.episodeId, true);
     if (remote && sources.row(remote.source_id).live) throw new ApiFailure(400, 'live-progress-unavailable');
     const position = Math.min(body.position, body.duration);
     db.run('INSERT OR REPLACE INTO progress VALUES(?,?,?,?,?,?)', profile(req), body.episodeId, position, body.duration, Number(completion(position, body.duration)), now());

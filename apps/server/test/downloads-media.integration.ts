@@ -15,7 +15,7 @@ import { Downloads } from '../src/downloads/service.js';
 import { readCheckpoint } from '../src/downloads/checkpoint.js';
 import { config } from '../src/config.js';
 
-test('real MP4 survives a broken local HTTP connection and same-job retry validates it with ffprobe', async t => {
+test('real MP4 survives a broken connection and a 503 before same-job recovery with ffprobe', async t => {
   assert.ok(process.env.MOA_TEST_VIDEO, 'MOA_TEST_VIDEO must identify generated local media');
   assert.ok(process.env.MOA_TEST_FFPROBE, 'MOA_TEST_FFPROBE must identify a real local ffprobe executable');
   const original = await readFile(process.env.MOA_TEST_VIDEO);
@@ -35,6 +35,7 @@ test('real MP4 survives a broken local HTTP connection and same-job retry valida
     }
     const match = /^bytes=(\d+)-$/.exec(range || '');
     if (!match || ifRange !== etag) { response.writeHead(412); response.end(); return; }
+    if (requests.length === 2) { response.writeHead(503); response.end(); return; }
     const offset = Number(match[1]), remaining = original.subarray(offset);
     response.writeHead(206, { 'Content-Type': 'video/mp4', 'Content-Length': remaining.length, ETag: etag, 'Content-Range': `bytes ${offset}-${original.length - 1}/${original.length}` });
     sentBytes += remaining.length; response.end(remaining);
@@ -74,13 +75,17 @@ test('real MP4 survives a broken local HTTP connection and same-job retry valida
   assert.equal(await downloads.asset('episode'), undefined);
   const checkpoint = await readCheckpoint(path.join(cfg.downloadRoot!, `job-${job.id}`), job.id, 'episode');
   assert.equal(checkpoint?.confirmedOffset, cut); assert.equal((await downloads.status()).usedBytes, cut);
+  downloads.retry(job.id, 'viewer'); const unavailable = await settle();
+  assert.equal(unavailable.state, 'failed'); assert.equal(unavailable.bytes, cut);
+  assert.equal(requests.length, 2); assert.equal((await downloads.status()).usedBytes, cut);
   downloads.retry(job.id, 'viewer'); const ready = await settle(); assert.equal(ready.state, 'ready', ready.error || '');
   const asset = await downloads.asset('episode'); assert.ok(asset);
   assert.equal(digest(await readFile(asset.path)), digest(original));
   const probe = JSON.parse(asset.probe);
   assert.ok(probe.streams.some((stream: { codec_type: string; width?: number; height?: number }) => stream.codec_type === 'video' && stream.width === 640 && stream.height === 360));
   assert.ok(probe.duration > 1); assert.equal((await downloads.status()).usedBytes, original.length);
-  assert.deepEqual(requests, [{ range: undefined, ifRange: undefined }, { range: `bytes=${cut}-`, ifRange: etag }]);
+  const resume = { range: `bytes=${cut}-`, ifRange: etag };
+  assert.deepEqual(requests, [{ range: undefined, ifRange: undefined }, resume, resume]);
   assert.equal(sentBytes, original.length);
   t.diagnostic(JSON.stringify({ originalBytes: original.length, retainedBytes: cut, retryBytes: original.length - cut, sentBytes, duration: probe.duration, sha256: digest(original) }));
 });

@@ -299,13 +299,10 @@ export class Jimaku {
         if (ranked.length === 1 || (!candidates.length && entry.id === ranked.at(-1)!.entry.id)) throw error;
         continue;
       }
+      const fileTitles = [...entry.names, ...names].sort((a, b) => b.length - a.length);
       for (const file of found) {
-        if (/[._](?:en|eng|english|ko|kor|korean|zh|chs|cht)\.(?:ass|ssa|srt|vtt|smi)$/i.test(file.filename)) continue;
-        const episodeName = file.filename.replace(
-          /[._](?:ja|jpn|jp|japanese|furigana)(?=\.(?:ass|ssa|srt|vtt|smi)$)/i,
-          '',
-        );
-        const numbers = parseSubtitleFilenameEpisodes(episodeName),
+        if (/[._](?:en|eng|english|ko|kor|korean|zh|chs|cht)\.(?:ass|ssa|srt|vtt|smi|sami)$/i.test(file.filename)) continue;
+        const numbers = parseSubtitleFilenameEpisodes(file.filename, fileTitles),
           season = parseSeason(file.filename);
         if (season && season !== query.season) continue;
         if (numbers.length && (numbers.length !== 1 || numbers[0] !== query.episode)) continue;

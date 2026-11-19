@@ -27,7 +27,7 @@ export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, group
       await tmdb.ensure(visible, cold ? 1500 : 0, cold ? 'foreground' : 'background');
       if (cold) { pins.assertOwner(profile(req),req); home = homeForProfile(); }
     }
-    return {...home, refreshing:visible.some(id=>tmdb.detailRefreshing(id)), rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.resolve(row.items.map(c=>c.id),profile(req))} : row)};
+    return {...home, refreshing:visible.some(id=>tmdb.detailRefreshing(id)), rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.saved(profile(req),row.items.map(c=>c.id))} : row)};
   });
   app.get('/api/media', { schema: { querystring: object({ type: typeQuery, genre: string, provider: string, sort: { type: 'string', enum: ['recent', 'title', 'year'], default: 'recent' }, page: pageQuery }) } }, async req => {
     const q = query(req); let cards = catalog.cards(profile(req), q.type);

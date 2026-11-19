@@ -102,16 +102,31 @@ export function useSaveSettings() {
   };
 }
 
+interface GroupWatchlistState { grouped: boolean; inWatchlist: boolean }
+const groupWatchlistKey = (id: string, savedEdition: string | null) => [...keys.watchlist, currentProfileId(), "group", id, savedEdition] as const;
+const groupWatchlistPath = (id: string, savedEdition: string) =>
+  `/watchlist/${encodeURIComponent(id)}/group?savedEdition=${encodeURIComponent(savedEdition)}`;
+
+export function useGroupWatchlist(id: string, savedEdition: string | null) {
+  return useQuery({ queryKey: groupWatchlistKey(id, savedEdition), enabled: Boolean(savedEdition), retry: false,
+    queryFn: ({ signal }) => api<GroupWatchlistState>(groupWatchlistPath(id, savedEdition!), { signal }) });
+}
+
 /** Optimistic watchlist toggle; card and detail caches update immediately. */
 export function useWatchlistToggle() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, add }: { id: string; add: boolean }) => api<void>(`/watchlist/${encodeURIComponent(id)}`, { method: add ? "PUT" : "DELETE" }),
-    onMutate: async ({ id, add }) => {
+    mutationFn: ({ id, add, savedEdition }: { id: string; add: boolean; savedEdition?: string }) => api<void>(
+      savedEdition ? groupWatchlistPath(id, savedEdition) : `/watchlist/${encodeURIComponent(id)}`, { method: add ? "PUT" : "DELETE" }),
+    onMutate: ({ id, add, savedEdition }) => {
+      if (savedEdition) return groupWatchlistKey(id, savedEdition);
       client.setQueryData<MediaDetail>(keys.media(id), old => (old ? { ...old, inWatchlist: add } : old));
     },
-    onSettled: (_data, _error, { id }) => {
-      void client.invalidateQueries({ queryKey: keys.media(id) });
+    onSuccess: (_data, { add }, groupKey) => {
+      if (groupKey) client.setQueryData<GroupWatchlistState>(groupKey, { grouped: true, inWatchlist: add });
+    },
+    onSettled: (_data, _error, { id, savedEdition }) => {
+      void client.invalidateQueries({ queryKey: savedEdition ? ["media"] : keys.media(id) });
       void client.invalidateQueries({ queryKey: keys.watchlist });
       void client.invalidateQueries({ queryKey: ["recommendations"] });
       // Mark cached feeds stale, but never reorder the Shorts currently playing.
