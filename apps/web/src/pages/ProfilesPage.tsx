@@ -7,6 +7,7 @@ import { keys, useProfiles } from "../api/queries";
 import { Avatar, Logo } from "../features/layout/AppShell";
 import { AVATAR_GROUPS, AvatarArt, avatarSpec, randomAvatar } from "../components/avatars";
 import { Button, PasswordInput, Skeleton } from "../components/ui";
+import { clearResumeScenes } from '../player/playback/resume-scene';
 import { api, ApiError, currentProfileId, setCurrentProfileId } from "../lib/api";
 import { cx } from "../lib/format";
 
@@ -147,7 +148,7 @@ export function ProfilesPage() {
       <ProfileEditor key={editing.id} profile={editing}
         onDone={() => void finishEditing()}
         onCancel={() => void finishEditing()}
-        onDelete={list.length > 1 ? () => { if (currentProfileId() === editing.id) setCurrentProfileId(null); void finishEditing(); } : undefined} />
+        onDelete={list.length > 1 ? () => { clearResumeScenes(editing.id); if (currentProfileId() === editing.id) setCurrentProfileId(null); void finishEditing(); } : undefined} />
       {error && <p className="form-error" role="alert">{error}</p>}
     </div>
   );

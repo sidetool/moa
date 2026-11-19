@@ -53,6 +53,11 @@ test('API profile isolation, contract shapes, range streaming and SPA routing', 
     assert.equal(progress.json().completed, false);
     const detail = (await app.inject({ url: '/api/media/media', headers })).json();
     assert.deepEqual(detail.playTarget, { episodeId: 'ep', position: 680, label: '이어보기 S2:E3' });
+    const relationsUrl = '/api/media/media/relations';
+    assert.equal((await app.inject(relationsUrl)).statusCode, 401);
+    const relations = await app.inject({url:relationsUrl,headers});
+    assert.deepEqual(relations.json(), {items:[]});
+    assert.equal(relations.headers['cache-control'],'private, no-store');
     const franchiseUrl = '/api/media/media/franchise';
     assert.equal((await app.inject(franchiseUrl)).statusCode, 401);
     const franchise = (await app.inject({ url: franchiseUrl, headers })).json();
@@ -61,9 +66,11 @@ test('API profile isolation, contract shapes, range streaming and SPA routing', 
     assert.equal((await app.inject({ url: '/api/media/missing/franchise', headers })).statusCode, 404);
     db.run('UPDATE profiles SET kids=1 WHERE id=?', other.id);
     assert.equal((await app.inject({ url: franchiseUrl, headers: otherHeaders })).statusCode, 403);
+    assert.equal((await app.inject({ url: relationsUrl, headers: otherHeaders })).statusCode, 403);
     db.run('UPDATE profiles SET kids=0 WHERE id=?', other.id);
     db.run('UPDATE profiles SET account_id=? WHERE id=?', 'different-account', other.id);
     assert.equal((await app.inject({ url: franchiseUrl, headers: otherHeaders })).statusCode, 401);
+    assert.equal((await app.inject({ url: relationsUrl, headers: otherHeaders })).statusCode, 401);
     db.run('UPDATE profiles SET account_id=? WHERE id=?', 'local', other.id);
 
     assert.equal(detail.progress.label, 'S2:E3 · 12분 남음');

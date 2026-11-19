@@ -47,7 +47,7 @@ export class Catalog {
       ...(resume ? { resume } : {}),
       ...(current?.progress && !current.progress.completed && current.progress.position > 0
         ? { progress: summary(current, current.progress, row.type === 'movie') } : {}),
-    }, !provider || provider.kind === 'local');
+    }, !provider || provider.kind === 'local', episodes);
   }
   cards(profile: string, type?: MediaType): MediaCard[] {
     return this.kids.filter(this.db.all(`SELECT * FROM media ${type ? 'WHERE type=?' : ''} ORDER BY added_at DESC,id`, ...(type ? [type] : [])), profile).map(m => this.card(m, profile));

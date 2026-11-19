@@ -7,7 +7,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ChevronRight, Plus, Radio, RefreshCw, Search, Settings2, Trash2, Tv, X } from 'lucide-react';
 import type { BrowseSelection, MediaCard, MediaType, Page, SourcePreference, SourcePreload, SourceRemovalImpact, SourceRemovalResult, VideoSource } from '@moa/shared';
 import { api, ApiError, currentProfileId, sized } from '../lib/api';
-import { useMe } from '../api/queries';
+import { keys, useMe } from '../api/queries';
 import { Button, ButtonLink, EmptyState, IconButton, ScrollLoader, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../components/ui';
 import { LandscapeCard, PosterCard } from '../components/Cards';
 import { Row, RowSkeleton } from '../components/Row';
@@ -123,7 +123,7 @@ function SourceEntry({ source, duplicateName = false, selected, onSelect }: { so
   const client = useQueryClient();
   const [settings,setSettings] = useState(false);
   const [removing,setRemoving] = useState(false);
-  const operation = useMutation({ mutationFn: ({ install, body }: { install?: boolean; body?: Record<string, string | boolean> }) => api<VideoSource>(`${path(source.id)}${install ? '/install' : ''}`, { method: install ? 'POST' : 'PATCH', ...(body ? { body } : {}) }), onSuccess: () => { void client.invalidateQueries({ queryKey: ['source-filters',source.id] }); void client.invalidateQueries({ queryKey: ['tab-source',source.id] }); void client.invalidateQueries({ queryKey: ['source-browse',source.id] }); void client.invalidateQueries({ queryKey: ['sources'] }); void client.invalidateQueries({ queryKey: ['home'] }); } });
+  const operation = useMutation({ mutationFn: ({ install, body }: { install?: boolean; body?: Record<string, string | boolean> }) => api<VideoSource>(`${path(source.id)}${install ? '/install' : ''}`, { method: install ? 'POST' : 'PATCH', ...(body ? { body } : {}) }), onSuccess: () => { void client.resetQueries({ queryKey: keys.titleRelations }); void client.invalidateQueries({ queryKey: ['source-filters',source.id] }); void client.invalidateQueries({ queryKey: ['tab-source',source.id] }); void client.invalidateQueries({ queryKey: ['source-browse',source.id] }); void client.invalidateQueries({ queryKey: ['sources'] }); void client.invalidateQueries({ queryKey: ['home'] }); } });
   const maintenance=useMutation({mutationFn:(action:'check'|'rollback')=>api<VideoSource>(`${path(source.id)}/${action}`,{method:'POST'}),onSuccess:async()=>{await client.invalidateQueries({queryKey:['sources']});await client.invalidateQueries({queryKey:['source-filters',source.id]});await client.invalidateQueries({queryKey:['source-browse',source.id]});await client.invalidateQueries({queryKey:['tab-source',source.id]});}});
   const healthText:Record<string,string>={'timeout':'응답 시간 초과','access-denied':'접근 제한 또는 인증 확인 필요','connection-failed':'네트워크·프록시 연결 실패','unsupported':'지원되지 않는 확장 기능','source-error':'소스 응답 오류','preparation-required':'APK를 다시 준비해야 합니다'};
   const update = source.installed && source.installedVersion !== source.version;
@@ -196,7 +196,7 @@ function RemoveSourcesSheet({ sources, onClose }: { sources: VideoSource[]; onCl
   const impact = useQuery({ queryKey: ['source-removal-impact', ...ids], queryFn: async () => sumImpact(await Promise.all(ids.map(id => api<SourceRemovalImpact>(`${path(id)}/removal-impact`)))), staleTime: 0 });
   const remove = useMutation({
     mutationFn: () => ids.length === 1 ? api<SourceRemovalResult>(path(ids[0]), { method: 'DELETE' }) : api<SourceRemovalResult>('/sources/remove', { method: 'POST', body: { ids } }),
-    onSuccess: async () => { onClose(); for (const key of [['sources'], ['settings'], ['home'], ['watchlist'], ['history'], ['grouped-cards']]) await client.invalidateQueries({ queryKey: key }); }
+    onSuccess: async () => { void client.resetQueries({ queryKey: keys.titleRelations }); onClose(); for (const key of [['sources'], ['settings'], ['home'], ['watchlist'], ['history'], ['grouped-cards']]) await client.invalidateQueries({ queryKey: key }); }
   });
   const i = impact.data;
   const single = sources.length === 1;

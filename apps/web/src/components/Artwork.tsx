@@ -5,7 +5,7 @@ import { artGradient, cx } from "../lib/format";
 interface Props {
   src?: string;
   /** Used when the primary image is missing (e.g. backdrop for a poster slot). */
-  fallbackSrc?: string;
+  fallbackSrc?: string | (string | undefined)[];
   title: string;
   ratio: "poster" | "landscape" | "wide";
   width: number;
@@ -21,13 +21,12 @@ interface Props {
  * with no image at all it draws a typographic card.
  */
 export function Artwork({ src, fallbackSrc, title, ratio, width, className, eager, labelFallback = true }: Props) {
-  const [failed, setFailed] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const primary = src && failed !== src ? src : undefined;
-  const secondary = !primary && fallbackSrc && failed !== fallbackSrc ? fallbackSrc : undefined;
-  const url = sized(primary ?? secondary, width);
+  const [failed, setFailed] = useState<string[]>([]);
+  const [loaded, setLoaded] = useState<string>();
+  const candidates = [src, ...(Array.isArray(fallbackSrc) ? fallbackSrc : [fallbackSrc])];
+  const url = candidates.map(candidate => sized(candidate, width)).find(candidate => candidate && !failed.includes(candidate));
   return (
-    <div className={cx("art", `art-${ratio}`, loaded && "is-loaded", className)} style={{ background: artGradient(title) }}>
+    <div className={cx("art", `art-${ratio}`, url && loaded === url && "is-loaded", className)} style={{ background: artGradient(title) }}>
       {url && (
         <img
           key={url}
@@ -36,8 +35,8 @@ export function Artwork({ src, fallbackSrc, title, ratio, width, className, eage
           loading={eager ? "eager" : "lazy"}
           decoding="async"
           draggable={false}
-          onLoad={() => setLoaded(true)}
-          onError={() => { setLoaded(false); setFailed(primary ?? secondary ?? null); }}
+          onLoad={() => setLoaded(url)}
+          onError={() => setFailed(previous => previous.includes(url) ? previous : [...previous, url])}
         />
       )}
       {!url && labelFallback && <span className="art-label art-label-solo">{title}</span>}

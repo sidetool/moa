@@ -8,6 +8,7 @@ export const keys = {
   me: ["me"] as const,
   profiles: ["profiles"] as const,
   home: (type?: MediaType) => ["home", type ?? "all"] as const,
+  titleRelations: ["title-relations"] as const,
   media: (id: string) => ["media", id] as const,
   list: (params: Record<string, string | number | undefined>) => ["media-list", params] as const,
   genres: (type?: MediaType) => ["genres", type ?? "all"] as const,
@@ -25,7 +26,7 @@ export const useProfiles = () => useQuery({ queryKey: keys.profiles, queryFn: ()
 
 export const useHome = (type?: MediaType, providers?: string[], personalScope: "tab" | "all" = "tab") => {
   const titleGrouping = useTitleGrouping();
-  return useQuery({ ...catalogReadOptions, queryKey: [...keys.home(type), providers, personalScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
+  return useQuery({ ...catalogReadOptions, queryKey: [...keys.home(type), currentProfileId(), providers, personalScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
 };
 
 export const useMedia = (id: string) => {

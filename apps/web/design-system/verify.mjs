@@ -93,6 +93,18 @@ try {
     await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).click();
     assert.equal(await playKey.innerText(), 'K');
     assert.equal(await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).isDisabled(), true);
+    const relations = page.locator('[data-preview="title-relations"]');
+    await relations.getByRole('link', { name: /첫 상영.*상세 보기/ }).click();
+    await relations.getByText('첫 상영 상세', { exact: true }).waitFor();
+    await relations.getByRole('link', { name: /영사실의 밤.*제목 검색/ }).click();
+    await relations.getByText('‘영사실의 밤’ 검색 결과', { exact: true }).waitFor();
+    const resumeArt = page.locator('[data-preview="continue-art"]');
+    await resumeArt.scrollIntoViewIfNeeded();
+    await resumeArt.locator('img').evaluate(img => img.decode());
+    assert.equal(await resumeArt.locator('img').evaluate(img => img.naturalWidth), 320);
+    assert.equal(await resumeArt.locator('video').count(), 0);
+    await resumeArt.getByRole('link', { name: /화면 테스트 영상/ }).click();
+    await resumeArt.getByText('1화 11분부터 재생', { exact: true }).waitFor();
     const quality = page.locator('[data-preview="player-quality"]');
     const qualityButtons = quality.getByRole('group', { name: '화질', exact: true }).getByRole('button');
     assert.deepEqual(await qualityButtons.allInnerTexts(), ['자동', '1080p', '720p', '360p'], 'HLS quality hides unknown heights');

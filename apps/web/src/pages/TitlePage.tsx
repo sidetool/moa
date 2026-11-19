@@ -13,7 +13,8 @@ import { useOneTapDownload } from "../features/title/ServerSave";
 import { BatchDownload, BatchDownloadResultLine, DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../features/title/ServerSave";
 import { Artwork, TitleLogo } from "../components/Artwork";
 import { MetaLine } from "../features/catalog/Hero";
-import { MetadataCredit, PeopleRow, SimilarRow } from "../features/title/TitleExtras";
+import { TitleWorks } from "../features/title/TitleWorks";
+import { MetadataCredit, PeopleRow } from "../features/title/TitleExtras";
 import { TrailerDialog } from "../features/title/TrailerDialog";
 import { trailerKeys } from "../lib/youtube";
 import { Button, ButtonLink, EmptyState, ProgressBar, Skeleton } from "../components/ui";
@@ -58,7 +59,7 @@ function EpisodeItem({ episode, highlight, save, status }: { episode: Episode; h
 
 const RANGE = 50;
 
-function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves }) {
+function Episodes({ media, saves, regular }: { media: MediaDetail; saves?: ServerSaves; regular: FranchiseSeason[] }) {
   const refresh = useEpisodeRefresh(media.id);
   const canRefresh = media.badge !== "LIVE";
   const target = media.playTarget?.episodeId;
@@ -85,7 +86,6 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   const [batchResult, setBatchResult] = useState<DownloadBatchResult | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const section = useRef<HTMLElement>(null);
-  const franchise = useFranchise(media.id, useDevicePrefs().seasonSwitcher);
 
   // Switching seasons opens another title; land on its episode list, not the top of the page.
   useEffect(() => { setBatchResult(null); if (switched?.episodes) section.current?.scrollIntoView({ block: "start" }); }, [media.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -109,7 +109,6 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
     requestAnimationFrame(() => list.current?.querySelector(`[data-episode="${CSS.escape(episodes[index].id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
   };
 
-  const regular = franchise.data?.seasons ?? [];
   const choices: (SeasonChoice & { season?: FranchiseSeason })[] = !season ? [] : regular.length > 1
     ? regular.map(item => {
       const here = item.mediaId === media.id && (item.seasonNumber === undefined || item.seasonNumber === season.number);
@@ -206,6 +205,10 @@ export function TitlePage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const media = useMedia(id);
+  const seasonSwitcher = useDevicePrefs().seasonSwitcher;
+  const showFranchise = seasonSwitcher && Boolean(media.data?.seasons.length && media.data.type !== "movie");
+  const franchise = useFranchise(id, showFranchise);
+  const regular = showFranchise ? franchise.data?.seasons ?? [] : [];
   const savedEdition = new URLSearchParams(useLocation().search).get("savedEdition");
   const savedGroup = useGroupWatchlist(id, savedEdition);
   const toggle = useWatchlistToggle();
@@ -297,9 +300,9 @@ export function TitlePage() {
         <InlinePlugins key={`plugins:${m.id}`} placement="detail" />
         <TitleReviews mediaId={m.id} />
         <TitleSources key={m.id} id={m.id} title={m.title}/>
-        {!isMovie && <Episodes key={`${currentProfileId()}:${m.id}`} media={m} saves={saves} />}
+        {!isMovie && <Episodes key={`${currentProfileId()}:${m.id}`} media={m} saves={saves} regular={regular} />}
         <PeopleRow key={`people:${m.id}`} people={m.people ?? []} mediaId={m.id} linked={Boolean(m.metadata?.id)} />
-        {!!m.similar?.length && <SimilarRow items={m.similar} />}
+        <TitleWorks key={`${currentProfileId()}:${m.id}`} media={m} seasons={regular} />
         {m.fileInfo && (
           <section className="file-info" aria-label="파일 정보">
             <h2>파일 정보</h2>

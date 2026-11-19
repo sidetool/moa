@@ -2,6 +2,7 @@ import { mergePlaybackMarkers } from '../player/playback/skip-markers';
 import { nextUpTiming } from '../player/playback/next-up';
 import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
 import { attachAnime4k } from '../player/playback/anime4k';
+import { captureResumeScene, storeResumeScene, type ResumeScene } from '../player/playback/resume-scene';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
@@ -25,7 +26,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import type { MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, SubtitleTrack } from "@moa/shared";
+import type { EpisodeProgress, MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, SubtitleTrack } from "@moa/shared";
 import { keyboardShortcutKey, playerShortcutLabel, type PlayerShortcutAction } from '@moa/shared';
 import { useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
 import { useEpisodeDownload } from "../api/downloads";
@@ -39,7 +40,7 @@ import { trackName } from "../player/subtitles/track-name";
 import { Stepper } from "../player/Stepper";
 import { Artwork } from "../components/Artwork";
 import { Button, ProgressBar, Spinner } from "../components/ui";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, currentProfileId } from "../lib/api";
 
 const KIDS_RESTRICTED = "어린이 프로필에서는 볼 수 없는 작품이에요";
 import { clock, cx, episodeTitle } from "../lib/format";
@@ -307,11 +308,26 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const titleLine = session ? [session.mediaTitle, session.episodeLabel && `${session.episodeLabel}${session.episodeTitle ? ` ${episodeTitle(session.episodeTitle)}` : ""}`].filter(Boolean) : [];
 
   /* ---------- progress ---------- */
+  const [viewingProfile] = useState(currentProfileId);
+  const accountId = useRef(account?.id);
+  accountId.current = account?.id;
+  const lastScene = useRef<{ sessionId: string; scene: ResumeScene } | undefined>(undefined);
   const saveProgress = useCallback((keepalive = false, v = video.current) => {
     const position = castProgress.current?.position ?? v?.currentTime, duration = castProgress.current?.duration ?? v?.duration;
-    if (!session || session.live || position === undefined || !Number.isFinite(duration) || !duration || position < 1) return;
+    if (viewingProfile !== currentProfileId() || !session || session.live || position === undefined || !Number.isFinite(duration) || !duration || position < 1) return;
     lastSaved.current = position;
-    void api("/progress", { method: "POST", body: { episodeId: session.episodeId, position, duration }, keepalive }).then(() => {
+    const owner = accountId.current;
+    let scene: ResumeScene | undefined;
+    if (owner && viewingProfile && v && !castProgress.current && (keepalive || v.paused) && position < duration * .9 && duration - position >= 120) {
+      const previous = lastScene.current;
+      scene = previous?.sessionId === session.sessionId && previous.scene.position === position
+        ? previous.scene : captureResumeScene(v, position);
+      if (scene) lastScene.current = { sessionId: session.sessionId, scene };
+    }
+    void api<EpisodeProgress>("/progress", { method: "POST", body: { episodeId: session.episodeId, position, duration }, keepalive }).then(saved => {
+      if (owner && viewingProfile && scene && !saved?.completed && saved?.updatedAt && viewingProfile === currentProfileId() && owner === accountId.current) {
+        storeResumeScene(owner, viewingProfile, session.mediaId, session.episodeId, saved.updatedAt, saved.position, scene);
+      }
       // Periodic saves mark caches stale; final saves also refresh screens already mounted after exit.
       void client.invalidateQueries({ queryKey: ["home"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["recommendations"], refetchType: "none" });
@@ -319,7 +335,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       void client.invalidateQueries({ queryKey: ["grouped-cards"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["media", session.mediaId], refetchType: keepalive ? "active" : "none" });
     }).catch(() => {});
-  }, [session, client]);
+  }, [session, client, viewingProfile]);
 
   /* ---------- attach ---------- */
   useEffect(() => {

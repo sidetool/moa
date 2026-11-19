@@ -4,6 +4,7 @@ import { ACCOUNT_PERMISSIONS } from '@moa/shared';
 import Fastify from 'fastify';
 import { access, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { WorkRelations } from './catalog/related-works.js';
 import { Franchises } from './catalog/franchise.js';
 import { registerCatalogRoutes } from './catalog/routes.js';
 import { Catalog } from './catalog/service.js';
@@ -180,7 +181,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
 
   app.get('/api/health', async () => ({ ok: true, version: '0.1.0' }));
   registerSettingsRoutes(app, { db });
-  registerCatalogRoutes(app, { db, catalog, groups, tmdb, sources, franchises, youtube, pins });
+  registerCatalogRoutes(app, { db, catalog, groups, tmdb, sources, franchises, relations: new WorkRelations(catalog,groups,tmdb,anilist), youtube, pins });
   registerLibraryRoutes(app, { db, cfg, library, playback });
   registerPlaybackRoutes(app, { db, catalog, sources, playback, remotePlayback, downloads, subtitleLibrary, online, translations, casting, enrichment, generalMarkers });
   registerSubtitleRoutes(app, { subtitleLibrary, online, playback });

@@ -8,6 +8,7 @@ import { useMe } from "../api/queries";
 import { Button, ConfirmDialog, EmptyState, IconButton, PasswordInput, Skeleton } from "../components/ui";
 import { ApiError, api, authApi } from "../lib/api";
 import { cx } from "../lib/format";
+import { clearResumeScenes } from "../player/playback/resume-scene";
 
 const INVITES = ["auth-invites"] as const;
 const ACCOUNTS = ["auth-accounts"] as const;
@@ -220,7 +221,7 @@ function PasswordSheet({ onClose }: { onClose: () => void }) {
   const [confirm, setConfirm] = useState("");
   const change = useMutation({
     mutationFn: () => authApi("/password", { method: "POST", body: { current, next } }),
-    onSuccess: () => window.location.assign("/__moa/login")
+    onSuccess: () => { clearResumeScenes(); window.location.assign("/__moa/login"); }
   });
   const mismatch = confirm.length > 0 && next !== confirm;
   const valid = current && next.length >= 8 && next === confirm;
@@ -241,7 +242,7 @@ function PasswordSheet({ onClose }: { onClose: () => void }) {
 }
 
 export async function logout() {
-  try { await authApi("/logout", { method: "POST" }); } finally { window.location.assign("/__moa/login"); }
+  try { await authApi("/logout", { method: "POST" }); } finally { clearResumeScenes(); window.location.assign("/__moa/login"); }
 }
 
 /** Shown at the top of Settings when the app sits behind the login gateway. */

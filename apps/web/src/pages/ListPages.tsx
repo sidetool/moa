@@ -9,6 +9,7 @@ import { useSources } from "./SourcesPage";
 import { keys, useHistory, useMe, useProfiles, useSearch, useSettings, useWatchlist } from "../api/queries";
 import { PosterCard } from "../components/Cards";
 import { Avatar } from "../features/layout/AppShell";
+import { clearResumeScenes } from '../player/playback/resume-scene';
 import { logout } from "./AccountsPage";
 import { Artwork } from "../components/Artwork";
 import { Button, ConfirmDialog, EmptyState, ProgressBar, ScrollLoader, Skeleton, Toggle, Select } from "../components/ui";
@@ -117,6 +118,7 @@ export function HistoryPage() {
     try {
       const grouped = entry.groupedCount !== undefined;
       await api(grouped ? `/history/media/${encodeURIComponent(entry.media.id)}` : `/history/${encodeURIComponent(entry.episode.id)}`, { method: "DELETE" });
+      if (profile) clearResumeScenes(profile, grouped ? { mediaId: entry.media.id } : { episodeId: entry.episode.id });
       if (opener && document.activeElement === opener) {
         const row = opener.closest("li");
         const neighbor = row?.nextElementSibling ?? row?.previousElementSibling;

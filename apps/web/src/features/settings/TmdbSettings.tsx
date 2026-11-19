@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Clapperboard, Lock } from 'lucide-react';
 import { api } from '../../lib/api';
 import { cx } from '../../lib/format';
+import { keys } from '../../api/queries';
 import { Button, ConfirmDialog } from '../../components/ui';
 
 interface TmdbConfig { configured: boolean; source: 'environment' | 'database' | 'none'; credentialType: 'token' | 'apiKey' | null; hasSavedCredential: boolean }
@@ -23,6 +24,7 @@ export function TmdbSettings() {
     mutationFn: (body: TmdbPatch) => api<TmdbConfig>('/admin/tmdb/config', { method: 'PATCH', body }),
     onSuccess: (data, body) => {
       client.setQueryData(tmdbKey, data);
+      void client.resetQueries({ queryKey: keys.titleRelations });
       void client.invalidateQueries({ queryKey: ['metadata-status'] });
       setDraft('');
       setDeleting(false);

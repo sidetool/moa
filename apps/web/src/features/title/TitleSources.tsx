@@ -3,13 +3,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import type { MediaCard, TitleGroup } from '@moa/shared';
 import { api } from '../../lib/api';
+import { keys } from '../../api/queries';
 import { Button } from '../../components/ui';
 import { TYPE_LABEL } from '../../lib/format';
 export function TitleSources({id,title}:{id:string;title:string}) {
   const client=useQueryClient(), [editing,setEditing]=useState(false),[input,setInput]=useState(title),[term,setTerm]=useState(''),[target,setTarget]=useState<MediaCard|null>(null);
   const group=useQuery({queryKey:['title-group',id],queryFn:()=>api<TitleGroup>(`/media/${id}/group`)});
   const candidates=useQuery({queryKey:['group-candidates',term],queryFn:()=>api<MediaCard[]>(`/media/groups/candidates?q=${encodeURIComponent(term)}`),enabled:!!term});
-  const save=useMutation({mutationFn:(body:{action:string;otherId?:string})=>api<TitleGroup>(`/media/${id}/group`,{method:'PATCH',body}),onSuccess:async data=>{client.setQueryData(['title-group',id],data);setTarget(null);await client.invalidateQueries({queryKey:['grouped-cards']});await client.invalidateQueries({queryKey:['title-group']});await client.invalidateQueries({queryKey:['home']});await client.invalidateQueries({queryKey:['watchlist']});}});
+  const save=useMutation({mutationFn:(body:{action:string;otherId?:string})=>api<TitleGroup>(`/media/${id}/group`,{method:'PATCH',body}),onSuccess:async data=>{client.setQueryData(['title-group',id],data);setTarget(null);void client.resetQueries({queryKey:keys.titleRelations});await client.invalidateQueries({queryKey:['grouped-cards']});await client.invalidateQueries({queryKey:['title-group']});await client.invalidateQueries({queryKey:['home']});await client.invalidateQueries({queryKey:['watchlist']});}});
   return <section className="title-sources"><div className="source-toolbar"><h2>재생 소스</h2><button className="text-btn" onClick={()=>setEditing(v=>!v)} aria-expanded={editing}>같은 작품 묶기</button></div>
     {group.isError && <p role="alert">소스 정보를 불러오지 못했습니다.</p>}
     <div className="source-directory-links">{group.data?.members.map(m=><Link key={m.id} className={`chip ${m.id===id?'is-active':''}`} to={`/title/${m.id}`} aria-current={m.id===id?'page':undefined}>{m.provider.name}{m.id===id?' · 선택됨':''}</Link>)}</div>

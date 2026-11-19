@@ -49,6 +49,10 @@ export interface ProgressSummary {
 export interface SeasonInfo { kind: "season" | "part" | "final" | "movie" | "ova" | "special"; season?: number; part?: number; label: string }
 
 export interface ResumeTarget {
+  /** Server revision of the unfinished episode's progress, for matching a device-local still. */
+  updatedAt?: string;
+  /** Thumbnail of the partially watched target episode, including cached metadata stills. */
+  thumb?: string;
   episodeId: string;
   position: number;
   label: string;
@@ -140,6 +144,19 @@ export interface FranchiseSeason {
 }
 export interface Franchise { title: string; seasons: FranchiseSeason[]; complete: boolean }
 // GET /api/media/:id/franchise -> Franchise
+
+export interface RelatedWork {
+  key: string;
+  relation: 'prequel' | 'sequel' | 'sideStory' | 'collection';
+  title: string;
+  year?: number;
+  poster?: string;
+  mediaId?: string;
+  query: string;
+  tmdb?: {kind: MetadataKind; id: number};
+}
+export interface RelatedWorks { items: RelatedWork[] }
+// GET /api/media/:id/relations -> RelatedWorks
 
 export interface MediaDetail extends MediaCard {
   refreshing?: boolean;

@@ -72,7 +72,7 @@ function continueOf(id: string) {
   const latest = episodes.filter(e => e.progress && (e.progress.position > 0 || e.progress.completed))
     .sort((a, b) => b.progress!.updatedAt.localeCompare(a.progress!.updatedAt))[0];
   if (!latest) return null;
-  if (!latest.progress!.completed) return { episode: latest, resume: { episodeId: latest.id, position: latest.progress!.position, kind: "resume" as const, label: movie ? "이어보기" : `이어보기 S${latest.season}:E${latest.number}` } };
+  if (!latest.progress!.completed) return { episode: latest, resume: { episodeId: latest.id, thumb: latest.thumb, updatedAt: latest.progress!.updatedAt, position: latest.progress!.position, kind: "resume" as const, label: movie ? "이어보기" : `이어보기 S${latest.season}:E${latest.number}` } };
   const next = movie ? undefined : episodes.slice(episodes.indexOf(latest) + 1).find(e => !e.progress?.completed);
   return next ? { episode: next, resume: { episodeId: next.id, position: next.progress?.position || 0, kind: "next" as const, label: `다음 회차 S${next.season}:E${next.number}` } } : null;
 }

@@ -5,7 +5,7 @@ import { trailerCandidates } from './tmdb-trailers.js';
 import { tmdbPeople, tmdbPersonWorks } from './tmdb-people.js';
 import { parseSeasonInfo } from '../catalog/season-info.js';
 import { parseSeason } from '../subtitles/korean/index.js';
-import type { MediaCard, MediaDetail, MetadataCandidate, MetadataKind, MetadataLink, Person } from '@moa/shared';
+import type { Episode, MediaCard, MediaDetail, MetadataCandidate, MetadataKind, MetadataLink, Person } from '@moa/shared';
 import { selectCertification } from '../profiles/kids.js';
 import { Store } from '../db.js';
 import { ApiFailure } from '../util.js';
@@ -26,7 +26,7 @@ export const tmdbNorm = (s: string) => s.normalize('NFKC').toLowerCase().replace
 
 /** Small, card-sized metadata merged into every card of a linked title. */
 interface CardInfo {
-  status?: string; lastAirDate?: string;
+  status?: string; lastAirDate?: string; collectionId?: number | null;
   title: string; originalTitle?: string; poster?: string; backdrop?: string; logo?: string; year?: number; genres?: string[];
   adult?: boolean; genreIds?: number[]; rating?: number; certification?: string; overview?: string; animation: boolean; originCountries?: string[]; runtime?: number;
   seasons?: Record<string, { poster?: string; year?: number; episodes?: number }>;
@@ -161,6 +161,32 @@ export class Tmdb {
     const row = this.db.get("SELECT m.title,l.kind,l.tmdb_id FROM media m JOIN tmdb_links l ON l.media_id=m.id WHERE m.id=? AND l.status IN ('auto','manual')", mediaId);
     if (!row || !['movie','tv'].includes(row.kind) || !Number.isSafeInteger(row.tmdb_id) || row.tmdb_id <= 0) return null;
     return {mediaId,provider:this.providerId,kind:row.kind,id:String(row.tmdb_id),name:row.title,scope:row.kind === 'tv' ? 'series' : 'movie'};
+  }
+  /** Legacy movie cards acquire collection membership on first use through the shared title queue. */
+  async movieCollectionId(movieId: number) {
+    if (!this.enabled) return null;
+    const work: TmdbWork = { priority:'background', revision:this.configurationRevision };
+    const card = await this.context.run(work, () => this.title('movie',movieId,true));
+    return card?.collectionId ?? null;
+  }
+  async collectionMembers(id: number): Promise<MetadataCandidate[]> {
+    if (!this.enabled || !Number.isSafeInteger(id) || id <= 0) return [];
+    const context: TmdbWork = {priority:'background', revision:this.configurationRevision};
+    return this.context.run(context, async () => {
+      const data = await this.get(`/collection/${id}`, {language: 'ko-KR'});
+      if (data?.id !== id || !Array.isArray(data.parts)) return [];
+      return data.parts.slice(0, 100).flatMap((part: any) => {
+        if (!part || part.adult !== false || !Number.isSafeInteger(part.id) || part.id <= 0 ||
+          part.media_type && part.media_type !== 'movie') return [];
+        const name = part.title || part.name;
+        if (typeof name !== 'string' || !name.trim()) return [];
+        const original = part.original_title || part.original_name;
+        const poster = typeof part.poster_path === 'string' && /^\/[a-zA-Z0-9_-]+\.(?:jpg|png|webp)$/.test(part.poster_path)
+          ? img('w342', part.poster_path) : undefined;
+        return [{id: part.id, kind: 'movie', title: name.trim().slice(0, 200), originalTitle: typeof original === 'string' ? original.slice(0,200) : undefined,
+          year: typeof part.release_date === 'string' ? yearOf(part.release_date) : undefined, poster}];
+      });
+    });
   }
   async reviewItems(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').ReviewItem[]> {
     if (!this.enabled || title.provider !== 'tmdb' || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new Error('invalid-review-title');
@@ -501,7 +527,7 @@ export class Tmdb {
     const seasons: CardInfo['seasons'] = {};
     for (const s of d.seasons || []) if (s.season_number > 0) seasons[s.season_number] = { poster: img('w500', s.poster_path), year: yearOf(s.air_date), episodes: s.episode_count };
     const card: CardInfo = {
-      ...(kind === 'tv' ? { status: d.status, lastAirDate: d.last_air_date } : {}),
+      ...(kind === 'tv' ? { status: d.status, lastAirDate: d.last_air_date } : {collectionId: Number.isSafeInteger(d.belongs_to_collection?.id) && d.belongs_to_collection.id > 0 ? d.belongs_to_collection.id : null}),
       adult: Boolean(d.adult), genreIds: (d.genres || []).map((g: any) => g.id),
       title: d.name || d.title, originalTitle: d.original_name || d.original_title, poster: img('w500', d.poster_path), backdrop: img('w1280', backdrop),
       logo: logo ? img(logo.file_path.endsWith('.svg') ? 'original' : 'w500', logo.file_path) : undefined,
@@ -652,7 +678,7 @@ export function linkInfo(db: Store, id: string, enabled: boolean): MetadataLink 
   return { status: row.status, ...(row.kind ? { kind: row.kind, id: row.tmdb_id } : {}), ...(row.season != null ? { season: row.season } : {}), ...(title ? { title: JSON.parse(title.card).title } : {}) };
 }
 /** Remote titles prefer TMDB artwork; local libraries keep their own files first. */
-export function overlayCard<T extends MediaCard>(db: Store, card: T, local: boolean): T {
+export function overlayCard<T extends MediaCard>(db: Store, card: T, local: boolean, episodes?: Episode[]): T {
   const row = linked(db, card.id);
   const original = card.originalTitle || db.get('SELECT title FROM media WHERE id=?',card.id)?.title || card.title;
   if (!local && db.get("SELECT 1 FROM sqlite_master WHERE name='source_entries'")) {
@@ -666,11 +692,25 @@ export function overlayCard<T extends MediaCard>(db: Store, card: T, local: bool
   }
   const info: CardInfo = JSON.parse(row.card), season = row.season != null ? info.seasons?.[row.season] : undefined;
   const poster = season?.poster || info.poster, prefer = <V>(own: V | undefined, theirs: V | undefined) => local ? own ?? theirs : theirs ?? own;
+  let resume = card.resume;
+  if (episodes && resume?.kind === 'resume' && !resume.thumb && row.kind === 'tv') {
+    const targetId = resume.episodeId;
+    const target = episodes.find(episode => episode.id === targetId);
+    if (target) {
+      const cached = cachedSeason(db, row.tmdb_id, !local && row.season != null ? row.season : target.season);
+      if (cached?.length) {
+        const season = episodes.filter(episode => episode.season === target.season);
+        const thumb = matchSeasonEpisodes(season, cached).get(target.number)?.still;
+        if (thumb) resume = { ...resume, thumb };
+      }
+    }
+  }
   const sourceSeason = parseSeasonInfo(original);
   const inferredSeason = row.kind === 'tv' && !local && !sourceSeason.final ? sourceSeason.season ?? 1 : undefined;
   const parsed = parseSeasonInfo(original, { season: row.season ?? inferredSeason, seasons: Object.keys(info.seasons || {}).map(Number), kind: row.kind });
   return {
     ...card,
+    ...(resume ? { resume } : {}),
     baseTitle: !local && foreignSource(db,card.id).foreign && /[가-힣]/.test(info.title) ? parseSeasonInfo(info.title).baseTitle : parsed.baseTitle,
     seasonInfo: parsed.seasonInfo,
     audio: parsed.audio,
@@ -686,6 +726,19 @@ export function overlayCard<T extends MediaCard>(db: Store, card: T, local: bool
     ...(info.overview && (!local || !card.overview) ? { overview: info.overview.length > 280 ? info.overview.slice(0, 278).trimEnd() + '…' : info.overview } : {}),
   };
 }
+function cachedSeason(db: Store, tmdbId: number, season: number): EpisodeInfo[] | undefined {
+  const row = db.get('SELECT payload FROM tmdb_seasons WHERE tmdb_id=? AND season=?', tmdbId, season);
+  return row && JSON.parse(row.payload);
+}
+
+function matchSeasonEpisodes(episodes: Episode[], cached: EpisodeInfo[]) {
+  const numbers = new Set(cached.map(episode => episode.number));
+  // Some sources continue numbering sequel seasons from the previous season.
+  const min = Math.min(...episodes.map(episode => episode.number));
+  const offset = episodes.some(episode => numbers.has(episode.number)) ? 0 : min > 1 && numbers.has(1) ? min - 1 : 0;
+  return new Map(cached.filter(episode => Number.isInteger(episode.number)).map(episode => [episode.number + offset, episode]));
+}
+
 const GENERIC_EPISODE = /^(?:제?\s*\d+\s*(?:화|회|편)|에피소드\s*\d+|episode\s*\d+|ep\.?\s*\d+)$/i;
 export function overlayDetail(db: Store, detail: MediaDetail, local: boolean, enabled: boolean): MediaDetail {
   const metadata = linkInfo(db, detail.id, enabled);
@@ -695,19 +748,16 @@ export function overlayDetail(db: Store, detail: MediaDetail, local: boolean, en
   const foreign = !local && foreignSource(db,detail.id).foreign;
   const seasonCache = new Map<number, EpisodeInfo[] | undefined>();
   const episodesOf = (n: number) => {
-    if (!seasonCache.has(n)) { const s = row.kind === 'tv' ? db.get('SELECT payload FROM tmdb_seasons WHERE tmdb_id=? AND season=?', row.tmdb_id, n) : undefined; seasonCache.set(n, s ? JSON.parse(s.payload) : undefined); }
+    if (!seasonCache.has(n)) seasonCache.set(n, row.kind === 'tv' ? cachedSeason(db, row.tmdb_id, n) : undefined);
     return seasonCache.get(n);
   };
   const seasons = detail.seasons.map(season => {
     const list = episodesOf(!local && row.season != null ? row.season : season.number);
     if (!list?.length) return season;
-    const numbers = new Set(list.map(e => e.number));
-    // Sequel seasons are sometimes numbered on from the previous one (13, 14, ...).
-    const min = Math.min(...season.episodes.map(e => e.number));
-    const offset = season.episodes.some(e => numbers.has(e.number)) ? 0 : min > 1 && numbers.has(1) ? min - 1 : 0;
+    const matched = matchSeasonEpisodes(season.episodes, list);
     const titleKey = tmdbNorm(detail.title);
     return { ...season, episodes: season.episodes.map(ep => {
-      const e = Number.isInteger(ep.number) ? list.find(x => x.number === ep.number - offset) : undefined;
+      const e = matched.get(ep.number);
       if (!e) return ep;
       const name = e.name && !GENERIC_EPISODE.test(e.name.trim()) && tmdbNorm(e.name) !== titleKey ? e.name : undefined;
       return { ...ep, ...(name ? { name, ...(foreign && /[가-힣]/.test(name) ? { title: name } : {}) } : {}), ...(e.overview && !ep.overview ? { overview: e.overview } : {}), ...(e.still && !ep.thumb ? { thumb: e.still } : {}), ...(e.airDate ? { airDate: e.airDate } : {}), ...(!ep.duration && e.runtime ? { duration: e.runtime * 60 } : {}) };
