@@ -234,6 +234,57 @@ try {
   await page.evaluate(() => document.exitFullscreen());
   await showing();
   await active();
+  await page.evaluate(async () => { const { setRemotePreference } = await import('/src/lib/remote.ts'); setRemotePreference('on'); });
+  assert.equal(await page.locator('html[data-tv]').count(), 1);
+  await page.keyboard.press('ArrowDown');
+  await showing();
+  await playing();
+  await page.evaluate(async () => { const { setRemotePreference } = await import('/src/lib/remote.ts'); setRemotePreference('off'); });
+  await showing();
+  // TV navigation can close the dialog. Read feedback from the actual settings panel.
+  if (!(await settingsPanel.count())) await openPanel('재생 설정');
+  await active();
+  // Report sustained decoder frame loss while media time advances; no timing-dependent busy loop.
+  await video.evaluate(v => {
+    const read = v.getVideoPlaybackQuality.bind(v);
+    let dropped = read().droppedVideoFrames;
+    v.getVideoPlaybackQuality = () => ({ ...read(), droppedVideoFrames: ++dropped });
+  });
+  await layer.waitFor({ state: 'detached' });
+  await playing();
+  await fallback('처리 속도 부족');
+  assert.equal(sessions, 2, 'slow fallback never recreates the playback session');
+  await video.evaluate(v => { delete v.getVideoPlaybackQuality; });
+  await change({ experimentalAnime4k: false });
+  await change({ experimentalAnime4k: true });
+  await showing();
+  // Delayed WebGL errors surface during the periodic draw check, without a context-lost event.
+  await layer.evaluate(c => c.getContext('webgl').enable(0xffffffff));
+  await layer.waitFor({ state: 'detached' });
+  await fallback('화질 보정 오류');
+  await change({ experimentalAnime4k: false });
+  const originalGetContext = await page.evaluateHandle(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+      if (type === 'webgl' && this.classList.contains('player-anime4k')) return null;
+      return getContext.call(this, type, ...args);
+    };
+    return getContext;
+  });
+  await change({ experimentalAnime4k: true });
+  await fallback('이 기기는 보정 미지원');
+  assert.equal(await layer.count(), 0);
+  await playing();
+  await change({ experimentalAnime4k: false });
+  await page.evaluate(original => { HTMLCanvasElement.prototype.getContext = original; }, originalGetContext);
+  await originalGetContext.dispose();
+  await change({ experimentalAnime4k: true });
+  await showing();
+  await active();
+  console.log('PASS source switch, native fullscreen, video PiP, TV navigation, sustained frame loss, late WebGL error and unsupported device');
+
+  // Document PiP moves the real video between windows. Exercise this last because Chromium
+  // may stop delivering rVFC to both the verifier and subsequently attached filters on that element.
   // A real GPU context loss must affect only the optional layer, even after pause/resume.
   const atLoss = await layer.evaluate(c => {
     c.getContext('webgl').getExtension('WEBGL_lose_context').loseContext();
@@ -269,58 +320,13 @@ try {
   await fallback('화질 보정 오류');
   assert.equal(await layer.count(), 0, 'returning from Document PiP cannot retry a failed filter');
   assert.equal(sessions, 2);
-  console.log('PASS settings status for source switch, native fullscreen, video PiP and terminal context loss across Document PiP');
-
-  await change({ experimentalAnime4k: false });
-  await change({ experimentalAnime4k: true });
-  await showing();
-  await page.evaluate(async () => { const { setRemotePreference } = await import('/src/lib/remote.ts'); setRemotePreference('on'); });
-  assert.equal(await page.locator('html[data-tv]').count(), 1);
-  await page.keyboard.press('ArrowDown');
-  await showing();
-  await playing();
-  await page.evaluate(async () => { const { setRemotePreference } = await import('/src/lib/remote.ts'); setRemotePreference('off'); });
-  await showing();
-  // TV navigation can close the dialog. Read feedback from the actual settings panel.
-  if (!(await settingsPanel.count())) await openPanel('재생 설정');
-  await active();
-  // Report sustained decoder frame loss while media time advances; no timing-dependent busy loop.
-  await video.evaluate(v => {
-    const read = v.getVideoPlaybackQuality.bind(v);
-    let dropped = read().droppedVideoFrames;
-    v.getVideoPlaybackQuality = () => ({ ...read(), droppedVideoFrames: ++dropped });
-  });
-  await layer.waitFor({ state: 'detached' });
-  await playing();
-  await fallback('처리 속도 부족');
-  assert.equal(sessions, 2, 'slow fallback never recreates the playback session');
-  await video.evaluate(v => { delete v.getVideoPlaybackQuality; });
-  await change({ experimentalAnime4k: false });
-  await change({ experimentalAnime4k: true });
-  await showing();
-  // Delayed WebGL errors surface during the periodic draw check, without a context-lost event.
-  await layer.evaluate(c => c.getContext('webgl').enable(0xffffffff));
-  await layer.waitFor({ state: 'detached' });
-  await fallback('화질 보정 오류');
-  await change({ experimentalAnime4k: false });
-  await page.evaluate(() => {
-    const getContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function(type, ...args) {
-      if (type === 'webgl' && this.classList.contains('player-anime4k')) return null;
-      return getContext.call(this, type, ...args);
-    };
-  });
-  await change({ experimentalAnime4k: true });
-  await fallback('이 기기는 보정 미지원');
-  assert.equal(await layer.count(), 0);
-  await playing();
   await openPanel('뒤로');
   await page.waitForURL(base + '/title/m');
   await page.locator('.title-page .title-hero-copy').getByRole('heading', { name: 'Filter test' }).waitFor();
   assert.equal(await video.count(), 0);
   assert.equal(await layer.count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS TV navigation, sustained frame-loss reason, late WebGL error, unsupported device and teardown (software WebGL)');
+  console.log('PASS terminal GPU context loss across Document PiP, continuing original playback and teardown (software WebGL)');
 } finally {
   await browser?.close();
   await web?.close();

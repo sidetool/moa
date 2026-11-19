@@ -21,6 +21,7 @@
 - **시즌 자막 묶음** — 개별 파일로 판별할 수 없는 경우, 같은 작품·시즌 묶음에서 한 숫자 자리만 달라지고 요청 회차의 후보가 유일한지 확인한다.
 - **작품별 번역 용어집** — 회차 사이에서 이름 표기를 일관되게 유지할 수 있도록 출처와 사용자 표기 우선순위, 번역 캐시 버전을 먼저 정한다.
 - **Anime4K 실기기 검증** — [기기별 실험 옵션](PLAYBACK.md#anime4k-기기-업스케일링-실험)으로 모바일·TV의 실제 GPU에서 720p·1080p를 10분 이상 재생해 프레임 드롭, 자막과 PiP 동작을 확인한다.
+  - 소프트웨어 WebGL에서 GPU 오류를 강제로 일으킨 뒤 작은 재생 창(Document PiP)을 닫으면 원본 영상은 계속 재생됐다. 이때 같은 영상에서 보정을 직접 껐다 켜면 간헐적으로 첫 보정 프레임이 나오지 않았다. 실제 GPU에서도 재현되는지 확인한다.
 - **HLS 다운로드 이어받기** — 재시도 전후 영상·음성·구간이 같은 판본인지 검증하는 절차를 먼저 설계한다.
 
 참고한 구현은 [라일락의 내 목록 갱신](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/catalog-updates.js#L55-L115), [작품 관계 탐색](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/app.js#L309-L356), [이어보기 미리보기](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/continue-preview.js#L18-L106)에 있다.
