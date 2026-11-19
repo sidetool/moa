@@ -1,5 +1,6 @@
 import { Check, ChevronRight, Search, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MediaDetail, MetadataCandidate, MetadataLink, Person } from "@moa/shared";
 import { api } from "../../lib/api";
@@ -49,6 +50,20 @@ export function PeopleRow({ people, mediaId, linked }: { people: Person[]; media
       })}
     </ul>}
     {sheet && source && <PeopleSheet mediaId={mediaId} source={source} start={sheet.start} onClose={close} />}
+  </section>;
+}
+
+/** Recommendations are not in any source yet; each one searches the installed sources. */
+export function SimilarRow({ items }: { items: MetadataCandidate[] }) {
+  return <section className="title-section" aria-labelledby="similar-title">
+    <h2 id="similar-title">비슷한 콘텐츠</h2>
+    <div className="similar-grid">
+      {items.slice(0, 12).map(item => <Link key={`${item.kind}-${item.id}`} to={`/search?q=${encodeURIComponent(item.title)}`} className="card poster-card" aria-label={`${item.title} 검색`}>
+        <div className="card-frame"><Artwork src={item.poster} title={item.title} ratio="poster" width={342} /></div>
+        <span className="card-title">{item.title}</span>
+        {item.year && <span className="card-sub">{item.year}</span>}
+      </Link>)}
+    </div>
   </section>;
 }
 

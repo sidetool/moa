@@ -145,19 +145,6 @@ export interface FranchiseSeason {
 export interface Franchise { title: string; seasons: FranchiseSeason[]; complete: boolean }
 // GET /api/media/:id/franchise -> Franchise
 
-export interface RelatedWork {
-  key: string;
-  relation: 'prequel' | 'sequel' | 'sideStory' | 'collection';
-  title: string;
-  year?: number;
-  poster?: string;
-  mediaId?: string;
-  query: string;
-  tmdb?: {kind: MetadataKind; id: number};
-}
-export interface RelatedWorks { items: RelatedWork[] }
-// GET /api/media/:id/relations -> RelatedWorks
-
 export interface MediaDetail extends MediaCard {
   refreshing?: boolean;
   overview?: string;

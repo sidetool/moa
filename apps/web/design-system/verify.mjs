@@ -93,11 +93,6 @@ try {
     await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).click();
     assert.equal(await playKey.innerText(), 'K');
     assert.equal(await shortcuts.getByRole('button', { name: '기본 단축키 복원', exact: true }).isDisabled(), true);
-    const relations = page.locator('[data-preview="title-relations"]');
-    await relations.getByRole('link', { name: /첫 상영.*상세 보기/ }).click();
-    await relations.getByText('첫 상영 상세', { exact: true }).waitFor();
-    await relations.getByRole('link', { name: /영사실의 밤.*제목 검색/ }).click();
-    await relations.getByText('‘영사실의 밤’ 검색 결과', { exact: true }).waitFor();
     const resumeArt = page.locator('[data-preview="continue-art"]');
     await resumeArt.scrollIntoViewIfNeeded();
     await resumeArt.locator('img').evaluate(img => img.decode());

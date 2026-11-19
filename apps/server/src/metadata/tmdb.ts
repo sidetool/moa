@@ -26,7 +26,7 @@ export const tmdbNorm = (s: string) => s.normalize('NFKC').toLowerCase().replace
 
 /** Small, card-sized metadata merged into every card of a linked title. */
 interface CardInfo {
-  status?: string; lastAirDate?: string; collectionId?: number | null;
+  status?: string; lastAirDate?: string;
   title: string; originalTitle?: string; poster?: string; backdrop?: string; logo?: string; year?: number; genres?: string[];
   adult?: boolean; genreIds?: number[]; rating?: number; certification?: string; overview?: string; animation: boolean; originCountries?: string[]; runtime?: number;
   seasons?: Record<string, { poster?: string; year?: number; episodes?: number }>;
@@ -161,32 +161,6 @@ export class Tmdb {
     const row = this.db.get("SELECT m.title,l.kind,l.tmdb_id FROM media m JOIN tmdb_links l ON l.media_id=m.id WHERE m.id=? AND l.status IN ('auto','manual')", mediaId);
     if (!row || !['movie','tv'].includes(row.kind) || !Number.isSafeInteger(row.tmdb_id) || row.tmdb_id <= 0) return null;
     return {mediaId,provider:this.providerId,kind:row.kind,id:String(row.tmdb_id),name:row.title,scope:row.kind === 'tv' ? 'series' : 'movie'};
-  }
-  /** Legacy movie cards acquire collection membership on first use through the shared title queue. */
-  async movieCollectionId(movieId: number) {
-    if (!this.enabled) return null;
-    const work: TmdbWork = { priority:'background', revision:this.configurationRevision };
-    const card = await this.context.run(work, () => this.title('movie',movieId,true));
-    return card?.collectionId ?? null;
-  }
-  async collectionMembers(id: number): Promise<MetadataCandidate[]> {
-    if (!this.enabled || !Number.isSafeInteger(id) || id <= 0) return [];
-    const context: TmdbWork = {priority:'background', revision:this.configurationRevision};
-    return this.context.run(context, async () => {
-      const data = await this.get(`/collection/${id}`, {language: 'ko-KR'});
-      if (data?.id !== id || !Array.isArray(data.parts)) return [];
-      return data.parts.slice(0, 100).flatMap((part: any) => {
-        if (!part || part.adult !== false || !Number.isSafeInteger(part.id) || part.id <= 0 ||
-          part.media_type && part.media_type !== 'movie') return [];
-        const name = part.title || part.name;
-        if (typeof name !== 'string' || !name.trim()) return [];
-        const original = part.original_title || part.original_name;
-        const poster = typeof part.poster_path === 'string' && /^\/[a-zA-Z0-9_-]+\.(?:jpg|png|webp)$/.test(part.poster_path)
-          ? img('w342', part.poster_path) : undefined;
-        return [{id: part.id, kind: 'movie', title: name.trim().slice(0, 200), originalTitle: typeof original === 'string' ? original.slice(0,200) : undefined,
-          year: typeof part.release_date === 'string' ? yearOf(part.release_date) : undefined, poster}];
-      });
-    });
   }
   async reviewItems(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').ReviewItem[]> {
     if (!this.enabled || title.provider !== 'tmdb' || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new Error('invalid-review-title');
@@ -527,7 +501,7 @@ export class Tmdb {
     const seasons: CardInfo['seasons'] = {};
     for (const s of d.seasons || []) if (s.season_number > 0) seasons[s.season_number] = { poster: img('w500', s.poster_path), year: yearOf(s.air_date), episodes: s.episode_count };
     const card: CardInfo = {
-      ...(kind === 'tv' ? { status: d.status, lastAirDate: d.last_air_date } : {collectionId: Number.isSafeInteger(d.belongs_to_collection?.id) && d.belongs_to_collection.id > 0 ? d.belongs_to_collection.id : null}),
+      ...(kind === 'tv' ? { status: d.status, lastAirDate: d.last_air_date } : {}),
       adult: Boolean(d.adult), genreIds: (d.genres || []).map((g: any) => g.id),
       title: d.name || d.title, originalTitle: d.original_name || d.original_title, poster: img('w500', d.poster_path), backdrop: img('w1280', backdrop),
       logo: logo ? img(logo.file_path.endsWith('.svg') ? 'original' : 'w500', logo.file_path) : undefined,

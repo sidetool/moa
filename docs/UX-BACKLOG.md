@@ -1,6 +1,8 @@
 # 개인 OTT 사용성 후속 후보
 
-검색 결과 묶기, 이어보기 소스 선택과 장면 이미지, 작품 관계, 시청 기록, 장르 검색은 [카탈로그 문서](CATALOG.md)에 정리했다. 아래 항목은 사용성과 비용을 더 확인할 후속 후보다.
+검색 결과 묶기, 이어보기 소스 선택과 장면 이미지, 시청 기록, 장르 검색은 [카탈로그 문서](CATALOG.md)에 정리했다. 아래 항목은 사용성과 비용을 더 확인할 후속 후보다.
+
+작품 상세의 전후 시즌 이동은 [정규 시즌 모아보기](CATALOG.md#정규-시즌-모아보기)로 제공한다. 외전·특별편은 이 탐색에서 제외하며 별도 관계 목록은 추가하지 않는다.
 
 ### 검색·상세의 추가 검토
 
@@ -21,4 +23,4 @@
   - 소프트웨어 WebGL에서 GPU 오류를 강제로 일으킨 뒤 작은 재생 창(Document PiP)을 닫으면 원본 영상은 계속 재생됐다. 이때 같은 영상에서 보정을 직접 껐다 켜면 간헐적으로 첫 보정 프레임이 나오지 않았다. 실제 GPU에서도 재현되는지 확인한다.
 - **HLS 다운로드 이어받기** — 재시도 전후 영상·음성·구간이 같은 판본인지 검증하는 절차를 먼저 설계한다.
 
-참고한 구현은 [라일락의 내 목록 갱신](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/catalog-updates.js#L55-L115), [작품 관계 탐색](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/app.js#L309-L356), [이어보기 미리보기](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/continue-preview.js#L18-L106)에 있다.
+참고한 구현은 [라일락의 내 목록 갱신](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/catalog-updates.js#L55-L115), [이어보기 미리보기](https://github.com/whispelyn-byte/LilacAnime-desktop/blob/ebce479/src/continue-preview.js#L18-L106)에 있다.

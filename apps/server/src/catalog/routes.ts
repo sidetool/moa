@@ -6,13 +6,12 @@ import type { YouTubeTrailers } from '../metadata/youtube-trailers.js';
 import type { ProfilePins } from '../profiles/pin.js';
 import type { Sources } from '../sources/service.js';
 import { ApiFailure } from '../util.js';
-import type { WorkRelations } from './related-works.js';
 import type { Franchises } from './franchise.js';
 import type { Catalog } from './service.js';
 import type { TitleGroups } from './title-groups.js';
 
-export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, groups, tmdb, sources, franchises, relations, youtube, pins }: {
-  db: Store; catalog: Catalog; groups: TitleGroups; tmdb: Tmdb; sources: Sources; franchises: Franchises; relations: WorkRelations; youtube: YouTubeTrailers; pins: ProfilePins;
+export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, groups, tmdb, sources, franchises, youtube, pins }: {
+  db: Store; catalog: Catalog; groups: TitleGroups; tmdb: Tmdb; sources: Sources; franchises: Franchises; youtube: YouTubeTrailers; pins: ProfilePins;
 }) {
   const assertVisible = (id: string, req: FastifyRequest) => {
     const viewer = profile(req);
@@ -48,13 +47,6 @@ export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, group
     const b = req.body as {action:string;otherId?:string}; return groups.change(params(req).id,profile(req),b.action,b.otherId);
   });
   app.get('/api/episodes/:id/context', {schema:{params:idParams()}}, async req=>{const e=db.get('SELECT media_id,season,number FROM episodes WHERE id=?',params(req).id);if(!e)throw new ApiFailure(404,'episode-not-found');return {mediaId:e.media_id,season:e.season,number:e.number};});
-  app.get('/api/media/:id/relations', { schema: { params: idParams() } }, async (req,reply) => {
-    const id = params(req).id;
-    assertVisible(id,req);
-    const result = await relations.get(id,profile(req));
-    assertVisible(id,req);
-    return reply.header('Cache-Control','private, no-store').send(result);
-  });
   app.get('/api/media/:id/franchise', { schema: { params: idParams() } }, async req => franchises.get(params(req).id, profile(req)));
   app.get('/api/media/:id', { schema: { params: idParams() } }, async req => {
     const id = params(req).id, viewer = profile(req);

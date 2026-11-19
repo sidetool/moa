@@ -377,6 +377,7 @@
   .title-name.has-logo img { max-width: 76%; max-height: 96px; }
   .person { width: 84px; }
   .person-photo { width: 72px; height: 72px; }
+  .similar-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 8px; }
   .trailer-backdrop { align-items: center !important; padding: 0 !important; }
   .trailer-dialog { border-radius: 0; }
   .trailer-overlay { padding: 16px 52px; gap: 6px; }
@@ -513,6 +514,8 @@
 .person-photo img { width: 100%; height: 100%; object-fit: cover; }
 .person b { width: 100%; font-size: .86rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .person small { width: 100%; color: var(--text-3); font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 22px 12px; }
+.similar-grid .card-sub { display: block; color: var(--text-3); font-size: .78rem; }
 .title-credit { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--hairline); color: var(--text-3); font-size: .84rem; }
 .title-credit a { color: var(--text-2); font-weight: 700; }
 .title-credit .text-btn { font-size: .84rem; }

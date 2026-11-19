@@ -65,11 +65,6 @@
   text-overflow: ellipsis;
 }
 .card-sub { display: block; margin-top: 2px; font-size: .78rem; color: var(--text-3); }
-.similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 22px 12px; }
-.similar-grid .card:focus-visible { outline: var(--focus-width) solid var(--focus-color); outline-offset: var(--focus-gap); }
-@media (max-width: 760px) {
-  .similar-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4) var(--space-2); }
-}
 .card-badge {
   position: absolute;
   top: 8px;

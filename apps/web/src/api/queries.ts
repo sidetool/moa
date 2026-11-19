@@ -8,7 +8,6 @@ export const keys = {
   me: ["me"] as const,
   profiles: ["profiles"] as const,
   home: (type?: MediaType) => ["home", type ?? "all"] as const,
-  titleRelations: ["title-relations"] as const,
   media: (id: string) => ["media", id] as const,
   list: (params: Record<string, string | number | undefined>) => ["media-list", params] as const,
   genres: (type?: MediaType) => ["genres", type ?? "all"] as const,
