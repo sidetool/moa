@@ -1,3 +1,4 @@
+import { hash } from '../util.js';
 import type { Store } from '../db.js';
 import type { Sources } from '../sources/service.js';
 import type { TitleGroups } from '../catalog/title-groups.js';
@@ -10,7 +11,6 @@ const BATCH_LIMIT = 20;
 /** Work exists only after an authorized visit. Profiles take turns on a single worker. */
 export class WatchlistRefresh {
   private batches = new Map<string, string[]>();
-  private revisions = new Map<string, number>();
   private checked = new Map<string, number>();
   private attempts = new Map<string, number>();
   private starts: number[] = [];
@@ -21,14 +21,15 @@ export class WatchlistRefresh {
 
   constructor(private db: Store, private sources: Sources, private groups: TitleGroups, private clock = Date.now) {}
 
-  status(profile: string) {
-    return { running: this.batches.has(profile), revision: this.revisions.get(profile) ?? 0 };
-  }
-
-  private watched(profile: string) {
-    const mapping = this.groups.mapping(profile);
-    const selected = new Set(this.groups.savedIds(profile).flatMap(id => mapping.get(id) ?? []));
-    return this.groups.latestWatchedMembers(profile, mapping, selected);
+  request(profile: string) {
+    const editions = this.groups.savedEditions(profile);
+    this.enqueue(profile, editions.flatMap(edition => edition.watched ?? []));
+    // Hash persisted catalog facts for exactly the editions shown to this viewer.
+    // Completion, errors and rechecks of identical listings leave the token stable.
+    const selected = editions.map(edition => edition.watched ?? edition.saved);
+    const facts = this.db.all(`SELECT o.media_id,o.fingerprint,o.episode_ids IS NOT NULL AS known,o.episodes_updated_at
+      FROM json_each(?) ids JOIN source_detail_observations o ON o.media_id=ids.value ORDER BY o.media_id`, JSON.stringify(selected));
+    return { running: this.batches.has(profile), revision: hash(JSON.stringify([profile, editions, facts])) };
   }
 
   private lastCheck(id: string) {
@@ -43,7 +44,7 @@ export class WatchlistRefresh {
     return age >= interval && age >= this.sources.detailFreshMs(id);
   }
 
-  request(profile: string) {
+  private enqueue(profile: string, watched: string[]) {
     if (this.closed || this.batches.has(profile)) return;
     const now = this.clock();
     if (now < (this.checked.get(profile) ?? -Infinity) + MINUTE) return;
@@ -51,7 +52,7 @@ export class WatchlistRefresh {
     const interval = catalogRefreshMs(this.db);
     const retention = Math.max(interval, catalogFreshMs(this.db, COMPLETED_DETAIL_POLICY.freshMs));
     for (const [id, at] of this.attempts) if (now - at > retention) this.attempts.delete(id);
-    const ids = [...this.watched(profile).values()].map(id => ({ id, at: this.lastCheck(id) }))
+    const ids = watched.map(id => ({ id, at: this.lastCheck(id) }))
       .filter(item => item.id === this.fetching || this.due(item.id, now - item.at, interval))
       .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
       .slice(0, BATCH_LIMIT).map(item => item.id);
@@ -80,7 +81,7 @@ export class WatchlistRefresh {
       const [profile, ids] = this.batches.entries().next().value!;
       const id = ids.shift()!;
       // Membership, selected edition and kids visibility can change while another read awaits its source.
-      if ([...this.watched(profile).values()].includes(id) && this.due(id, now - this.lastCheck(id), catalogRefreshMs(this.db))) {
+      if (this.due(id, now - this.lastCheck(id), catalogRefreshMs(this.db)) && this.groups.savedEditions(profile).some(edition => edition.watched === id)) {
         this.starts.push(now);
         this.attempts.set(id, now);
         this.fetching = id;
@@ -92,14 +93,12 @@ export class WatchlistRefresh {
       }
       if (this.closed || !this.batches.delete(profile)) continue;
       if (ids.length) this.batches.set(profile, ids);
-      else this.revisions.set(profile, (this.revisions.get(profile) ?? 0) + 1);
     }
   }
 
   forget(profile: string) {
     this.batches.delete(profile);
     this.checked.delete(profile);
-    this.revisions.delete(profile);
   }
 
   close() {

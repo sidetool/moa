@@ -103,6 +103,20 @@ test('HTTP My List uses the watched edition’s observed additions and excludes 
   assert.equal(withdrawn.unseenEpisodeCount, 1);
   assert.equal(withdrawn.episodesUpdatedAt, added.episodesUpdatedAt, 'a removal does not move the title up the update sort');
   assert.equal(db.get('SELECT COUNT(*) AS n FROM episodes WHERE media_id=?', watched)?.n, 4, 'withdrawn catalog rows can remain for playback history');
+  await sources.diagnose('watched', viewer);
+  assert.equal((await myList()).episodesUpdatedAt, added.episodesUpdatedAt);
+  assert.equal((await myList()).unseenEpisodeCount, 1);
+  await refresh(watched);
+  assert.equal((await myList()).episodesUpdatedAt, added.episodesUpdatedAt, 'an unchanged recheck preserves update sort');
+  chapters.push(5);
+  // Use a fixed older instant to distinguish a real post-invalidation addition from a same-millisecond rewrite.
+  db.run('UPDATE source_detail_observations SET episodes_updated_at=1 WHERE media_id=?', watched);
+  sources.invalidate('watched');
+  await refresh(watched);
+  assert.notEqual((await myList()).episodesUpdatedAt, new Date(1).toISOString());
+  assert.equal((await myList()).unseenEpisodeCount, 2);
+  await sources.remove(['watched']);
+  assert.equal(db.get('SELECT 1 FROM source_detail_observations WHERE media_id=?', watched), undefined);
 });
 
 test('successful source listings drive detail, resume and playback while keeping history and saved media', async t => {
@@ -114,10 +128,11 @@ test('successful source listings drive detail, resume and playback while keeping
   const profile = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Viewer' } })).json().id;
   const headers = { 'x-moa-profile': profile };
   let chapters: number[] | null = [1, 2, 3, 4];
+  let invalidListing: unknown[] | undefined;
   t.mock.method(sources as unknown as { runtime: typeof invokeMangayomi }, 'runtime', async input => {
     if (input.action === 'list') return { result: { list: [{ name: 'Synthetic series', link: '/series' }], hasNextPage: false }, changes: {} };
     if (input.action === 'videos') return { result: [{ url: 'https://fixture.invalid/stream.mp4' }], changes: {} };
-    return { result: { name: 'Synthetic series', chapters: chapters?.map(number => ({ number, name: number + '화', url: '/episode/' + number })) }, changes: {} };
+    return { result: { name: 'Synthetic series', chapters: invalidListing ?? chapters?.map(number => ({ number, name: number + '화', url: '/episode/' + number })) }, changes: {} };
   });
   seedSource(db, 'fixture');
   const id = (await sources.browse('fixture', profile)).items[0].id;
@@ -134,6 +149,17 @@ test('successful source listings drive detail, resume and playback while keeping
   db.run('INSERT INTO download_jobs(id,episode_id,media_id,source_id,profile_id,state,quality,selection,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
     job, three.id, id, 'fixture', profile, 'ready', '720p', 'synthetic', '2026', '2026');
   db.run('INSERT INTO download_assets VALUES(?,?,?,?,?,?)', three.id, job, relative, bytes.length, JSON.stringify(probe), '[]');
+  const observed = () => db.get('SELECT * FROM source_detail_observations WHERE media_id=?', id);
+  const firstObservation = observed();
+  const valid = { name: '1화', url: '/episode/1' };
+  for (const partial of [[valid, null], [valid, { name: '2화', url: '  ' }], [valid, { url: 123 }], [valid, { url: 'x'.repeat(16_385) }], Array(10_001).fill(valid)]) {
+    invalidListing = partial;
+    const failed = await refresh();
+    assert.deepEqual(failed.errors, ['source']);
+    assert.deepEqual(failed.detail.seasons[0].episodes.map(ep => ep.id), [one.id, two.id, three.id, four.id]);
+    assert.deepEqual(observed(), firstObservation);
+  }
+  invalidListing = undefined;
   chapters = [1, 2, 4];
   const removed = await refresh();
   assert.deepEqual(removed.errors, []);
@@ -160,11 +186,20 @@ test('successful source listings drive detail, resume and playback while keeping
   assert.equal(history.items[0].episode.id, three.id);
   assert.equal(history.items[0].episode.progress.position, 300);
 
-  sources.invalidate('fixture');
-  chapters = null;
+  await sources.diagnose('fixture', profile);
+  invalidListing = [{ name: '1화', url: '/episode/1' }, { name: '2화' }];
   const failed = await refresh();
   assert.deepEqual(failed.errors, ['source']);
   assert.deepEqual(failed.detail.seasons[0].episodes.map(ep => ep.id), [one.id, two.id, four.id]);
+  const visitor = (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Visitor' } })).json().id;
+  const visitorHeaders = { 'x-moa-profile': visitor };
+  const cached = await app.inject({ url: '/api/media/' + id, headers: visitorHeaders });
+  assert.equal(cached.statusCode, 200);
+  assert.deepEqual(cached.json().seasons[0].episodes.map(ep => ep.id), [one.id, two.id, four.id]);
+  const playing = await app.inject({ method: 'POST', url: '/api/playback', headers: visitorHeaders,
+    payload: { episodeId: two.id, location: 'source', capabilities: { h264: true, hevc: false, av1: false } } });
+  assert.equal(playing.statusCode, 200, playing.body);
+  invalidListing = undefined;
   chapters = [];
   const empty = await refresh();
   assert.deepEqual(empty.errors, []);
@@ -175,6 +210,12 @@ test('successful source listings drive detail, resume and playback while keeping
   }
   assert.equal(await ongoing(), undefined);
   assert.equal((await play(three.id, 'saved')).json().next, null);
+  sources.invalidate('fixture');
+  chapters = null;
+  assert.deepEqual((await refresh()).errors, ['source']);
+  const lastEmpty = await app.inject({ url: '/api/media/' + id, headers: visitorHeaders });
+  assert.equal(lastEmpty.statusCode, 200);
+  assert.deepEqual(lastEmpty.json().seasons, []);
   chapters = [1, 2, 3, 4];
   const restored = (await refresh()).detail;
   assert.equal(restored.playTarget.episodeId, three.id);
@@ -273,19 +314,21 @@ test('watchlist scheduler queues other profiles, skips removals and respects cha
     if (id === 'retry') throw Error('fixture offline');
     db.run('UPDATE source_media SET detail_at=? WHERE media_id=?', now, id);
   });
-  scheduler.request('viewer');
+  const viewerStart = scheduler.request('viewer');
   scheduler.request('viewer');
   await setImmediate();
   assert.deepEqual(started, ['first']);
-  assert.deepEqual(scheduler.status('viewer'), { running: true, revision: 0 });
-  scheduler.request('other');
-  assert.deepEqual(scheduler.status('other'), { running: true, revision: 0 });
+  assert.equal(viewerStart.running, true);
+  assert.deepEqual(scheduler.request('viewer'), viewerStart);
+  const otherStart = scheduler.request('other');
+  assert.equal(otherStart.running, true);
   db.run('DELETE FROM watchlist WHERE media_id=?', 'removed');
   release!();
   await setImmediate();
   assert.deepEqual(started, ['first', 'retry']);
-  assert.deepEqual(scheduler.status('viewer'), { running: false, revision: 1 });
-  assert.deepEqual(scheduler.status('other'), { running: false, revision: 1 });
+  assert.equal(scheduler.request('viewer').running, false);
+  assert.notEqual(scheduler.request('viewer').revision, viewerStart.revision, 'the visible saved title was removed');
+  assert.deepEqual(scheduler.request('other'), { ...otherStart, running: false }, 'failures do not change the catalog token');
 
   now += 59_999;
   scheduler.request('other');
@@ -300,7 +343,74 @@ test('watchlist scheduler queues other profiles, skips removals and respects cha
   scheduler.request('other');
   await setImmediate();
   assert.deepEqual(started, ['first', 'retry', 'retry']);
-  assert.deepEqual(scheduler.status('other'), { running: false, revision: 2 });
+  assert.deepEqual(scheduler.request('other'), { ...otherStart, running: false });
+});
+
+test('an open list detects another viewer’s shared episode changes, independently of batch ownership and restart', async t => {
+  const dir = await workDirectory();
+  let db = new Store(dir), now = Date.now();
+  let chapters = [1], detailReads = 0;
+  function open() {
+    const catalog = new Catalog(db);
+    const sources = new Sources(db, catalog, async input => {
+      if (input.action === 'list') return { result: { list: [{ name: 'First', link: '/first' }, { name: 'Second', link: '/second' }], hasNextPage: false }, changes: {} };
+      detailReads++;
+      return { result: { chapters: chapters.map(number => ({ name: number + '화', url: '/e/' + number })) }, changes: {} };
+    });
+    return { sources, scheduler: new WatchlistRefresh(db, sources, new TitleGroups(catalog), () => now) };
+  }
+  let { sources, scheduler } = open();
+  const close = async () => { await scheduler.close(); await sources.close(); db.close(); };
+  t.after(async () => { await close(); await rm(dir, { recursive: true }); });
+  seedSource(db, 'fixture');
+  for (const id of ['alice', 'bob', 'other', 'kid', 'unwatched']) {
+    db.run('INSERT INTO profiles(id,name,color,kids,created_at) VALUES(?,?,?,?,?)', id, id, 'blue', Number(id === 'kid'), '2026');
+  }
+  const [first, second] = (await sources.browse('fixture', 'alice')).items.map(item => item.id);
+  await sources.detail(first);
+  await sources.detail(second);
+  for (const profile of ['alice', 'bob', 'other', 'kid', 'unwatched']) {
+    for (const id of [first, second]) db.run('INSERT INTO title_group_overrides VALUES(?,?,?)', profile, id, 'manual:group');
+    db.run('INSERT INTO watchlist VALUES(?,?,?)', profile, profile === 'unwatched' ? first : second, '2026');
+    if (profile !== 'unwatched') {
+      const edition = profile === 'other' ? second : first;
+      const episode = db.get('SELECT id FROM episodes WHERE media_id=?', edition)!.id;
+      db.run('INSERT INTO progress VALUES(?,?,300,1200,0,?)', profile, episode, '2026');
+    }
+  }
+  // A legacy detail can already contain progress before a first complete observation.
+  db.run('DELETE FROM source_detail_observations WHERE media_id=?', first);
+  const poll = (profile: string) => scheduler.request(profile);
+  const before = Object.fromEntries(['alice', 'bob', 'other', 'kid', 'unwatched'].map(id => [id, poll(id).revision]));
+  db.run('UPDATE source_media SET detail_at=0 WHERE media_id=?', first);
+  now += 60_001;
+  chapters = [1, 2];
+  assert.equal(poll('alice').running, true);
+  await setImmediate();
+  assert.equal(detailReads, 3);
+  const bob = poll('bob');
+  assert.equal(bob.running, false, 'the other viewer visits after the sole upstream check has finished');
+  assert.notEqual(bob.revision, before.bob, 'a first complete baseline changes the visible badge');
+  assert.notEqual(poll('unwatched').revision, before.unwatched, 'the saved representative is used without watch history');
+  assert.equal(poll('other').revision, before.other, 'the same group with a different watched edition is independent');
+  assert.equal(poll('kid').revision, before.kid);
+  assert.equal(detailReads, 3, 'no duplicate read for observers');
+  await sources.detail(first, true);
+  assert.deepEqual(poll('bob'), bob, 'an identical manual recheck does not invalidate the list');
+  chapters = [1];
+  await sources.detail(first, true);
+  const removed = poll('bob');
+  assert.notEqual(removed.revision, bob.revision, 'withdrawals change the token even without a last-addition timestamp');
+  assert.equal(poll('other').revision, before.other);
+  assert.equal(poll('kid').revision, before.kid);
+  await close();
+  db = new Store(dir);
+  ({ sources, scheduler } = open());
+  assert.deepEqual(poll('bob'), removed, 'a tab can compare its prior token after a server restart');
+  chapters = [1, 3];
+  await sources.detail(first, true);
+  assert.notEqual(poll('bob').revision, removed.revision);
+  assert.equal(poll('kid').revision, before.kid);
 });
 
 test('HTTP source browse and detail signal ongoing work while retaining the cached result', async t => {

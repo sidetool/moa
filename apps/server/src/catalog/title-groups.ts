@@ -37,6 +37,11 @@ export function titleGroupSeason(title: string, tmdbTitle?: string): number | un
 }
 interface GroupMember { id: string; provider: string; tmdb?: string; useTmdb: boolean; count?: number }
 
+function providerRank(provider: MediaCard['provider'] | null) {
+  if (provider?.lang === 'ko') return 0;
+  return !provider || provider.lang === 'all' || provider.kind === 'local' ? 1 : 2;
+}
+
 export class TitleGroups {
   private mappings = new Map<string, Map<string, string>>();
   private mappingRevision = '';
@@ -186,6 +191,23 @@ export class TitleGroups {
     }
     return watched;
   }
+  // Resolve the same saved representative and watched edition as saved(), without
+  // hydrating cards or reading every episode for a refresh-status poll.
+  savedEditions(profile: string) {
+    const mapping = this.mapping(profile);
+    const representatives = new Map<string, { id: string; rank: number }>();
+    const rows = this.catalog.db.all(`SELECT m.id,json_extract(m.metadata,'$.provider') AS provider
+      FROM watchlist w JOIN media m ON m.id=w.media_id WHERE w.profile_id=? ORDER BY w.added_at DESC,m.id`, profile);
+    for (const row of rows) {
+      const group = mapping.get(row.id);
+      if (!group) continue;
+      const rank = providerRank(JSON.parse(row.provider ?? 'null'));
+      const current = representatives.get(group);
+      if (!current || rank < current.rank) representatives.set(group, { id: row.id, rank });
+    }
+    const watched = this.latestWatchedMembers(profile, mapping, new Set(representatives.keys()));
+    return [...representatives].map(([group, saved]) => ({ group, saved: saved.id, watched: watched.get(group) }));
+  }
   saved(profile: string, ids = this.savedIds(profile)) {
     return this.resolveMapped(ids, profile, this.mapping(profile), undefined, true)
       .map(card => ({ ...card, watchlistMediaId: card.id }));
@@ -211,8 +233,7 @@ export class TitleGroups {
     // viewing activity participates; a completed latest source must suppress an older resume.
     const watched = withHistory ? this.latestWatchedMembers(profile, map, new Set(groups.keys())) : undefined;
     return [...groups].map(([groupId, cards]) => {
-      const rank = (c: MediaCard) => c.provider.lang === 'ko' ? 0 : c.provider.lang === 'all' || c.provider.kind === 'local' ? 1 : 2;
-      const representative = cards.reduce((best, card) => rank(card) < rank(best) ? card : best);
+      const representative = cards.reduce((best, card) => providerRank(card.provider) < providerRank(best.provider) ? card : best);
       const watchedId = watched?.get(groupId);
       const latest = watchedId ? cards.find(card => card.id === watchedId)
         ?? this.catalog.card(this.catalog.db.get('SELECT * FROM media WHERE id=?', watchedId)!, profile) : undefined;

@@ -528,7 +528,7 @@ export function installMockApi() {
     if (path === "/media") { const type = url.searchParams.get("type"); const items = cards.filter(card => !type || card.type === type); return json({ items, page: 1, hasNextPage: false, total: items.length }); }
     if (path === "/genres") return json(["드라마", "로맨스", "뮤지컬", "미스터리", "음악", "코미디", "스릴러"]);
     if (path === "/search") { const q = (url.searchParams.get("q") ?? "").toLowerCase(); const hit = cards.filter(card => card.title.toLowerCase().includes(q)); return json({ query: q, groups: [{ provider: local, items: hit.filter(card => card.provider.id === "local") }, { provider: ext, items: hit.filter(card => card.provider.id !== "local") }] }); }
-    if (path === "/watchlist/refresh-status") return json({ running: false, revision: 0 });
+    if (path === "/watchlist/refresh-status") return json({ running: false, revision: "mock-watchlist" });
     if (path === "/watchlist") {
       const saved = [...watchlist].reverse().map(id => byId.get(id)!).filter(Boolean).map(card => {
         if (card.type === "movie" || card.provider.kind === "local") return card;

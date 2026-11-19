@@ -29,8 +29,7 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
 }) {
   const watchlistRefresh = new WatchlistRefresh(db, sources, groups);
   app.get('/api/watchlist/refresh-status', async (req, reply) => {
-    watchlistRefresh.request(profile(req));
-    return reply.header('Cache-Control', 'private, no-store').send(watchlistRefresh.status(profile(req)));
+    return reply.header('Cache-Control', 'private, no-store').send(watchlistRefresh.request(profile(req)));
   });
   app.get('/api/recommendations', async (req,reply) => reply.header('Cache-Control','private, no-store').send(recommendations.get(profile(req))));
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });

@@ -60,8 +60,12 @@ test('search has six-hour fresh/24-hour SWR; popular stays five minutes; counter
   const stats=sources.stats.snapshot();assert.equal(stats.sources.s.search.hit,1);assert.ok(stats.sources.s.search.stale>=10);
   assert.ok(stats.sources.s.search.coalesced>=19);assert.equal(stats.sources.s.detail.externalCalls,1);assert.equal(stats.sources.s.detail.hit,1);
   assert.equal(JSON.stringify(stats).includes('query'),false);assert.equal(JSON.stringify(stats).includes(mid),false);
-  // Settings changes remove old observations along with freshness.
-  sources.invalidate('s');assert.equal(db.get('SELECT * FROM source_detail_observations'),undefined);
+  // Ordinary invalidation expires completion evidence while retaining the last listing.
+  sources.invalidate('s');
+  const invalidated=db.get('SELECT * FROM source_detail_observations WHERE media_id=?',mid)!;
+  assert.equal(invalidated.completed,0);assert.equal(invalidated.observed_at,0);
+  assert.equal(invalidated.episode_ids,observation.episode_ids);
+  assert.equal(db.get('SELECT detail_at FROM source_media WHERE media_id=?',mid)!.detail_at,0);
  } finally {release();await sources.close();db.close();await rm(root,{recursive:true,force:true});}
 });
 

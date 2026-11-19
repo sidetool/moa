@@ -96,7 +96,7 @@ function installFixture() {
         if (url.pathname === '/api/watchlist/refresh-status') {
           state.statusReads++;
           if (state.statusGate) await state.statusGate;
-          return json({ running: profile === 'p1' && state.observed === 1, revision: state.observed - 1 });
+          return json({ running: profile === 'p1' && !state.idleList && state.observed === 1, revision: profile === 'p1' ? 'p1-' + state.observed : 'p2' });
         }
         if (url.pathname === '/api/watchlist') {
           const sort = url.searchParams.get('sort');
@@ -443,6 +443,22 @@ try {
     await saved.waitFor();
     assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), null);
   }, () => localStorage.setItem('verify.savedGroup', '1'));
+
+  await scenario('idle-list-shared-edition', 1280, async page => {
+    await page.clock.install();
+    await open(page, '/');
+    await fixture(page, () => { window.catalogFixture.idleList = true; });
+    await openList(page);
+    await page.getByText('안 본 회차 1개', { exact: true }).waitFor();
+    await page.clock.runFor(250);
+    const polls = await fixture(page, () => window.catalogFixture.statusReads);
+    await fixture(page, () => { window.catalogFixture.observed = 3; });
+    await page.clock.fastForward(55_000);
+    assert.equal(await fixture(page, () => window.catalogFixture.statusReads), polls, 'idle viewers retain the minute interval');
+    await page.clock.fastForward(5_100);
+    await page.getByText('안 본 회차 3개', { exact: true }).waitFor();
+    assert.equal(await fixture(page, () => window.catalogFixture.statusReads), polls + 1);
+  });
 
   await scenario('list-already-refreshed', 1280, async page => {
     await open(page, '/');
