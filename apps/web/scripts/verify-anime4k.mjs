@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer, searchForWorkspaceRoot } from 'vite';
+import { verifyAnime4kResources } from './verify-anime4k-resources.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 const dir = await mkdtemp(join(process.env.MOA_VERIFY_DIR || tmpdir(), 'anime4k-'));
@@ -234,37 +235,6 @@ try {
   await page.evaluate(() => document.exitFullscreen());
   await showing();
   await active();
-  // A real GPU context loss must affect only the optional layer, even after pause/resume.
-  const atLoss = await layer.evaluate(c => {
-    c.getContext('webgl').getExtension('WEBGL_lose_context').loseContext();
-    return document.querySelector('video').currentTime;
-  });
-  await layer.waitFor({ state: 'detached' });
-  await fallback('화질 보정 오류');
-  await video.evaluate(async v => { v.pause(); await v.play(); });
-  await page.waitForFunction(at => document.querySelector('video').currentTime > at + .5, atLoss);
-  assert.equal(await layer.count(), 0);
-  // Document PiP changes WatchPlayer props and reconstructs the optional attachment on return.
-  // A session that has already lost its context must keep the original even across that transition.
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await openPanel('닫기');
-  await page.mouse.move(640, 360);
-  await page.getByRole('button', { name: 'PIP', exact: true }).click();
-  await page.waitForFunction(() => window.documentPictureInPicture?.window?.document.querySelector('video'));
-  await page.evaluate(() => window.documentPictureInPicture.window.document.querySelector('button[aria-label="재생 설정"]').click());
-  await page.waitForFunction(() => window.documentPictureInPicture.window.document.querySelector('.panel-settings')?.textContent.includes('Anime4K 원본 재생 · 화면 속 화면'));
-  await page.evaluate(() => window.documentPictureInPicture.window.close());
-  await page.waitForFunction(() => document.querySelector('video') === window.initialVideo);
-  await video.evaluate(v => v.play());
-  await video.evaluate(v => new Promise(resolve => v.requestVideoFrameCallback(() => v.requestVideoFrameCallback(resolve))));
-  await fallback('화질 보정 오류');
-  assert.equal(await layer.count(), 0, 'returning from Document PiP cannot retry a failed filter');
-  assert.equal(sessions, 2);
-  console.log('PASS settings status for source switch, native fullscreen, video PiP and terminal context loss across Document PiP');
-
-  await change({ experimentalAnime4k: false });
-  await change({ experimentalAnime4k: true });
-  await showing();
   await page.evaluate(async () => { const { setRemotePreference } = await import('/src/lib/remote.ts'); setRemotePreference('on'); });
   assert.equal(await page.locator('html[data-tv]').count(), 1);
   await page.keyboard.press('ArrowDown');
@@ -294,24 +264,71 @@ try {
   await layer.waitFor({ state: 'detached' });
   await fallback('화질 보정 오류');
   await change({ experimentalAnime4k: false });
-  await page.evaluate(() => {
+  const originalGetContext = await page.evaluateHandle(() => {
     const getContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function(type, ...args) {
       if (type === 'webgl' && this.classList.contains('player-anime4k')) return null;
       return getContext.call(this, type, ...args);
     };
+    return getContext;
   });
   await change({ experimentalAnime4k: true });
   await fallback('이 기기는 보정 미지원');
   assert.equal(await layer.count(), 0);
   await playing();
+  await change({ experimentalAnime4k: false });
+  await page.evaluate(original => { HTMLCanvasElement.prototype.getContext = original; }, originalGetContext);
+  await originalGetContext.dispose();
+  await change({ experimentalAnime4k: true });
+  await showing();
+  await active();
+  console.log('PASS source switch, native fullscreen, video PiP, TV navigation, sustained frame loss, late WebGL error and unsupported device');
+
+  // Document PiP moves the real video between windows. Exercise this last because Chromium
+  // may stop delivering rVFC to both the verifier and subsequently attached filters on that element.
+  // A real GPU context loss must affect only the optional layer, even after pause/resume.
+  const atLoss = await layer.evaluate(c => {
+    c.getContext('webgl').getExtension('WEBGL_lose_context').loseContext();
+    return document.querySelector('video').currentTime;
+  });
+  await layer.waitFor({ state: 'detached' });
+  await fallback('화질 보정 오류');
+  await video.evaluate(async v => { v.pause(); await v.play(); });
+  await page.waitForFunction(at => document.querySelector('video').currentTime > at + .5, atLoss);
+  assert.equal(await layer.count(), 0);
+  // Document PiP changes WatchPlayer props and reconstructs the optional attachment on return.
+  // A session that has already lost its context must keep the original even across that transition.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openPanel('닫기');
+  await page.mouse.move(640, 360);
+  await page.getByRole('button', { name: 'PIP', exact: true }).click();
+  await page.waitForFunction(() => window.documentPictureInPicture?.window?.document.querySelector('video'));
+  await page.evaluate(() => window.documentPictureInPicture.window.document.querySelector('button[aria-label="재생 설정"]').click());
+  await page.waitForFunction(() => window.documentPictureInPicture.window.document.querySelector('.panel-settings')?.textContent.includes('Anime4K 원본 재생 · 화면 속 화면'));
+  await page.evaluate(() => window.documentPictureInPicture.window.close());
+  await page.waitForFunction(() => document.querySelector('video') === window.initialVideo);
+  // Chromium can keep playing after Document PiP without delivering rVFC on the reparented video.
+  const returned = await video.evaluate(v => {
+    const { totalVideoFrames, droppedVideoFrames } = v.getVideoPlaybackQuality();
+    void v.play();
+    return { time: v.currentTime, frames: totalVideoFrames - droppedVideoFrames };
+  });
+  await page.waitForFunction(({ time, frames }) => {
+    const v = document.querySelector('video');
+    const { totalVideoFrames, droppedVideoFrames } = v.getVideoPlaybackQuality();
+    return !v.paused && v.currentTime > time && totalVideoFrames - droppedVideoFrames >= frames + 2;
+  }, returned, { polling: 100, timeout: 15000 });
+  await fallback('화질 보정 오류');
+  assert.equal(await layer.count(), 0, 'returning from Document PiP cannot retry a failed filter');
+  assert.equal(sessions, 2);
   await openPanel('뒤로');
   await page.waitForURL(base + '/title/m');
+  await verifyAnime4kResources(context, base);
   await page.locator('.title-page .title-hero-copy').getByRole('heading', { name: 'Filter test' }).waitFor();
   assert.equal(await video.count(), 0);
   assert.equal(await layer.count(), 0);
   assert.deepEqual(errors, []);
-  console.log('PASS TV navigation, sustained frame-loss reason, late WebGL error, unsupported device and teardown (software WebGL)');
+  console.log('PASS terminal GPU context loss across Document PiP, continuing original playback and teardown (software WebGL)');
 } finally {
   await browser?.close();
   await web?.close();
