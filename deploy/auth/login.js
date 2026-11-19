@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   // This page is served directly, outside Vite's browser compatibility build.
-  // A successful native logout sets this one-use, non-authentication cookie.
+  // The auth service sets this one-use marker when a session ends or a new session begins.
   // Keep the marker for the next script-enabled page if storage is unavailable.
   try {
     var reset = document.cookie.match(/(?:^|;\s*)moa_scene_reset=([a-f0-9-]{36})(?:;|$)/);

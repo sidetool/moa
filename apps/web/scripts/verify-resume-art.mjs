@@ -4,17 +4,41 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
+import { createAuthServer } from '../../../deploy/auth/server.mjs';
+import { passwordHash } from '../../../deploy/auth/accounts.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 const base = process.env.MOA_TEST_BASE || 'http://127.0.0.1:5173';
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
+const db = new DatabaseSync(':memory:');
+const password = 'local-fixture-password', salt = 'ab'.repeat(30);
+const auth = createAuthServer({ database: db, credentials: { users: [{ username: 'viewer', salt, hash: await passwordHash(password, salt) }], csrfSecret: 'fixture' }, origin: 'http://localhost', allowAnyHost: true, secure: false });
 let scratch;
 try {
+  await new Promise(resolve => auth.listen(0, '127.0.0.1', resolve));
+  const authOrigin = `http://127.0.0.1:${auth.address().port}`;
   scratch = await mkdtemp(join(tmpdir(), 'moa-resume-scene-'));
   const path = process.env.MOA_TEST_VIDEO || join(scratch, 'sample.mp4');
   if (!process.env.MOA_TEST_VIDEO) execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=240x136:rate=2', '-t', '210', '-c:v', 'libx264', '-threads', '1', '-preset', 'ultrafast', '-movflags', '+faststart', path]);
   const bytes = await readFile(path);
   const context = await browser.newContext();
+  // Forward the gateway's auth paths to an isolated production auth server. Keep the
+  // browser's host, Origin, cookies, redirects and repeated Set-Cookie headers intact.
+  await context.route('**/__moa/**', async route => {
+    const request = route.request(), url = new URL(request.url());
+    const response = await fetch(authOrigin + url.pathname + url.search, {
+      method: request.method(), headers: { ...await request.allHeaders(), host: url.host },
+      body: request.postDataBuffer(), redirect: 'manual'
+    });
+    const headers = Object.fromEntries(response.headers);
+    if (response.headers.has('set-cookie')) headers['set-cookie'] = response.headers.getSetCookie().join('\n');
+    await route.fulfill({ status: response.status, headers, body: Buffer.from(await response.arrayBuffer()) });
+  });
+  await context.route(url => url.pathname === '/settings', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: (await response.text()).replace('</head>', '<meta name="moa-auth" content="enabled"></head>') });
+  });
   await context.addInitScript(() => {
     localStorage.setItem('moa.profile', 'viewer');
     window.capturedPositions = [];
@@ -275,43 +299,108 @@ try {
     return saved.image && document.querySelector('.landscape-card img')?.src === saved.image;
   }, sceneKey(enabledProgress));
 
-  // Keep an actual player's acknowledged save in flight while a second tab logs out.
-  await page.locator('.landscape-card .card-frame').click();
-  await playerReady();
-  heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
-  await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
-  await heldSave.committed.promise;
-  await image.waitFor();
-  assert.ok(await page.evaluate(() => window.capturedPositions.length > 0));
-  assert.ok(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('moa.resumeScene:'))));
   const authTab = await context.newPage();
-  const loginHtml = await readFile(new URL('../../../deploy/auth/login.html', import.meta.url), 'utf8');
-  const loginScript = await readFile(new URL('../../../deploy/auth/login.js', import.meta.url));
-  const resetId = 'c39470ac-4232-4be3-ac10-8c3c74ddbd68';
-  await authTab.route('**/__moa/**', route => {
-    const path = new URL(route.request().url()).pathname;
-    if (path === '/__moa/login.js') return route.fulfill({ contentType: 'text/javascript', body: loginScript });
-    if (path === '/__moa/login') return route.fulfill({ contentType: 'text/html', body: loginHtml });
-    if (path === '/__moa/logout') {
-      assert.equal(route.request().method(), 'POST');
-      assert.ok(new URLSearchParams(route.request().postData()).has('csrf'));
-      return route.fulfill({ status: 303, headers: { location: '/__moa/login', 'set-cookie': `moa_scene_reset=${resetId}; Path=/; SameSite=Lax` } });
-    }
-    return route.fulfill({ status: 204 });
-  });
-  await authTab.goto(base + '/__moa/login');
   const scenes = () => authTab.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('moa.resumeScene:')).length);
-  assert.ok(await scenes(), 'visiting the login page preserves cached frames');
+  const generation = () => authTab.evaluate(() => localStorage.getItem('moa.resumeSceneLogout'));
+  const login = async () => {
+    await authTab.getByLabel('아이디').fill('viewer');
+    await authTab.locator('#password').fill(password);
+    await authTab.getByRole('button', { name: '로그인', exact: true }).click();
+    await authTab.waitForURL(base + '/');
+    await authTab.locator('.landscape-card img').waitFor();
+  };
+  await authTab.goto(base + '/__moa/login');
+  assert.ok(await scenes(), 'visiting the form alone preserves scenes');
+  await login();
+  assert.equal(await scenes(), 0, 'issuing a new session resets artwork even if the old session expired with no app open');
+
+  const saveScene = async () => {
+    await page.reload();
+    await frame.click();
+    await playerReady();
+    const exit = page.waitForResponse(r => isExitSave(r.request()));
+    await back();
+    const saved = await (await exit).json();
+    await page.waitForFunction(key => document.querySelector('.landscape-card img')?.src === JSON.parse(localStorage.getItem(key) || '{}').image && localStorage.getItem(key), sceneKey(saved));
+  };
+  const holdExit = async () => {
+    await frame.click();
+    await playerReady();
+    heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
+    await back();
+    await heldSave.committed.promise;
+    await image.waitFor();
+  };
+  const releaseExit = async () => {
+    const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === '/api/home');
+    const response = page.waitForResponse(r => isExitSave(r.request()));
+    heldSave.ack.resolve();
+    assert.ok((await response).ok());
+    await refreshed;
+    heldSave = undefined;
+    assert.equal(await scenes(), 0, 'a late player acknowledgement cannot recreate images from the old session');
+  };
+  await saveScene();
+  await authTab.evaluate(() => localStorage.setItem('test.unrelated', 'keep'));
+  await holdExit();
+  await authTab.goto(base + '/__moa/account');
   await authTab.getByRole('button', { name: '이 브라우저에서 로그아웃' }).click();
-  await authTab.waitForFunction(id => localStorage.getItem('moa.resumeSceneLogout') === id, resetId);
+  await authTab.waitForURL(base + '/__moa/login');
   assert.equal(await scenes(), 0);
   assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
-  const refreshedHome = page.waitForResponse(response => new URL(response.url()).pathname === '/api/home');
-  const ackResponse = page.waitForResponse(response => isExitSave(response.request()));
-  heldSave.ack.resolve();
-  assert.ok((await ackResponse).ok());
-  await refreshedHome; // The progress acknowledgement handler, including any attempted write, has run.
-  assert.equal(await scenes(), 0, 'the old player cannot recreate frames after logout');
+  await releaseExit();
+  await login();
+  await saveScene();
+
+  // Use real account-scoped device DELETEs, including a retryable failure in the same dialog.
+  const owner = db.prepare("SELECT id FROM accounts WHERE username='viewer'").get().id;
+  const addDevice = name => {
+    const token = crypto.randomUUID(), id = crypto.randomUUID();
+    db.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(token, owner, Date.now() + 3600000, Date.now(), 0);
+    db.prepare('INSERT INTO session_devices(id,token_hash,name,created_at,last_seen) VALUES(?,?,?,?,?)').run(id, token, name, Date.now(), Date.now());
+  };
+  addDevice('다른 브라우저');
+  addDevice('다른 TV');
+  await authTab.goto(base + '/settings#account');
+  const sessionGroup = authTab.locator('.settings-group').filter({ has: authTab.getByRole('heading', { name: '로그인 기기' }) });
+  const deviceLogout = label => sessionGroup.locator('.setting').filter({ hasText: label }).getByRole('button', { name: '로그아웃', exact: true });
+  const confirm = authTab.getByRole('dialog').getByRole('button', { name: '로그아웃', exact: true });
+  const before = await generation();
+  await deviceLogout('다른 TV').click();
+  await confirm.click();
+  await deviceLogout('다른 TV').waitFor({ state: 'detached' });
+  await sessionGroup.getByRole('button', { name: '다른 기기 모두 로그아웃' }).click();
+  await confirm.click();
+  await deviceLogout('다른 브라우저').waitFor({ state: 'detached' });
+  assert.equal(await generation(), before);
+  assert.ok(await scenes());
+
+  await holdExit();
+  await deviceLogout('현재 기기').click();
+  await authTab.route('**/__moa/api/sessions/*', route => route.fulfill({ status: 503, json: { error: 'temporarily-unavailable' } }), { times: 1 });
+  await confirm.click();
+  await authTab.getByRole('alert').filter({ hasText: '다시 시도' }).waitFor();
+  assert.equal(await generation(), before);
+  assert.ok(await scenes());
+  await confirm.click();
+  await authTab.waitForURL(base + '/__moa/login');
+  assert.notEqual(await generation(), before);
+  assert.equal(await scenes(), 0);
+  await login();
+  await releaseExit();
+  assert.equal(await authTab.evaluate(() => localStorage.getItem('test.unrelated')), 'keep');
+  await waitForArt(episodeThumb);
+
+  // A remote session revocation is confirmed by the protected sessions endpoint on return.
+  await saveScene();
+  db.prepare('DELETE FROM sessions WHERE account_id=?').run(owner);
+  await authTab.goto(base + '/settings#account');
+  await authTab.waitForURL(url => url.pathname === '/__moa/login' && url.searchParams.get('next') === '/settings#account');
+  assert.equal(await scenes(), 0);
+  await waitForArt(episodeThumb);
+  await authTab.goto(base + '/__moa/login');
+  await login();
+  assert.equal(await scenes(), 0);
 
   // If scripts were disabled throughout the native logout/login, the next app load
   // receives the uncleared marker even when it never visited the scripted login form.
@@ -325,8 +414,10 @@ try {
   assert.equal(await authTab.evaluate(() => document.cookie.includes('moa_scene_reset=')), false);
   assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
   assert.deepEqual(errors, []);
-  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, disabling and re-enabling in another tab, pending and stale settings, progress with capture disabled, native logout and delayed progress after logout.');
+  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, disabling and re-enabling in another tab, pending and stale settings, progress with capture disabled, native and current-device logout, revocation failure/retry, other devices, remote revocation, reauthentication and delayed progress after logout.');
 } finally {
   await browser.close();
+  if (auth.listening) await new Promise(resolve => auth.close(resolve));
+  db.close();
   if (scratch) await rm(scratch, { recursive: true, force: true });
 }

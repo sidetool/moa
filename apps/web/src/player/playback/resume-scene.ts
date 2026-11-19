@@ -19,8 +19,7 @@ function purgeScenes(generation: string) {
   for (const name of Object.keys(localStorage)) if (name.startsWith(PREFIX)) localStorage.removeItem(name);
 }
 
-// deploy/auth/login.js normally consumes the native form logout marker. A browser
-// can also log out and back in with scripts disabled, then open the app directly.
+// Both the native auth page and the app consume markers for ended and newly issued sessions.
 function pendingLogout() {
   return document.cookie.match(/(?:^|;\s*)moa_scene_reset=([a-f0-9-]{36})(?:;|$)/)?.[1];
 }
@@ -93,8 +92,12 @@ export function storeResumeScene(account: string, profile: string, mediaId: stri
 
 export function clearResumeScenes(profile?: string, target?: { episodeId: string } | { mediaId: string }) {
   try {
-    if (!profile) purgeScenes(Date.now().toString(36) + Math.random().toString(36));
-    else for (const name of Object.keys(localStorage)) {
+    if (!profile) {
+      const reset = pendingLogout();
+      // A delayed login-required response from an old tab must not invalidate a newer session.
+      if (!reset && documentGeneration !== localStorage.getItem(LOGOUT)) return;
+      purgeScenes(reset ?? Date.now().toString(36) + Math.random().toString(36));
+    } else for (const name of Object.keys(localStorage)) {
       if (!name.startsWith(PREFIX)) continue;
       const [, , viewer, episode] = JSON.parse(name.slice(PREFIX.length));
       if (viewer !== profile) continue;

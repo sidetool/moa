@@ -1,5 +1,6 @@
 import { PROFILE_HEADER } from "@moa/shared";
 import { transformPluginCatalog } from '../features/plugins/plugin-hooks';
+import { clearResumeScenes } from '../player/playback/resume-scene';
 import { deviceId } from './device-id';
 
 export const hasLoginGate = document.querySelector('meta[name="moa-auth"]')?.getAttribute("content") === "enabled";
@@ -29,6 +30,11 @@ type ApiInit = { method?: string; body?: Json; signal?: AbortSignal; keepalive?:
 export const api = <T>(path: string, init: ApiInit = {}) => request<T>(`/api${path}`, init, false);
 export const authApi = <T>(path: string, init: ApiInit = {}) => request<T>(`/__moa/api${path}`, init, true);
 
+export function finishLogout() {
+  clearResumeScenes();
+  window.location.assign('/__moa/login');
+}
+
 async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", 'X-Moa-Device': deviceId() };
   const profile = currentProfileId();
@@ -49,6 +55,7 @@ async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && data?.error === "login-required") {
+      clearResumeScenes();
       window.location.replace(`/__moa/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
     }
     if (response.status === 401 && profile === currentProfileId() && ["profile-required", "profile-locked"].includes(data?.error)) {

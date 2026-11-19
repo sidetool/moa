@@ -92,6 +92,7 @@ test('login, persistence, renewal, CSRF, expiry, logout and abuse controls', asy
     response = await login({ next: '//evil.test' });
     assert.equal(response.status, 303);
     assert.equal(response.headers.get('location'), '/__moa/continue?next=%2F');
+    assert.match(response.headers.getSetCookie().find(c => c.startsWith('moa_scene_reset=')), /^moa_scene_reset=[a-f0-9-]{36};/);
     const continued = await request(response.headers.get('location'));
     assert.equal(continued.status, 303);
     assert.equal(continued.headers.get('location'), '/');
@@ -114,6 +115,7 @@ test('login, persistence, renewal, CSRF, expiry, logout and abuse controls', asy
     response = await request('/__moa/check');
     assert.equal(response.status, 204);
     assert.ok(response.headers.get('set-cookie').includes('Max-Age=31536000'), 'active remembered login renews');
+    assert.ok(response.headers.getSetCookie().every(c => !c.startsWith('moa_scene_reset=')), 'rolling renewal keeps scenes');
     jar.set('__Host-moa_session', 'x'.repeat(43));
     assert.equal((await request('/__moa/check')).status, 401);
     jar.set('__Host-moa_session', token);
@@ -242,8 +244,12 @@ test('accounts migration, atomic invites, authorization and per-account session 
     assert.equal((await winner.api('me')).status, 401); assert.equal((await admin.api('me')).status, 200);
     assert.equal((await admin.api(`accounts/${m.id}`, 'PATCH', { disabled: false })).status, 204);
     assert.equal((await winner.formPost('login', { username: m.username, password: 'member-password' })).status, 303);
-    assert.equal((await winner.api('password', 'POST', { current: 'wrong', next: 'new-password' })).status, 400);
-    assert.equal((await winner.api('password', 'POST', { current: 'member-password', next: 'new-password' })).status, 204);
+    const rejectedChange = await winner.api('password', 'POST', { current: 'wrong', next: 'new-password' });
+    assert.equal(rejectedChange.status, 400);
+    assert.equal(rejectedChange.headers['set-cookie'], undefined);
+    const changed = await winner.api('password', 'POST', { current: 'member-password', next: 'new-password' });
+    assert.equal(changed.status, 204);
+    assert.ok(changed.headers['set-cookie'].some(c => c.startsWith('moa_scene_reset=')));
     assert.equal((await winner.api('me')).status, 401); assert.equal((await admin.api('me')).status, 200);
     assert.equal((await winner.formPost('login', { username: m.username, password: 'new-password' })).status, 303);
     const reset = (await admin.api(`accounts/${m.id}/reset-password`, 'POST')).json();
