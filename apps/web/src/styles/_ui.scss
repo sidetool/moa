@@ -3,7 +3,7 @@
 .btn > span { min-width: 0; }
 /* Icons belong in `icon`; one placed in the label still stays on the label's line. */
 .btn > span:has(> svg) { display: inline-flex; align-items: center; gap: var(--space-2); }
-.btn:disabled, .icon-btn:disabled, .switch:disabled { opacity: var(--disabled-opacity); }
+.btn:disabled, .icon-btn:disabled, .switch:disabled, .switch[aria-disabled="true"] { opacity: var(--disabled-opacity); }
 .btn-l { min-height: var(--control-height-lg); padding-inline: var(--space-6); font-size: var(--font-large); font-weight: var(--weight-bold); }
 .btn-icon-only { width: var(--control-height); padding: 0; }
 .btn-l.btn-icon-only { width: var(--control-height-lg); }

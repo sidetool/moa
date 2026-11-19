@@ -281,6 +281,6 @@ export class TitleGroups {
   candidates(q: string, profile: string) {
     if (!normalize(q)) return [];
     const map = this.mapping(profile);
-    return this.catalog.search(profile, q).groups.flatMap(group => group.items).filter(card => map.has(card.id)).slice(0,40);
+    return this.catalog.search(profile, q, [], 'titles').groups.flatMap(group => group.items).filter(card => map.has(card.id)).slice(0,40);
   }
 }

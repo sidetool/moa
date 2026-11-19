@@ -119,7 +119,10 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
   app.delete('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
     db.run('DELETE FROM watchlist WHERE profile_id=? AND media_id=?', profile(req), params(req).mediaId); return reply.code(204).send();
   });
-  app.get('/api/history', { schema: { querystring: object({ page: pageQuery }) } }, async req => catalog.history(profile(req), query(req).page));
+  app.get('/api/history', { schema: { querystring: object({ page: pageQuery, groupHistory: { type: 'boolean' } }) } }, async req => {
+    const { page, groupHistory } = query(req);
+    return catalog.history(profile(req), page, groupHistory);
+  });
   app.delete('/api/history/media/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
     db.run('DELETE FROM progress WHERE profile_id=? AND episode_id IN (SELECT id FROM episodes WHERE media_id=?)', profile(req), params(req).mediaId);
     return reply.code(204).send();

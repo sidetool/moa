@@ -199,14 +199,15 @@ export interface HomeResponse {
 // GET /api/media?type=&genre=&provider=&sort=recent|title|year&page= -> Page<MediaCard>
 // GET /api/genres?type= -> string[]
 
-export interface SearchGroup { provider: ProviderRef; items: MediaCard[]; error?: string }
+/** genreMatch marks results found only by a persisted genre. */
+export interface SearchGroup { provider: ProviderRef; items: (MediaCard & { genreMatch?: true })[]; error?: string }
 // GET /api/search?q= -> { query: string; groups: SearchGroup[] }
 
 /* ---------- Watchlist / history / progress ---------- */
 // GET    /api/watchlist                -> MediaCard[]
 // PUT    /api/watchlist/:mediaId       -> 204
 // DELETE /api/watchlist/:mediaId       -> 204
-// GET    /api/history?page=            -> Page<HistoryEntry>
+// GET    /api/history?page=&groupHistory= -> Page<HistoryEntry> (omit groupHistory to use the profile setting)
 // DELETE /api/history/media/:mediaId -> 204 (current profile, whole title)
 // DELETE /api/history/:episodeId       -> 204
 // POST   /api/progress                 { episodeId, position, duration } -> EpisodeProgress

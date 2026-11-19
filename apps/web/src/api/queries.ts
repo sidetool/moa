@@ -59,7 +59,19 @@ export const useWatchlist = (sort: "saved" | "updated" = "saved") => {
     refetchOnMount: "always",
   });
 };
-export const useHistory = () => useQuery({ queryKey: keys.history, queryFn: () => api<Page<HistoryEntry>>("/history") });
+interface HistoryPageParam { page: number; groupHistory?: boolean }
+export const useHistory = () => useInfiniteQuery({
+  queryKey: [...keys.history, currentProfileId()],
+  initialPageParam: { page: 1 } as HistoryPageParam,
+  queryFn: ({ pageParam, signal }) => {
+    const params = new URLSearchParams({ page: String(pageParam.page) });
+    if (pageParam.groupHistory !== undefined) params.set("groupHistory", String(pageParam.groupHistory));
+    return api<Page<HistoryEntry>>(`/history?${params}`, { signal });
+  },
+  // Page one uses the profile's saved preference. Pin later pages to the view already on screen.
+  getNextPageParam: (last, [first]) => last.hasNextPage ? { page: last.page + 1, groupHistory: first.items[0]?.groupedCount !== undefined } : undefined,
+  retry: false,
+});
 export const useFolders = () => useQuery({ queryKey: keys.folders, queryFn: () => api<LibraryFolder[]>("/library/folders") });
 export const useScanStatus = (poll: boolean) =>
   useQuery({ queryKey: keys.scan, queryFn: () => api<ScanStatus>("/library/status"), refetchInterval: poll ? 1500 : false });
