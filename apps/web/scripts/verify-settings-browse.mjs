@@ -221,6 +221,7 @@ try {
     assert.equal(await tabList.evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation.effect.getKeyframes().some(frame => frame.transform?.startsWith('translateY(')))), false);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto(`${base}settings#playback`);
+    if (width >= 900) await page.locator('html[data-tv]').waitFor();
     const deviceCard = page.locator('.settings-group').filter({ has: page.getByRole('heading', { name: '이 기기에서만', exact: true }) });
     const anime4k = deviceCard.getByRole('switch', { name: 'Anime4K 화질 보정' });
     await anime4k.waitFor();
@@ -234,6 +235,10 @@ try {
     await deviceSave;
     assert.deepEqual(deviceSaves.at(-1), { experimentalAnime4k: true });
     assert.equal(settings.experimentalAnime4k, undefined);
+    if (width >= 900) {
+      await anime4k.press('ArrowLeft');
+      assert.ok(await menu.evaluate(nav => nav.contains(document.activeElement)), 'TV left can return to settings navigation');
+    }
     await page.reload();
     await anime4k.waitFor();
     assert.equal(await anime4k.isChecked(), true);
@@ -263,17 +268,23 @@ try {
     await page.locator('#updates').waitFor();
     assert.equal(await title.textContent(), '정보');
     await page.goto(`${base}settings#subtitle-advanced`);
+    if (width >= 900) {
+      // #updates → #subtitle-advanced is a same-document navigation. Reload to apply the TV fixture.
+      await page.reload();
+      await page.locator('html[data-tv]').waitFor();
+    }
     await page.getByRole('region', { name: '자막 고급설정', exact: true }).waitFor();
     const automatic = page.getByRole('switch', { name: '싱크 자동 맞춤', exact: true });
     const segmented = page.getByRole('switch', { name: '구간별 싱크 맞춤', exact: true });
     assert.equal(await segmented.isChecked(), false);
     if (width >= 900) {
+      await page.getByRole('switch', { name: '구간별 싱크 맞춤', disabled: false, exact: true }).waitFor();
       await automatic.press('ArrowDown');
       assert.ok(await segmented.evaluate(button => document.activeElement === button), 'TV down reaches the dependent subtitle switch');
     }
     const pressAndSave = async toggle => {
       const saved = page.waitForResponse(response => response.url().endsWith('/api/settings') && response.request().method() === 'PATCH');
-      await toggle.press('Space');
+      await toggle.press(width >= 900 ? 'Enter' : 'Space');
       await saved;
     };
     const syncState = (disabled, checked) => page.getByRole('switch', { name: '구간별 싱크 맞춤', exact: true, disabled, checked }).waitFor();
