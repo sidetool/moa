@@ -43,7 +43,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false };
+let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, showResumeScene: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */
@@ -802,7 +802,15 @@ export function installMockApi() {
       }
       return json({ settings: saved });
     }
-    if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
+    if (path === "/settings") {
+      const key = `moa.mockResumeScene:${selectedProfile}`;
+      if (method === "PATCH") {
+        const { showResumeScene, ...other } = body;
+        if (typeof showResumeScene === "boolean") localStorage.setItem(key, String(showResumeScene));
+        settings = { ...settings, ...other };
+      }
+      return json({ ...settings, showResumeScene: localStorage.getItem(key) !== "false" });
+    }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);
     if (path === "/library/status") return json({ running: false, done: 15, total: 15 });
     if (path === "/library/scan") return json({ running: true, phase: "probing", done: 3, total: 15 });

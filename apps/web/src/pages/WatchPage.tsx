@@ -2,7 +2,7 @@ import { mergePlaybackMarkers } from '../player/playback/skip-markers';
 import { nextUpTiming } from '../player/playback/next-up';
 import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
 import { attachAnime4k } from '../player/playback/anime4k';
-import { captureResumeScene, storeResumeScene, type ResumeScene } from '../player/playback/resume-scene';
+import { captureResumeScene, resumeSceneEnabled, storeResumeScene, type ResumeScene } from '../player/playback/resume-scene';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
@@ -26,9 +26,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import type { EpisodeProgress, MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, SubtitleTrack } from "@moa/shared";
+import type { EpisodeProgress, MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, Settings as ProfileSettings, SubtitleTrack } from "@moa/shared";
 import { keyboardShortcutKey, playerShortcutLabel, type PlayerShortcutAction } from '@moa/shared';
-import { useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
+import { keys, useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
 import { useEpisodeDownload } from "../api/downloads";
 import { cancelTranslationJob, coveredUntil, isTranslationTrack, savedTranslations, translationModeOf, untranslatedGap, useTranslationConfig, type TranslatedRange, type TranslationJob } from "../api/translation";
 import { useSubtitleTranslation } from "../player/translation/subtitle-translation";
@@ -317,15 +317,17 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     if (viewingProfile !== currentProfileId() || !session || session.live || position === undefined || !Number.isFinite(duration) || !duration || position < 1) return;
     lastSaved.current = position;
     const owner = accountId.current;
+    // The attach cleanup and its acknowledgement can run after a profile setting changes or the player unmounts.
+    const scenesEnabled = () => resumeSceneEnabled(client.getQueryData<ProfileSettings>(keys.settings(viewingProfile)));
     let scene: ResumeScene | undefined;
-    if (owner && viewingProfile && v && !castProgress.current && (keepalive || v.paused) && position < duration * .9 && duration - position >= 120) {
+    if (owner && viewingProfile && v && scenesEnabled() && !castProgress.current && (keepalive || v.paused) && position < duration * .9 && duration - position >= 120) {
       const previous = lastScene.current;
       scene = previous?.sessionId === session.sessionId && previous.scene.position === position
         ? previous.scene : captureResumeScene(v, position);
       if (scene) lastScene.current = { sessionId: session.sessionId, scene };
     }
     void api<EpisodeProgress>("/progress", { method: "POST", body: { episodeId: session.episodeId, position, duration }, keepalive }).then(saved => {
-      if (owner && viewingProfile && scene && !saved?.completed && saved?.updatedAt && viewingProfile === currentProfileId() && owner === accountId.current) {
+      if (owner && viewingProfile && scene && scenesEnabled() && !saved?.completed && saved?.updatedAt && viewingProfile === currentProfileId() && owner === accountId.current) {
         storeResumeScene(owner, viewingProfile, session.mediaId, session.episodeId, saved.updatedAt, saved.position, scene);
       }
       // Periodic saves mark caches stale; final saves also refresh screens already mounted after exit.

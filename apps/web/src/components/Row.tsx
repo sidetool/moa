@@ -6,14 +6,14 @@ import { CardSkeleton, LandscapeCard, PosterCard, RankCard } from "./Cards";
 import { Skeleton } from "./ui";
 import { cx } from "../lib/format";
 
-export function Row({ row, index = 0, rank = false, resumeAccountId }: { row: RowData; index?: number; rank?: boolean; resumeAccountId?: string }) {
+export function Row({ row, index = 0, rank = false, resumeAccountId, showResumeScene }: { row: RowData; index?: number; rank?: boolean; resumeAccountId?: string; showResumeScene?: boolean }) {
   const Card = row.layout === "landscape" ? LandscapeCard : PosterCard;
   return (
     <RowShell id={row.id} title={row.title} layout={row.layout} className={cx(rank && "row-rank")} count={row.items.length}
       more={row.more && <Link to={row.more.path} className="row-more">모두 보기<ChevronRight size={16} /></Link>}>
       {row.items.map((card, i) => rank
         ? <RankCard key={card.id} card={card} rank={i + 1} eager={index < 2 && i < 6} />
-        : <Card key={card.id} card={card} resumeAccountId={resumeAccountId} eager={index < 2 && i < 6} />)}
+        : <Card key={card.id} card={card} resumeAccountId={resumeAccountId} showResumeScene={showResumeScene} eager={index < 2 && i < 6} />)}
     </RowShell>
   );
 }

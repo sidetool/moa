@@ -42,17 +42,20 @@ try {
   const episodeId = 'watched-edition:1', mediaId = 'watched-edition';
   const picture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aakMAAAAASUVORK5CYII=';
   const card = { id: 'representative', title: '합성 시리즈', type: 'series', provider: { id: 'local', kind: 'local', name: '로컬' }, poster: picture };
-  let account = 'local', count = 0, mediaRequests = 0, revision = 0, kind = 'resume', thumb = picture;
-  let heldSave;
+  const backdrop = picture + '#backdrop', episodeThumb = picture + '#episode';
+  card.backdrop = backdrop;
+  const settings = { autoplayNext: false, autoFetchSubtitles: false, recommendationsEnabled: false };
+  let account = 'local', count = 0, mediaRequests = 0, revision = 0, kind = 'resume', thumb = episodeThumb;
+  let heldSave, heldSettings;
   const isExitSave = request => request.headers()['x-test-exit-save'] === '1';
   let progress = { position: 28, duration: 210, completed: false, updatedAt: '2026-10-01T00:00:00.000Z' };
-  await page.route('**/fixture/video.mp4', route => {
+  await context.route('**/fixture/video.mp4', route => {
     mediaRequests++;
     const range = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/);
     const start = Number(range?.[1] || 0), end = Math.min(bytes.length - 1, range?.[2] ? Number(range[2]) : bytes.length - 1);
     return route.fulfill({ status: range ? 206 : 200, contentType: 'video/mp4', body: bytes.subarray(start, end + 1), headers: { 'accept-ranges': 'bytes', ...(range && { 'content-range': `bytes ${start}-${end}/${bytes.length}` }) } });
   });
-  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+  await context.route(url => url.pathname.startsWith('/api/'), async route => {
     const url = new URL(route.request().url()).pathname;
     if (url === '/api/home') return route.fulfill({ json: { hero: [], rows: [{ id: 'continue', kind: 'continue', title: '이어보기', layout: 'landscape', items: [{ ...card, resume: { episodeId, position: kind === 'resume' ? progress.position : 0, label: '이어보기', kind, updatedAt: progress.updatedAt, thumb }, ...(kind === 'resume' && { progress: { episodeId, ratio: progress.position / progress.duration, label: '1화' } }) }] }] } });
     if (url === '/api/playback' && route.request().method() === 'POST') {
@@ -74,7 +77,11 @@ try {
     }
     if (url === '/api/me') return route.fulfill({ json: { id: account, role: 'admin', permissions: [] } });
     if (url === '/api/profiles') return route.fulfill({ json: [{ id: 'viewer', name: '테스트' }] });
-    if (url === '/api/settings') return route.fulfill({ json: { autoplayNext: false, autoFetchSubtitles: false, recommendationsEnabled: false } });
+    if (url === '/api/settings') {
+      if (route.request().method() === 'PATCH') Object.assign(settings, route.request().postDataJSON());
+      else if (heldSettings) await heldSettings.promise;
+      return route.fulfill({ json: settings });
+    }
     if (url === '/api/media/' + mediaId) return route.fulfill({ json: { ...card, id: mediaId, seasons: [], playTarget: null } });
     if (url.endsWith('/markers')) return route.fulfill({ json: { status: 'unavailable' } });
     if (url === '/api/plugin-runtime' || url === '/api/sources') return route.fulfill({ json: [] });
@@ -85,8 +92,9 @@ try {
 
   await page.goto(base);
   const image = page.locator('.landscape-card img');
+  const waitForArt = src => page.waitForFunction(url => document.querySelector('.landscape-card img')?.getAttribute('src') === url, src);
   await image.waitFor({ timeout: 12_000 }).catch(async err => { throw new Error([err.message, errors.join(' '), diagnostics.slice(0, 12).join(' '), (await page.locator('body').innerText()).slice(0, 800)].join('\n')); });
-  assert.equal(await image.getAttribute('src'), picture);
+  await waitForArt(episodeThumb);
   assert.equal(count + mediaRequests, 0);
   // In-page Back during active playback and after a manual pause both preserve a real decoded frame.
   for (const mode of ['playing', 'paused', 'resumed']) {
@@ -124,32 +132,157 @@ try {
   }
   await page.reload();
   await page.waitForFunction(() => document.querySelector('.landscape-card img')?.src.startsWith('data:image/jpeg;'));
+  const settingsTab = await context.newPage();
+  await settingsTab.goto(base + '/settings#tabs');
+  const toggle = settingsTab.getByRole('switch', { name: '이어보기에 마지막 장면 표시', exact: true });
+  assert.equal(await toggle.getAttribute('aria-checked'), 'true', 'existing profiles default to showing scenes');
+  const setShowResumeScene = async value => {
+    const response = settingsTab.waitForResponse(r => r.url().endsWith('/api/settings') && r.request().method() === 'PATCH');
+    await toggle.click();
+    assert.ok((await response).ok());
+    assert.equal(settings.showResumeScene, value);
+  };
+  await setShowResumeScene(false);
+  await waitForArt(backdrop); // An existing frame is hidden as soon as another tab saves the preference.
   const requests = mediaRequests;
+  await setShowResumeScene(true);
   account = 'other';
   await page.reload();
-  await image.waitFor();
-  assert.equal(await image.getAttribute('src'), picture);
+  await waitForArt(episodeThumb);
   account = 'local';
   progress = { ...progress, position: 8, updatedAt: '2026-11-02T00:00:00.000Z' };
   await page.reload();
-  await image.waitFor();
-  assert.equal(await image.getAttribute('src'), picture);
+  await waitForArt(episodeThumb);
   kind = 'next'; thumb = '/unseen-episode.png';
   await page.reload();
-  await image.waitFor();
-  assert.equal(await image.getAttribute('src'), picture);
+  await waitForArt(backdrop);
   assert.equal(await page.locator('.landscape-card .card-progress').count(), 0);
   assert.equal(mediaRequests, requests);
   assert.equal(count, 3);
-  // Keep an actual player's acknowledged save in flight while a second tab logs out.
+  // Disable in a second tab after the player captured a frame and left, before its progress response arrives.
+  kind = 'resume'; thumb = episodeThumb;
+  await page.reload();
+  await waitForArt(episodeThumb);
+  const playerReady = (tab = page) => tab.waitForFunction(() => {
+    const v = document.querySelector('.player-video');
+    return v && !v.paused && !v.seeking && v.readyState >= 2 && v.currentTime > 1;
+  });
+  const back = () => page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
+  const sceneKey = saved => 'moa.resumeScene:' + JSON.stringify([saved.updatedAt, account, 'viewer', episodeId, saved.position]);
+  await page.locator('.landscape-card .card-frame').click();
+  await playerReady();
+  heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
+  await back();
+  await heldSave.committed.promise;
+  assert.ok(await page.evaluate(() => window.capturedPositions.length > 0));
+  const lateKey = sceneKey(progress);
+  await setShowResumeScene(false);
+  await waitForArt(backdrop);
+  const afterLateSave = page.waitForResponse(r => new URL(r.url()).pathname === '/api/home');
+  heldSave.ack.resolve();
+  await afterLateSave;
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), lateKey), null);
+  heldSave = undefined;
+
+  // A cold player still saves progress while settings are pending, and after the opt-out is confirmed.
+  await page.locator('.landscape-card .card-frame').click();
+  await playerReady();
+  heldSettings = Promise.withResolvers();
+  await page.reload();
+  await playerReady();
+  const pausedSave = page.waitForResponse(r => new URL(r.url()).pathname === '/api/progress' && !isExitSave(r.request()));
+  await page.locator('.player-video').evaluate(v => v.pause());
+  assert.ok((await pausedSave).ok());
+  assert.deepEqual(await page.evaluate(() => window.capturedPositions), []);
+  const settingsLoaded = page.waitForResponse(r => new URL(r.url()).pathname === '/api/settings');
+  heldSettings.resolve();
+  heldSettings = undefined;
+  await settingsLoaded;
+  await page.locator('.player-video').evaluate(v => v.play());
+  await playerReady();
+  const disabledExit = page.waitForResponse(r => isExitSave(r.request()));
+  await back();
+  const disabledProgress = await (await disabledExit).json();
+  await waitForArt(backdrop);
+  assert.deepEqual(await page.evaluate(() => window.capturedPositions), []);
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), sceneKey(disabledProgress)), null);
+  const frame = page.locator('.landscape-card .card-frame');
+  await page.waitForFunction(position => document.querySelector('.landscape-card .card-frame')?.href.endsWith(`?t=${position}&resume=1`), Math.floor(disabledProgress.position));
+  assert.equal(await page.locator('.landscape-card .card-progress').count(), 1);
+  delete card.backdrop;
+  await page.reload();
+  await waitForArt(picture); // With the preference off, a poster outranks even a valid episode thumbnail.
+  kind = 'next';
+  await page.reload();
+  await waitForArt(picture);
+  assert.ok((await frame.getAttribute('href')).endsWith('?t=0'));
+  assert.equal(await page.locator('.landscape-card .card-progress').count(), 0);
+  card.backdrop = backdrop;
   kind = 'resume';
   await page.reload();
+  await waitForArt(backdrop);
+  await setShowResumeScene(true);
+  await waitForArt(episodeThumb);
+  // A new player's first settings read was already on the wire when another tab disabled scenes.
+  const coldTab = await context.newPage();
+  const requested = Promise.withResolvers(), release = Promise.withResolvers();
+  await coldTab.route('**/api/settings', async route => {
+    const snapshot = { ...settings };
+    if (snapshot.showResumeScene) {
+      requested.resolve();
+      await release.promise;
+    }
+    await route.fulfill({ json: snapshot });
+  });
+  // This player loads subtitle preferences only after its full profile settings are available.
+  const coldSettingsApplied = coldTab.waitForResponse(r => r.url().endsWith('/subtitles/preference'));
+  await coldTab.goto(base + '/watch/' + encodeURIComponent(episodeId));
+  await requested.promise;
+  await playerReady(coldTab);
+  await coldTab.evaluate(() => {
+    window.addEventListener('storage', event => {
+      if (event.key === 'moa.showResumeScene:viewer' && event.newValue === 'false') window.receivedOptOut = true;
+    });
+  });
+  await setShowResumeScene(false);
+  await coldTab.waitForFunction(() => window.receivedOptOut);
+  release.resolve();
+  await coldSettingsApplied;
+  const coldPause = coldTab.waitForResponse(r => r.url().endsWith('/api/progress') && !isExitSave(r.request()));
+  await coldTab.locator('.player-video').evaluate(v => v.pause());
+  assert.ok((await coldPause).ok());
+  const coldExit = coldTab.waitForResponse(r => isExitSave(r.request()));
+  await coldTab.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
+  const confirmedColdExit = await coldExit;
+  assert.ok(confirmedColdExit.ok());
+  assert.deepEqual(await coldTab.evaluate(() => window.capturedPositions), [], 'a stale enabled response cannot override a confirmed opt-out');
+  const coldKey = sceneKey(await confirmedColdExit.json());
+  assert.equal(await coldTab.evaluate(key => localStorage.getItem(key), coldKey), null);
+  await coldTab.close();
+  await waitForArt(backdrop);
+  await setShowResumeScene(true);
+  await waitForArt(episodeThumb);
+  await settingsTab.close();
+
+  // Re-enabling restores real, newly saved scene artwork.
+  await frame.click();
+  await playerReady();
+  const enabledExit = page.waitForResponse(r => isExitSave(r.request()));
+  await back();
+  const enabledProgress = await (await enabledExit).json();
+  await page.waitForFunction(key => {
+    const saved = JSON.parse(localStorage.getItem(key) || '{}');
+    return saved.image && document.querySelector('.landscape-card img')?.src === saved.image;
+  }, sceneKey(enabledProgress));
+
+  // Keep an actual player's acknowledged save in flight while a second tab logs out.
   await page.locator('.landscape-card .card-frame').click();
-  await page.waitForFunction(() => { const v = document.querySelector('.player-video'); return v && !v.paused && !v.seeking && v.readyState >= 2; });
+  await playerReady();
   heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
   await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
   await heldSave.committed.promise;
   await image.waitFor();
+  assert.ok(await page.evaluate(() => window.capturedPositions.length > 0));
   assert.ok(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('moa.resumeScene:'))));
   const authTab = await context.newPage();
   const loginHtml = await readFile(new URL('../../../deploy/auth/login.html', import.meta.url), 'utf8');
@@ -192,7 +325,7 @@ try {
   assert.equal(await authTab.evaluate(() => document.cookie.includes('moa_scene_reset=')), false);
   assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
   assert.deepEqual(errors, []);
-  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, native logout and delayed progress after logout.');
+  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, disabling and re-enabling in another tab, pending and stale settings, progress with capture disabled, native logout and delayed progress after logout.');
 } finally {
   await browser.close();
   if (scratch) await rm(scratch, { recursive: true, force: true });

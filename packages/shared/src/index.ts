@@ -470,6 +470,8 @@ export interface Settings {
   navigation?: NavigationTab[];
   /** Show one history entry per title. Does not merge stored episode records. */
   groupHistory: boolean;
+  /** Capture and display stills on Home continue-watching cards for this profile. Defaults to true. */
+  showResumeScene: boolean;
   autoplayNext: boolean;
   /** Seconds before the next episode starts automatically. */
   autoplayDelay: number;

@@ -1,4 +1,4 @@
-import type { ResumeTarget } from '@moa/shared';
+import type { ResumeTarget, Settings } from '@moa/shared';
 
 const PREFIX = 'moa.resumeScene:';
 const LOGOUT = 'moa.resumeSceneLogout';
@@ -37,6 +37,11 @@ function documentLogoutGeneration() {
 const documentGeneration = documentLogoutGeneration();
 function currentDocument() {
   return documentGeneration !== undefined && !pendingLogout() && documentGeneration === localStorage.getItem(LOGOUT);
+}
+
+// Wait for this profile's settings. Older responses without the field use the original enabled behavior.
+export function resumeSceneEnabled(settings?: Pick<Settings, 'showResumeScene'>) {
+  return Boolean(settings && settings.showResumeScene !== false);
 }
 
 export interface ResumeScene { position: number; image: string }

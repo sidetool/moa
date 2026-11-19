@@ -1,6 +1,6 @@
 import { catalogReadOptions } from './catalog-refresh';
 import { deviceSettingsPatch, loadDevicePrefs, saveDevicePrefs, useDevicePrefs, useTitleGrouping } from "../lib/device-prefs";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { Account, HomeResponse, LibraryFolder, MediaCard, MediaDetail, MediaType, Page, Profile, ScanStatus, SearchGroup, Settings, HistoryEntry } from "@moa/shared";
 import { api, ApiError, currentProfileId } from "../lib/api";
 
@@ -16,7 +16,7 @@ export const keys = {
   history: ["history"] as const,
   folders: ["library-folders"] as const,
   scan: ["library-scan"] as const,
-  settings: ["settings"] as const
+  settings: (profile = currentProfileId()) => ["settings", profile] as const
 };
 
 export const useMe = () => useQuery({ queryKey: keys.me, queryFn: () => api<Account>('/me'), retry: false });
@@ -77,8 +77,9 @@ export const useScanStatus = (poll: boolean) =>
   useQuery({ queryKey: keys.scan, queryFn: () => api<ScanStatus>("/library/status"), refetchInterval: poll ? 1500 : false });
 export const useSettings = () => {
   const device = useDevicePrefs();
-  const result = useQuery({ queryKey: keys.settings, queryFn: async ({ signal }) => {
-    const profile = currentProfileId();
+  const profile = currentProfileId();
+  const result = useQuery({ queryKey: keys.settings(profile), refetchOnWindowFocus: true, queryFn: async ({ signal }) => {
+    if (currentProfileId() !== profile) throw new DOMException('Profile changed', 'AbortError');
     const settings = await api<Settings>('/settings', { signal });
     if (settings && currentProfileId() === profile) await loadDevicePrefs(settings, signal);
     return settings;
@@ -89,6 +90,23 @@ export const useSettings = () => {
   } as Settings : result.data };
 };
 
+const scenePreferenceKey = (profile: string) => `moa.showResumeScene:${profile}`;
+
+// Signal a confirmed server change to other tabs, including players paused in the background.
+export function listenForScenePreference(client: QueryClient) {
+  const receive = (event: StorageEvent) => {
+    const profile = currentProfileId();
+    if (!profile || event.key !== scenePreferenceKey(profile) || (event.newValue !== 'true' && event.newValue !== 'false')) return;
+    const key = keys.settings(profile);
+    // Invalidation alone would reuse an in-flight initial GET taken before the change.
+    if (!client.getQueryData(key)) void client.cancelQueries({ queryKey: key });
+    client.setQueryData<Settings>(key, old => old && { ...old, showResumeScene: event.newValue === 'true' });
+    void client.invalidateQueries({ queryKey: key });
+  };
+  window.addEventListener('storage', receive);
+  return () => window.removeEventListener('storage', receive);
+}
+
 const settingsSaves = new Map<string | null, Promise<void>>();
 export function useSaveSettings() {
   const client = useQueryClient();
@@ -98,17 +116,32 @@ export function useSaveSettings() {
     patch = Object.fromEntries(Object.entries(patch).filter(([key]) => !(key in device)));
     if (!Object.keys(patch).length) return deviceSave;
     const profile = currentProfileId();
-    client.setQueryData<Settings>(keys.settings, old => old ? { ...old, ...patch } : old);
+    const key = keys.settings(profile);
+    // Capture is permitted only by a saved preference. Other fields retain their optimistic UI.
+    const { showResumeScene, ...optimistic } = patch;
+    if (Object.keys(optimistic).length) client.setQueryData<Settings>(key, old => old ? { ...old, ...optimistic } : old);
     const save = (settingsSaves.get(profile) ?? Promise.resolve()).catch(() => {}).then(async () => {
       if (currentProfileId() !== profile) return;
       const saved = await api<Settings>('/settings', { method: 'PATCH', body: patch, keepalive: true });
-      if (settingsSaves.get(profile) === save && currentProfileId() === profile) client.setQueryData(keys.settings, saved);
+      // An unrelated response may predate another tab's change. Apply only fields this PATCH saved.
+      if (settingsSaves.get(profile) === save) {
+        const confirmed = Object.fromEntries(Object.entries(saved).filter(([name]) => Object.hasOwn(patch, name)));
+        client.setQueryData<Settings>(key, old => old ? { ...old, ...confirmed } : saved);
+      } else if (showResumeScene !== undefined) {
+        client.setQueryData<Settings>(key, old => old && { ...old, showResumeScene: saved.showResumeScene });
+      }
+      if (showResumeScene !== undefined && profile) {
+        try {
+          localStorage.setItem(scenePreferenceKey(profile), String(saved.showResumeScene));
+          localStorage.removeItem(scenePreferenceKey(profile));
+        } catch { /* Other tabs can still refetch when focused. */ }
+      }
     });
     settingsSaves.set(profile, save);
     void save.finally(() => {
       if (settingsSaves.get(profile) !== save) return;
       settingsSaves.delete(profile);
-      if (currentProfileId() === profile) void client.invalidateQueries({ queryKey: keys.settings });
+      if (currentProfileId() === profile) void client.invalidateQueries({ queryKey: key });
     }).catch(() => {});
     return Promise.all([save, deviceSave]).then(() => {});
   };

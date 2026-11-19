@@ -98,6 +98,12 @@ try {
     await resumeArt.locator('img').evaluate(img => img.decode());
     assert.equal(await resumeArt.locator('img').evaluate(img => img.naturalWidth), 320);
     assert.equal(await resumeArt.locator('video').count(), 0);
+    const sceneToggle = resumeArt.getByRole('switch', { name: '이어보기에 마지막 장면 표시' });
+    assert.equal(await sceneToggle.getAttribute('aria-checked'), 'true');
+    await sceneToggle.click();
+    await resumeArt.locator('img').waitFor({ state: 'detached' });
+    await sceneToggle.click();
+    await resumeArt.locator('img').waitFor();
     await resumeArt.getByRole('link', { name: /화면 테스트 영상/ }).click();
     await resumeArt.getByText('1화 11분부터 재생', { exact: true }).waitFor();
     const quality = page.locator('[data-preview="player-quality"]');

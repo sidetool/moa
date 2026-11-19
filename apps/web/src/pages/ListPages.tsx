@@ -138,7 +138,7 @@ export function HistoryPage() {
     try {
       const saved = await api<Settings>("/settings", { method: "PATCH", body: { groupHistory } });
       if (currentProfileId() !== profile) return;
-      client.setQueryData(keys.settings, saved);
+      client.setQueryData<Settings>(keys.settings(profile), old => old ? { ...old, groupHistory: saved.groupHistory } : saved);
       await client.resetQueries({ queryKey: [...keys.history, profile] });
     } catch { setError("설정을 저장하지 못했어요."); }
     finally { setSaving(false); }

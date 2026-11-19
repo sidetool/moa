@@ -4,6 +4,7 @@ import { SubtitleMemorySettings } from '../features/settings/SubtitleMemorySetti
 import { WebsitePlugins } from '../features/plugins/WebsitePlugins';
 import { SubtitleLibrarySettings } from '../features/settings/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
+import { ResumeSceneSetting } from "../features/settings/ResumeSceneSetting";
 import { NavigationSettings } from "../features/settings/NavigationSettings";
 import { useDevicePrefs, setDevicePref, saveDevicePrefs, type DevicePrefs } from "../lib/device-prefs";
 import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, Users, X } from "lucide-react";
@@ -287,7 +288,12 @@ export function SettingsPage() {
         {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />)}
       </div></section>}
       {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /><ComponentSettings /></>}<AboutPage embedded /></>}
-      {category === "tabs" && <NavigationSettings />}
+      {category === "tabs" && <>
+        <section className="settings-group">
+          <ResumeSceneSetting checked={s.showResumeScene !== false} save={showResumeScene => saveSettings({ showResumeScene })} />
+        </section>
+        <NavigationSettings />
+      </>}
       {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} anilist={s.anilistRecommendationsEnabled === true}
         onChange={patch => void save(patch).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
       {admin && category === "sources" && <SourcesPage embedded />}

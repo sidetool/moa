@@ -52,17 +52,17 @@ export function RankCard({ card, rank, eager }: { card: MediaCard; rank: number;
 }
 
 /** 16:9 card for "continue watching": one tap resumes, or starts the next episode after a finished one. */
-export function LandscapeCard({ card, eager, resumeAccountId }: { card: MediaCard; eager?: boolean; resumeAccountId?: string }) {
+export function LandscapeCard({ card, eager, resumeAccountId, showResumeScene = true }: { card: MediaCard; eager?: boolean; resumeAccountId?: string; showResumeScene?: boolean }) {
   const profile = currentProfileId();
-  const scene = useSyncExternalStore(subscribeResumeScenes, () => readResumeScene(resumeAccountId, profile, card.resume));
-  const thumb = card.resume?.kind === "resume" ? card.resume.thumb : undefined;
+  const scene = useSyncExternalStore(subscribeResumeScenes, () => showResumeScene ? readResumeScene(resumeAccountId, profile, card.resume) : undefined);
+  const thumb = showResumeScene && card.resume?.kind === "resume" ? card.resume.thumb : undefined;
   const navigate = useNavigate();
   const resume = resumeTarget(card);
   const action = resume?.kind === "next" ? "다음 회차 보기" : resume ? "이어보기" : "";
   return (
     <div className={cx("card landscape-card", card.badge === "LIVE" && "live-card")}>
       <Link to={resume?.path ?? `/title/${encodeURIComponent(card.id)}`} className="card-frame" aria-label={[card.title, resume?.label, action].filter(Boolean).join(" · ")}>
-        <Artwork src={scene} fallbackSrc={[thumb, card.backdrop, card.poster]} title={card.title} ratio="landscape" width={640} eager={eager} />
+        <Artwork src={scene} fallbackSrc={[thumb, card.backdrop, card.poster]} labelFallback={showResumeScene || !card.backdrop} title={card.title} ratio="landscape" width={640} eager={eager} />
         {card.badge === "LIVE" && <span className="card-badge">LIVE</span>}
         <span className="card-play" aria-hidden="true"><Play size={22} fill="currentColor" /></span>
         {/* The server sends progress only for real unfinished viewing, never for an unseen next episode. */}
