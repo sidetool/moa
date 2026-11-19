@@ -187,9 +187,10 @@ export async function invokeMangayomi(input: MangayomiInvocation, transport = co
   if (!value || !value.changes || typeof value.changes !== 'object') throw new Error('invalid_source_result');
   // An extension may swallow a request failure and return an empty catalogue.
   // Report the safe host error so callers don't cache a failure as “no works”.
-  const result = value.result as { list?: unknown[] } | unknown[] | undefined;
+  const result = value.result as { list?: unknown[]; chapters?: unknown[] } | unknown[] | undefined;
   if (lastTransportFailure && (
     input.action === 'list' && result && !Array.isArray(result) && Array.isArray(result.list) && result.list.length === 0 ||
+    input.action === 'detail' && result && !Array.isArray(result) && Array.isArray(result.chapters) && result.chapters.length === 0 ||
     input.action === 'videos' && Array.isArray(result) && result.length === 0
   )) throw new Error(lastTransportFailure);
   validatePreferenceState(value.changes);
