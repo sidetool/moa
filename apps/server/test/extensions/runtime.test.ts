@@ -129,11 +129,11 @@ test('all Client methods preserve direct and wrapped headers, raw bodies and nul
   assert.equal(requests[12].body,'null');
 });
 
-test('swallowed transport/HTTP errors cannot become cacheable empty lists or videos; successful fallbacks remain usable', async () => {
+test('swallowed transport/HTTP errors cannot become cacheable empty catalogs, chapters or videos; successful fallbacks remain usable', async () => {
   const base={entry,signal:AbortSignal.timeout(15000)};
-  const fixture=(body:string)=>`class DefaultExtension extends MProvider {async getPopular(){${body};return {list:[],hasNextPage:false};} async getVideoList(){try{await new Client().get('https://example.com')}catch{};return [];}}`;
+  const fixture=(body:string)=>`class DefaultExtension extends MProvider {async getPopular(){${body};return {list:[],hasNextPage:false};} async getDetail(){${body};return {chapters:[]};} async getVideoList(){${body};return [];}}`;
   const failure=async()=>{throw new Error('source_http_failed');};
-  for(const action of ['list','videos'])await assert.rejects(invokeMangayomi({...base,source:fixture("try{await new Client().get('https://example.com')}catch{}"),action},failure),/source_http_failed/);
+  for(const action of ['list','detail','videos'])await assert.rejects(invokeMangayomi({...base,source:fixture("try{await new Client().get('https://example.com')}catch{}"),action},failure),/source_http_failed/);
   const response=(statusCode=200)=>({bytes:Buffer.from('{}'),headers:{},statusCode,contentType:'application/json'});
   await assert.rejects(invokeMangayomi({...base,source:fixture("await new Client().get('https://example.com')"),action:'list'},async()=>response(503)),/source_http_failed/);
   const empty=await invokeMangayomi({...base,source:fixture("await new Client().get('https://example.com')"),action:'list'},async()=>response());

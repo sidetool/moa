@@ -7,6 +7,8 @@ type PresentationVideo = HTMLVideoElement & {
   webkitCurrentPlaybackTargetIsWireless?: boolean;
 };
 
+const IDLE_RELEASE_MS = 3000;
+
 function sameOriginMedia(src: string) {
   if (!src) return false;
   try {
@@ -27,6 +29,7 @@ export function attachAnime4k(video: PresentationVideo, sessionUrl: string, onSt
   let create: typeof createRenderer | undefined;
   let loading = false;
   let frame: number | null = null;
+  let idleRelease: number | undefined;
   let previous: VideoFrameCallbackMetadata | undefined;
   let previousDropped = 0;
   let slowFrames = 0;
@@ -50,28 +53,46 @@ export function attachAnime4k(video: PresentationVideo, sessionUrl: string, onSt
     if (video.srcObject || video.mediaKeys || (source && !readable)) return 'media';
     if (video.videoWidth > 1920 || video.videoHeight > 1080) return 'resolution';
     if (video.ended) return 'ended';
+    if (Array.from(video.textTracks).some(track => track.mode === 'showing')) return 'captions';
     if (video.seeking) return 'seeking';
     if (!source || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return 'waiting';
     if (video.paused) return 'paused';
-    if (Array.from(video.textTracks).some(track => track.mode === 'showing')) return 'captions';
   }
 
-  function suspend() {
-    if (frame !== null) video.cancelVideoFrameCallback(frame);
-    frame = null;
+  function cancelIdleRelease() {
+    if (idleRelease === undefined) return;
+    window.clearTimeout(idleRelease);
+    idleRelease = undefined;
+  }
+  function releaseRenderer() {
+    cancelIdleRelease();
     previous = undefined;
     slowFrames = 0;
-    if (renderer) renderer.canvas.hidden = true;
-  }
-  function release() {
-    suspend();
     const active = renderer;
     renderer = undefined;
     active?.destroy();
   }
+  function suspend(reason: Anime4kStatus) {
+    if (frame !== null) video.cancelVideoFrameCallback(frame);
+    frame = null;
+    previous = undefined;
+    slowFrames = 0;
+    if (renderer) {
+      if (reason === 'paused' || reason === 'seeking' || reason === 'waiting') {
+        renderer.canvas.hidden = true;
+        // Keep allocations for brief interruptions. Only a delivered frame ends the idle period.
+        idleRelease ??= window.setTimeout(releaseRenderer, IDLE_RELEASE_MS);
+      } else {
+        releaseRenderer();
+      }
+    }
+    report(reason);
+  }
   function stop() {
     listeners.abort();
-    release();
+    if (frame !== null) video.cancelVideoFrameCallback(frame);
+    frame = null;
+    releaseRenderer();
   }
   function fail(reason: Anime4kFailure) {
     if (listeners.signal.aborted) return;
@@ -82,10 +103,11 @@ export function attachAnime4k(video: PresentationVideo, sessionUrl: string, onSt
     frame = null;
     if (listeners.signal.aborted) return;
     const reason = fallback();
-    if (reason) { suspend(); report(reason); return; }
+    if (reason) { suspend(reason); return; }
     if (!create) return;
     try {
-      if (renderer && (renderer.width !== video.videoWidth || renderer.height !== video.videoHeight)) release();
+      cancelIdleRelease();
+      if (renderer && (renderer.width !== video.videoWidth || renderer.height !== video.videoHeight)) releaseRenderer();
       renderer ??= create(video, () => fail('filterError'));
       if (!renderer) { fail('unsupported'); return; }
       const count = previous ? Math.max(1, metadata.presentedFrames - previous.presentedFrames) : 1;
@@ -109,8 +131,8 @@ export function attachAnime4k(video: PresentationVideo, sessionUrl: string, onSt
   function refresh() {
     if (listeners.signal.aborted) return;
     const reason = fallback();
-    if (reason) { suspend(); report(reason); return; }
-    if (renderer && (renderer.width !== video.videoWidth || renderer.height !== video.videoHeight)) release();
+    if (reason) { suspend(reason); return; }
+    if (renderer && (renderer.width !== video.videoWidth || renderer.height !== video.videoHeight)) releaseRenderer();
     if (!renderer || renderer.canvas.hidden) report('preparing');
     if (create) {
       if (frame === null) frame = video.requestVideoFrameCallback(draw);
@@ -128,10 +150,10 @@ export function attachAnime4k(video: PresentationVideo, sessionUrl: string, onSt
   const suspendEvents = { pause: 'paused', seeking: 'seeking', waiting: 'waiting', ended: 'ended',
     enterpictureinpicture: 'pip', webkitbeginfullscreen: 'fullscreen' } as const;
   for (const [event, reason] of Object.entries(suspendEvents)) {
-    video.addEventListener(event, () => { suspend(); report(fallback() ?? reason); }, options);
+    video.addEventListener(event, () => suspend(fallback() ?? reason), options);
   }
   for (const event of ['loadstart', 'emptied', 'error']) {
-    video.addEventListener(event, () => { release(); report(event === 'error' ? 'videoError' : 'waiting'); }, options);
+    video.addEventListener(event, () => { releaseRenderer(); suspend(event === 'error' ? 'videoError' : 'waiting'); }, options);
   }
   for (const event of ['change', 'addtrack', 'removetrack']) video.textTracks.addEventListener(event, refresh, options);
   for (const event of ['connecting', 'connect', 'disconnect']) video.remote?.addEventListener(event, refresh, options);

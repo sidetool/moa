@@ -66,10 +66,10 @@ export function MyListPage() {
   const list = useWatchlist(sort);
   const client = useQueryClient();
   const profile = currentProfileId();
-  const revision = useRef<{ profile: string | null; value: number } | undefined>(undefined);
+  const revision = useRef<{ profile: string | null; value: string } | undefined>(undefined);
   const refresh = useQuery({
     queryKey: ['watchlist-refresh', profile],
-    queryFn: ({ signal }) => api<{ running: boolean; revision: number }>('/watchlist/refresh-status', { signal }),
+    queryFn: ({ signal }) => api<{ running: boolean; revision: string }>('/watchlist/refresh-status', { signal }),
     refetchOnMount: 'always',
     refetchInterval: query => query.state.data?.running ? 2000 : 60_000,
     retry: false,
@@ -78,9 +78,9 @@ export function MyListPage() {
     if (!refresh.data || profile !== currentProfileId()) return;
     const previous = revision.current;
     revision.current = { profile, value: refresh.data.revision };
-    const lastSeen = previous?.profile === profile ? previous.value : 0;
+    const lastSeen = previous?.profile === profile ? previous.value : undefined;
     if (lastSeen !== refresh.data.revision) {
-      // Even the first status response can describe a batch that finished after
+      // Even the first status response can describe an edition that changed after
       // the list request began. Replace any in-flight read of that older snapshot.
       const scope = { queryKey: [...keys.watchlist, profile] };
       void client.cancelQueries(scope).then(() => {

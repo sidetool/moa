@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer, searchForWorkspaceRoot } from 'vite';
+import { verifyAnime4kResources } from './verify-anime4k-resources.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 const dir = await mkdtemp(join(process.env.MOA_VERIFY_DIR || tmpdir(), 'anime4k-'));
@@ -322,6 +323,7 @@ try {
   assert.equal(sessions, 2);
   await openPanel('뒤로');
   await page.waitForURL(base + '/title/m');
+  await verifyAnime4kResources(context, base);
   await page.locator('.title-page .title-hero-copy').getByRole('heading', { name: 'Filter test' }).waitFor();
   assert.equal(await video.count(), 0);
   assert.equal(await layer.count(), 0);

@@ -57,10 +57,13 @@ export class DetailPolicy {
     const ids = JSON.stringify(sorted.map(episode => episode.id));
     if (!old?.episode_ids || changed) this.recordWithdrawals(id, ids);
     this.db.run('INSERT OR REPLACE INTO source_detail_observations(media_id,fingerprint,episode_count,last_episode_id,changed_at,observed_at,completed,reset_until,episode_ids,episodes_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id, fingerprint,
-      sorted.length, sorted.at(-1)?.id ?? null, !old || changed ? now : old.changed_at, now, Number(completed), changed ? now + 21*DAY : old?.reset_until ?? 0, ids, added ? now : old?.episodes_updated_at ?? null);
+      sorted.length, sorted.at(-1)?.id ?? null, !old?.observed_at || changed ? now : old.changed_at, now, Number(completed), changed ? now + 21*DAY : old?.reset_until ?? 0, ids, added ? now : old?.episodes_updated_at ?? null);
   }
   invalidateSource(source: string) {
-    this.db.run('DELETE FROM source_detail_observations WHERE media_id IN (SELECT media_id FROM source_media WHERE source_id=?)', source);
+    // Restart completion evidence on the next successful read. The last complete
+    // listing and its addition timestamp belong to the catalog across cache resets.
+    this.db.run(`UPDATE source_detail_observations SET observed_at=0,completed=0,reset_until=0
+      WHERE media_id IN (SELECT media_id FROM source_media WHERE source_id=?)`, source);
   }
   policy(id: string) {
     const now = this.clock(), observation = this.db.get('SELECT * FROM source_detail_observations WHERE media_id=?', id);

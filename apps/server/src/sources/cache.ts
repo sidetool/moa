@@ -2,7 +2,7 @@ import { CacheStats, type CacheOperation } from '../system/cache-stats.js';
 import { Store } from '../db.js';
 import { ApiFailure } from '../util.js';
 
-export interface ReadPolicy { freshMs: number; staleMs: number; empty?: (value: unknown) => boolean; force?: boolean; background?: boolean; fallback?: boolean; cache?: boolean; operation?: CacheOperation }
+export interface ReadPolicy { freshMs: number; staleMs: number; empty?: (value: unknown) => boolean; emptyStaleMs?: number; force?: boolean; background?: boolean; fallback?: boolean; cache?: boolean; operation?: CacheOperation }
 export const SOURCE_CACHE_LIMITS = { maxEntries: 10_000, maxBytes: 128 * 1024 * 1024 } as const;
 interface Entry<T> { value:T; fetched:number; retry:number; touched:number }
 /** Shared source facts only. Profile responses, progress and playback URLs never enter this cache. */
@@ -61,7 +61,7 @@ export class SourceReadCache {
     const cached=policy.cache===false?undefined:this.entry<T>(source,key),age=cached?this.clock()-cached.fetched:Infinity;
     const negative = cached && policy.empty?.(cached.value);
     const freshMs = negative ? Math.min(policy.freshMs,60_000) : policy.freshMs;
-    const usable=!!cached && age>=0 && age<=(negative?Math.min(policy.staleMs,5*60_000):policy.staleMs);
+    const usable=!!cached && age>=0 && age<=(negative?Math.min(policy.staleMs,policy.emptyStaleMs ?? 5*60_000):policy.staleMs);
     const operation=policy.operation ?? (key.startsWith('detail:')?'detail':key==='schema'?'filters':'list');
     if(!policy.force && usable && age<=freshMs){
       this.stats?.cache(source,operation,'hit');

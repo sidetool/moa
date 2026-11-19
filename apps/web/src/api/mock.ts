@@ -539,7 +539,7 @@ export function installMockApi() {
       });
       return json({ query, groups });
     }
-    if (path === "/watchlist/refresh-status") return json({ running: false, revision: 0 });
+    if (path === "/watchlist/refresh-status") return json({ running: false, revision: "mock-watchlist" });
     if (path === "/watchlist") {
       const saved = [...watchlist].reverse().map(id => byId.get(id)!).filter(Boolean).map(card => {
         if (card.type === "movie" || card.provider.kind === "local") return card;

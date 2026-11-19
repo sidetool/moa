@@ -664,8 +664,12 @@ export class Sources {
     const cacheKey='detail:'+id;
     // Reuse successful details from before the persistent shared cache migration.
     const hasEpisodes = Boolean(this.db.get('SELECT 1 FROM available_episodes WHERE media_id=? LIMIT 1', id));
-    if(mapping.detail_at>0)this.reads.prime(mapping.source_id,cacheKey,hasEpisodes,mapping.detail_at);
-    return this.reads.read(mapping.source_id,cacheKey,{freshMs:this.detailFreshMs(id),staleMs:Infinity,empty:value=>value===false || value===true && !hasEpisodes,force},(current,background)=>this.serial(mapping.source_id, async () => {
+    // After an administrative reset, a complete catalog snapshot (including [])
+    // can still serve readers while the source revalidates it in the background.
+    if (mapping.detail_at > 0 || this.db.get('SELECT 1 FROM source_detail_observations WHERE media_id=? AND episode_ids IS NOT NULL', id)) {
+      this.reads.prime(mapping.source_id, cacheKey, hasEpisodes, mapping.detail_at);
+    }
+    return this.reads.read(mapping.source_id,cacheKey,{freshMs:this.detailFreshMs(id),staleMs:Infinity,emptyStaleMs:Infinity,empty:value=>value===false || value===true && !hasEpisodes,force},(current,background)=>this.serial(mapping.source_id, async () => {
       current();const row = this.row(mapping.source_id);
       const entry = JSON.parse(row.installed_entry || row.entry);
       const title=this.db.get('SELECT title FROM media WHERE id=?',id)?.title||'';
@@ -673,9 +677,12 @@ export class Sources {
       const navigation=await this.navigationCall(mapping.source_id,'detail',currentUrl,{title});
       const raw = navigation.result as SourceItem;
       current();this.row(mapping.source_id);
-      if (!raw || !Array.isArray(raw.chapters)) throw new ApiFailure(502, 'source-invalid-response');
-      let chapters = raw.chapters.slice(0, 10_000).filter(e => e && text(e.url, 16_384));
-      if (raw.chapters.length && !chapters.length) throw new ApiFailure(502, 'source-invalid-response');
+      // Only a complete listing can withdraw previously playable episodes.
+      if (!Array.isArray(raw?.chapters) || raw.chapters.length > 10_000) throw new ApiFailure(502, 'source-invalid-response');
+      let chapters = raw.chapters;
+      for (const chapter of chapters) {
+        if (typeof chapter?.url !== 'string' || !chapter.url.trim() || chapter.url.length > 16_384) throw new ApiFailure(502, 'source-invalid-response');
+      }
       if (JSON.parse(row.installed_entry || row.entry)?.format === 'aniyomi-apk' && row.type === 'movie') {
         // Movie entries are often trailers plus the feature, not chronological episodes.
         const priority = (name:string) => /본편|full movie/i.test(name) ? 0 : /예고|티저|티져|trailer|teaser/i.test(name) ? 2 : 1;
