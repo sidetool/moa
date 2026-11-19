@@ -33,6 +33,7 @@ try {
   const picture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aakMAAAAASUVORK5CYII=';
   const card = { id: 'representative', title: '합성 시리즈', type: 'series', provider: { id: 'local', kind: 'local', name: '로컬' }, poster: picture };
   let account = 'local', count = 0, mediaRequests = 0, revision = 0, kind = 'resume', thumb = picture;
+  let heldSave;
   let progress = { position: 28, duration: 210, completed: false, updatedAt: '2026-10-01T00:00:00.000Z' };
   await page.route('**/fixture/video.mp4', route => {
     mediaRequests++;
@@ -52,7 +53,12 @@ try {
       progress = { duration, position, completed: false, updatedAt: new Date(Date.UTC(2026, 10, 1) + ++revision).toISOString() };
       // Another Home read can observe the committed revision before this HTTP acknowledgement arrives.
       const saved = { ...progress };
-      await new Promise(resolve => setTimeout(resolve, 750));
+      if (heldSave) {
+        heldSave.committed.resolve();
+        await heldSave.ack.promise;
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 750));
+      }
       return route.fulfill({ json: saved });
     }
     if (url === '/api/me') return route.fulfill({ json: { id: account, role: 'admin', permissions: [] } });
@@ -124,8 +130,57 @@ try {
   assert.equal(await page.locator('.landscape-card .card-progress').count(), 0);
   assert.equal(mediaRequests, requests);
   assert.equal(count, 3);
+  // Keep an actual player's acknowledged save in flight while a second tab logs out.
+  kind = 'resume';
+  await page.reload();
+  await page.locator('.landscape-card .card-frame').click();
+  await page.waitForFunction(() => { const v = document.querySelector('.player-video'); return v && !v.paused && !v.seeking && v.readyState >= 2; });
+  heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
+  const ackResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/progress');
+  await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
+  await heldSave.committed.promise;
+  assert.ok(await page.evaluate(() => Object.keys(localStorage).some(key => key.startsWith('moa.resumeScene:'))));
+  const authTab = await context.newPage();
+  const loginHtml = await readFile(new URL('../../../deploy/auth/login.html', import.meta.url), 'utf8');
+  const loginScript = await readFile(new URL('../../../deploy/auth/login.js', import.meta.url));
+  const resetId = 'c39470ac-4232-4be3-ac10-8c3c74ddbd68';
+  await authTab.route('**/__moa/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/__moa/login.js') return route.fulfill({ contentType: 'text/javascript', body: loginScript });
+    if (path === '/__moa/login') return route.fulfill({ contentType: 'text/html', body: loginHtml });
+    if (path === '/__moa/logout') {
+      assert.equal(route.request().method(), 'POST');
+      assert.ok(new URLSearchParams(route.request().postData()).has('csrf'));
+      return route.fulfill({ status: 303, headers: { location: '/__moa/login', 'set-cookie': `moa_scene_reset=${resetId}; Path=/; SameSite=Lax` } });
+    }
+    return route.fulfill({ status: 204 });
+  });
+  await authTab.goto(base + '/__moa/login');
+  const scenes = () => authTab.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('moa.resumeScene:')).length);
+  assert.ok(await scenes(), 'visiting the login page preserves cached frames');
+  await authTab.getByRole('button', { name: '이 브라우저에서 로그아웃' }).click();
+  await authTab.waitForFunction(id => localStorage.getItem('moa.resumeSceneLogout') === id, resetId);
+  assert.equal(await scenes(), 0);
+  assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
+  const refreshedHome = page.waitForResponse(response => new URL(response.url()).pathname === '/api/home');
+  heldSave.ack.resolve();
+  await ackResponse;
+  await refreshedHome; // The progress acknowledgement handler, including any attempted write, has run.
+  assert.equal(await scenes(), 0, 'the old player cannot recreate frames after logout');
+
+  // If scripts were disabled throughout the native logout/login, the next app load
+  // receives the uncleared marker even when it never visited the scripted login form.
+  await authTab.evaluate(() => {
+    localStorage.setItem('moa.resumeScene:old', 'previous');
+    document.cookie = 'moa_scene_reset=9769a57d-dd70-4601-96c7-13fbd53dadfe; Path=/';
+  });
+  await page.reload();
+  await image.waitFor();
+  assert.equal(await scenes(), 0);
+  assert.equal(await authTab.evaluate(() => document.cookie.includes('moa_scene_reset=')), false);
+  assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
   assert.deepEqual(errors, []);
-  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode.');
+  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, native logout and delayed progress after logout.');
 } finally {
   await browser.close();
   if (scratch) await rm(scratch, { recursive: true, force: true });

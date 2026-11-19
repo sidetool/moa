@@ -314,7 +314,9 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
         if (!validCsrf(req, form)) return send(res, 403, '로그인 화면을 다시 열어 주세요.');
         const current = session(req);
         if (current) database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(current.token_hash);
-        return redirect(res, `${PREFIX}login`, { 'Set-Cookie': [cookie(cookieName('session'), '', 0), cookie(cookieName('csrf'), '', 0)] });
+        // The next script-enabled auth page or app removes cached video frames, even after a plain HTML logout.
+        const reset = `moa_scene_reset=${randomUUID()}; Path=/; SameSite=Lax; Max-Age=31536000${isSecure() ? '; Secure' : ''}`;
+        return redirect(res, `${PREFIX}login`, { 'Set-Cookie': [cookie(cookieName('session'), '', 0), cookie(cookieName('csrf'), '', 0), reset] });
       }
       return send(res, 404, '페이지를 찾을 수 없습니다.');
     } catch (error) {

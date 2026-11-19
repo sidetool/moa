@@ -3,7 +3,7 @@ import { useTitleGrouping } from '../../lib/device-prefs';
 import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
-import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, VideoSource } from '@moa/shared';
+import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, SearchGroup, VideoSource } from '@moa/shared';
 import { api, currentProfileId } from '../../lib/api';
 import { categorySelection, sourcePage, sourceUrl } from '../sources/source-browse';
 import { Row, RowSkeleton } from '../../components/Row';
@@ -178,7 +178,7 @@ function useSearchSlots(cards: MediaCard[], scope: string) {
   const used = new Set<string>();
   const identities = new Set<string>();
   const rendered = new Map<string, MediaCard>();
-  for (const card of byFranchise(cards)) {
+  for (const card of cards) {
     const id = card.groupId ?? card.id;
     if (identities.has(id)) continue;
     identities.add(id);
@@ -211,14 +211,23 @@ function useSearchSlots(cards: MediaCard[], scope: string) {
   return slots.flatMap(slot => rendered.has(slot.key) ? [{ key: slot.key, card: rendered.get(slot.key)! }] : []);
 }
 
-export function GroupedSearch({ sources, query, local, pending = false }: { sources: VideoSource[]; query: string; local: MediaCard[]; pending?: boolean }) {
+export function GroupedSearch({ sources, query, local, pending = false }: { sources: VideoSource[]; query: string; local: SearchGroup['items']; pending?: boolean }) {
   const location = useLocation();
   const scope = JSON.stringify([currentProfileId(), query, sources.map(s => s.id).sort()]);
   const pages = useQueries({ queries: sources.map(s => ({ ...catalogReadOptions, queryKey: ['source-page', s.id, 'search', query, currentProfileId()], queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(s.id, 'search', query, 1, undefined, signal), staleTime: 60_000, retry: false })) });
-  const all = [...pages.flatMap(p => p.data?.items || []), ...local], grouped = useGroupedCards(all, query, scope);
+  const sourceCards = pages.flatMap(p => p.data?.items || []);
+  const all = [...sourceCards, ...local], grouped = useGroupedCards(all, query, scope);
   const langs = useMemo(() => new Map(sources.map(s => [s.id, s.lang])), [sources]);
   const cards = (!grouped.groupingEnabled || grouped.isError ? all : all.length ? grouped.data || [] : []).map(card => withLang(card, langs));
-  const stable = useSearchSlots(cards, `${location.key}:${scope}:${grouped.groupingEnabled}`);
+  // A direct source result or a title-matched edition keeps the whole group in the first tier.
+  const genreOnly = new Set(local.filter(card => card.genreMatch).map(card => card.id));
+  for (const card of sourceCards) genreOnly.delete(card.id);
+  const titles: MediaCard[] = [], genres: MediaCard[] = [];
+  for (const card of cards) {
+    const members = card.groupMemberIds ?? [card.id];
+    (members.every(id => genreOnly.has(id)) ? genres : titles).push(card);
+  }
+  const stable = useSearchSlots([...byFranchise(titles), ...byFranchise(genres)], `${location.key}:${scope}:${grouped.groupingEnabled}`);
   const searching = pending || pages.some(p => p.isPending) || (grouped.groupingEnabled && !!all.length && grouped.isFetching);
   // Sources with nothing to show stay out of the way; pending and failed ones still say so.
   const chips = sources.map((source, i) => ({ source, page: pages[i] })).filter(({ page }) => page.isPending || page.isError || !!page.data?.items.length);

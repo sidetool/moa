@@ -1,9 +1,43 @@
 import type { ResumeTarget } from '@moa/shared';
 
 const PREFIX = 'moa.resumeScene:';
+const LOGOUT = 'moa.resumeSceneLogout';
 const CHANGE = 'moa:resume-scene-changed';
 const MAX_SCENES = 24;
 const MAX_IMAGE_LENGTH = 32 * 1024;
+
+function purgeScenes(generation: string) {
+  try {
+    localStorage.setItem(LOGOUT, generation);
+  } catch (error) {
+    // A full origin store may have no room for its first logout marker.
+    const frame = Object.keys(localStorage).find(name => name.startsWith(PREFIX));
+    if (!frame) throw error;
+    localStorage.removeItem(frame);
+    localStorage.setItem(LOGOUT, generation);
+  }
+  for (const name of Object.keys(localStorage)) if (name.startsWith(PREFIX)) localStorage.removeItem(name);
+}
+
+// deploy/auth/login.js normally consumes the native form logout marker. A browser
+// can also log out and back in with scripts disabled, then open the app directly.
+function pendingLogout() {
+  return document.cookie.match(/(?:^|;\s*)moa_scene_reset=([a-f0-9-]{36})(?:;|$)/)?.[1];
+}
+function documentLogoutGeneration() {
+  try {
+    const reset = pendingLogout();
+    if (reset) {
+      purgeScenes(reset);
+      document.cookie = 'moa_scene_reset=; Path=/; SameSite=Lax; Max-Age=0' + (location.protocol === 'https:' ? '; Secure' : '');
+    }
+    return localStorage.getItem(LOGOUT);
+  } catch { return undefined; }
+}
+const documentGeneration = documentLogoutGeneration();
+function currentDocument() {
+  return documentGeneration !== undefined && !pendingLogout() && documentGeneration === localStorage.getItem(LOGOUT);
+}
 
 export interface ResumeScene { position: number; image: string }
 
@@ -33,6 +67,7 @@ function key(account: string, profile: string, episode: string, updatedAt: strin
 export function storeResumeScene(account: string, profile: string, mediaId: string, episode: string, updatedAt: string, position: number, scene: ResumeScene) {
   if (!updatedAt || scene.position !== position) return;
   try {
+    if (!currentDocument()) return;
     const destination = key(account, profile, episode, updatedAt, position);
     for (const name of Object.keys(localStorage)) {
       if (!name.startsWith(PREFIX) || name === destination) continue;
@@ -43,6 +78,8 @@ export function storeResumeScene(account: string, profile: string, mediaId: stri
       }
     }
     localStorage.setItem(destination, JSON.stringify({ mediaId, image: scene.image }));
+    // A logout in another tab can race this write even within one synchronous task.
+    if (!currentDocument()) { localStorage.removeItem(destination); return; }
     const stored = Object.keys(localStorage).filter(name => name.startsWith(PREFIX)).sort();
     for (const name of stored.slice(0, Math.max(0, stored.length - MAX_SCENES))) localStorage.removeItem(name);
     window.dispatchEvent(new Event(CHANGE));
@@ -51,13 +88,12 @@ export function storeResumeScene(account: string, profile: string, mediaId: stri
 
 export function clearResumeScenes(profile?: string, target?: { episodeId: string } | { mediaId: string }) {
   try {
-    for (const name of Object.keys(localStorage)) {
+    if (!profile) purgeScenes(Date.now().toString(36) + Math.random().toString(36));
+    else for (const name of Object.keys(localStorage)) {
       if (!name.startsWith(PREFIX)) continue;
-      if (profile) {
-        const [, , viewer, episode] = JSON.parse(name.slice(PREFIX.length));
-        if (viewer !== profile) continue;
-        if (target && ('episodeId' in target ? episode !== target.episodeId : JSON.parse(localStorage.getItem(name) || '{}').mediaId !== target.mediaId)) continue;
-      }
+      const [, , viewer, episode] = JSON.parse(name.slice(PREFIX.length));
+      if (viewer !== profile) continue;
+      if (target && ('episodeId' in target ? episode !== target.episodeId : JSON.parse(localStorage.getItem(name) || '{}').mediaId !== target.mediaId)) continue;
       localStorage.removeItem(name);
     }
     window.dispatchEvent(new Event(CHANGE));
@@ -67,6 +103,7 @@ export function clearResumeScenes(profile?: string, target?: { episodeId: string
 export function readResumeScene(account?: string, profile?: string | null, target?: ResumeTarget) {
   if (!account || !profile || target?.kind !== 'resume' || !target.updatedAt || !(target.position > 0)) return;
   try {
+    if (!currentDocument()) return;
     const entry = localStorage.getItem(key(account, profile, target.episodeId, target.updatedAt, target.position));
     if (!entry) return;
     const { image } = JSON.parse(entry);
@@ -77,7 +114,7 @@ export function readResumeScene(account?: string, profile?: string | null, targe
 // Home can receive the new progress revision before the progress POST returns and stores its JPEG.
 export function subscribeResumeScenes(notify: () => void) {
   const changed = (event: StorageEvent) => {
-    if (!event.key || event.key.startsWith(PREFIX)) notify();
+    if (!event.key || event.key === LOGOUT || event.key.startsWith(PREFIX)) notify();
   };
   window.addEventListener(CHANGE, notify);
   window.addEventListener('storage', changed);

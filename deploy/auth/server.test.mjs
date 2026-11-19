@@ -119,8 +119,16 @@ test('login, persistence, renewal, CSRF, expiry, logout and abuse controls', asy
     jar.set('__Host-moa_session', token);
     response = await request('/__moa/account');
     const csrf = (await response.text()).match(/name="csrf" value="([^"]+)"/)[1];
+    assert.ok(response.headers.getSetCookie().every(cookie => !cookie.startsWith('moa_scene_reset=')));
+    response = await request('/__moa/logout', { method: 'POST', form: { csrf: 'invalid' } });
+    assert.equal(response.status, 403);
+    assert.ok(response.headers.getSetCookie().every(cookie => !cookie.startsWith('moa_scene_reset=')));
     response = await request('/__moa/logout', { method: 'POST', form: { csrf } });
     assert.equal(response.status, 303);
+    assert.equal(response.headers.get('location'), '/__moa/login');
+    const sceneReset = response.headers.getSetCookie().find(cookie => cookie.startsWith('moa_scene_reset='));
+    assert.match(sceneReset, /^moa_scene_reset=[a-f0-9-]{36};/);
+    assert.ok(sceneReset.includes('Secure') && !sceneReset.includes('HttpOnly'));
     jar.set('__Host-moa_session', token);
     assert.equal((await request('/__moa/check')).status, 401, 'logout revokes copied cookie too');
     jar.delete('__Host-moa_session');
