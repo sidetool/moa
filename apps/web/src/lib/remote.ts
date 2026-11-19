@@ -59,9 +59,12 @@ function nearest(from: HTMLElement, candidates: HTMLElement[], key: string, loos
   const sign = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
   const ax = (a.left+a.right)/2, ay = (a.top+a.bottom)/2;
   const row = from.closest('.row-track'), card = from.closest('.card');
+  // Settings has two independent vertical lists. Left/right still crosses between them.
+  const settingsColumn = horizontal ? null : from.closest('.settings-panel, .settings-nav');
   const ahead: {el: HTMLElement; gap: number; overlap: number; cost: number}[] = [];
   for (const el of candidates) {
     if (el === from || (horizontal && row && !row.contains(el))) continue;
+    if (settingsColumn && el.closest('.settings-layout') && !settingsColumn.contains(el)) continue;
     // A card's secondary button is only a stop when moving within that card.
     if (el.hasAttribute('data-remote-secondary') && (horizontal || !card?.contains(el))) continue;
     const b = el.getBoundingClientRect(), bx = (b.left+b.right)/2, by = (b.top+b.bottom)/2;

@@ -485,6 +485,7 @@ export interface Settings {
   autoFetchSubtitles: boolean;
   /** Compare dialogue timing before applying a confident constant offset. */
   experimentalSubtitleSync: boolean;
+  experimentalSegmentedSubtitleSync: boolean;
   translationMode: "manual" | "ask" | "auto";
   /** Preferred original when automatic translation is needed. */
   translationSourcePriority: "site" | "jimaku";
@@ -544,9 +545,10 @@ export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | '
   /** null follows the device's mobile/desktop default. */
   shortsScreenFit: boolean | null;
   playerShortcuts: PlayerShortcuts;
+  experimentalAnime4k: boolean;
   fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; holdSpeed: 1.25 | 1.5 | 2 | 2.5 | 3; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: false, subtitleStep: 5 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { experimentalAnime4k: false, playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: false, subtitleStep: 5 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];

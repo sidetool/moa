@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
+import { preferredResolutionIndex } from '../../../packages/shared/src/index.ts';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 
 const source = stripTypeScriptTypes(await readFile(new URL('../src/player/playback/engine.ts', import.meta.url), 'utf8'), { mode: 'transform' });
@@ -34,6 +35,8 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
         setTrackByUrl: async url => { await swapGates?.[url]?.promise; swaps.push(url); }
       };
       this._demandRender = async()=>{};
+      this.frames = [];
+      this.manualRender = async frame => this.frames.push([frame.mediaTime, this.timeOffset]);
       renderers.push(this);
     }
     destroy() {
@@ -42,7 +45,7 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
       return destroyError ? Promise.reject(destroyError) : this.ready;
     }
   }
-  const context = createContext({ setTimeout, clearTimeout, document: {
+  const context = createContext({ performance, setTimeout, clearTimeout, document: {
     createElement() {
       const el = new EventTarget();
       el.track = { mode: 'disabled', cues: null };
@@ -65,9 +68,15 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
       return fontModule;
     }
   });
-  await module.link(() => { throw new Error('Unexpected static import'); });
+  const shared = new SyntheticModule(['preferredResolutionIndex'], function () {
+    this.setExport('preferredResolutionIndex', preferredResolutionIndex);
+  }, { context });
+  await module.link(specifier => {
+    if (specifier === '@moa/shared') return shared;
+    throw new Error('Unexpected static import: ' + specifier);
+  });
   await module.evaluate();
-  return { controller: new module.namespace.SubtitleController(video), tracks, renderers, swaps, styleWrites, eventWrites };
+  return { controller: new module.namespace.SubtitleController(video), video, tracks, renderers, swaps, styleWrites, eventWrites };
 }
 
 test('VTT restores native cue placement after controls lift or custom height is reset', async () => {
@@ -363,4 +372,17 @@ test('queued stale ASS revisions are skipped', async () => {
   gates['/a?revision=2'].resolve();
   await Promise.all([first, skipped, last]);
   assert.deepEqual(swaps, ['/a?revision=2', '/a?revision=4']);
+});
+
+test('a corrected ASS track finishing while paused paints that frame and repaints for manual offsets', async () => {
+  const readyGate = deferred();
+  const { controller, video, renderers } = await harness({ readyGate });
+  Object.assign(video, { paused: true, currentTime: 17.25, videoWidth: 640, videoHeight: 360 });
+  const pending = controller.show(ass);
+  await turn();
+  readyGate.resolve();
+  await pending;
+  controller.setOffset(1.5);
+  controller.setOffset(-.5);
+  assert.deepEqual(renderers[0].frames, [[17.25, -0], [17.25, -1.5], [17.25, .5]]);
 });

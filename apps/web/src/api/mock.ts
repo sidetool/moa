@@ -2,7 +2,7 @@
 // as apps/server so screens can be built before the server lands.
 import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, ShortsItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
-import { TRANSLATION_MAX_KEYS } from "@moa/shared";
+import { DEFAULT_DEVICE_SETTINGS, PROFILE_HEADER, TRANSLATION_MAX_KEYS } from "@moa/shared";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
 const ext: ProviderRef = { id: "ext-demo", name: "데모 확장", kind: "mangayomi-js" };
@@ -43,7 +43,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
+let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */
@@ -774,6 +774,17 @@ export function installMockApi() {
       }
       if (short[2] !== "trailers") { if (method !== "POST") return json({ error: "not-found" }, 404); shortsSeen.add(key); return json({ ok: true }); }
       return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
+    }
+    if (path === "/settings/device") {
+      const headers = new Headers(init?.headers);
+      const key = `moa.mockDevice:${headers.get(PROFILE_HEADER)}:${headers.get("x-moa-device")}`;
+      const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (method === "PATCH" && (!saved || !body.migrate)) {
+        const next = { ...DEFAULT_DEVICE_SETTINGS, ...saved, ...body.settings };
+        sessionStorage.setItem(key, JSON.stringify(next));
+        return json({ settings: next });
+      }
+      return json({ settings: saved });
     }
     if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);

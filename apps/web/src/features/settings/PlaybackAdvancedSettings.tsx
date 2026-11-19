@@ -3,7 +3,7 @@ import { SlidersHorizontal } from 'lucide-react';
 import type { Settings } from '@moa/shared';
 import { useSaveSettings } from '../../api/queries';
 import { currentProfileId } from '../../lib/api';
-import { Button, NumberStepper } from '../../components/ui';
+import { Button, NumberStepper, Toggle } from '../../components/ui';
 import { SettingsDisclosure } from './SettingsDisclosure';
 
 const MAX_LEAD = 600;
@@ -44,6 +44,17 @@ export function PlaybackAdvancedSettings({ settings: s }: { settings: Settings }
       <NextEpisodeLeadSetting key={profile ?? ''} value={saved} autoplay={s.autoplayNext !== false} delay={s.autoplayDelay ?? 5} save={save} />
     </SettingsDisclosure>
   );
+}
+
+export function Anime4kSetting({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+  const hint = useId();
+  return <div className="setting">
+    <div>
+      <b>Anime4K 화질 보정 <span className="status-pill">실험</span></b>
+      <small id={hint}>영상의 가로·세로 해상도를 2배로 높여 선을 또렷하게 보여줘요.</small>
+    </div>
+    <Toggle label="Anime4K 화질 보정" aria-describedby={hint} checked={checked} onChange={onChange} />
+  </div>;
 }
 
 /** Seconds before an unmarked video ends to show the next-episode card. `save` should reject when the value was not kept. */

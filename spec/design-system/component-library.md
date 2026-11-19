@@ -70,7 +70,7 @@ select
 
 ## 토글과 체크박스
 
-`Toggle`은 `checked`, `onChange`, `label`, `disabled`를 받으며 Space·Enter로 바꿉니다. 다중 목록은 기본 `input type=checkbox`를 사용합니다. 체크 모양과 색상으로 상태를 알리고, 작은 체크박스도 넓은 `label` 영역에서 누를 수 있게 합니다.
+`Toggle`은 `checked`, `onChange`, `label`, `disabled`를 받으며 Space·Enter로 바꿉니다. 설명이 있는 스위치는 `aria-describedby`로 설명을 연결할 수 있습니다. 다중 목록은 기본 `input type=checkbox`를 사용합니다. 체크 모양과 색상으로 상태를 알리고, 작은 체크박스도 넓은 `label` 영역에서 누를 수 있게 합니다.
 
 ```preview
 toggle

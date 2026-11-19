@@ -19,6 +19,7 @@ test('device settings persist by account, profile and device with validated valu
     assert.deepEqual((await get()).json(), { settings: null });
     const saved = await patch({ subtitleScale: 127, subtitleShadow: 2.3, autoSkip: true, seekStep: 30 });
     assert.equal(saved.statusCode, 200, saved.body);
+    assert.equal(saved.json().settings.experimentalAnime4k, false);
     assert.equal(saved.json().settings.subtitleScale, 127);
     assert.equal(saved.json().settings.subtitlePreserveAss, false);
     assert.equal(saved.json().settings.shortsScreenFit, null);
@@ -27,7 +28,7 @@ test('device settings persist by account, profile and device with validated valu
     assert.deepEqual((await get({ ...headers, 'x-moa-device': second })).json(), { settings: null });
     assert.deepEqual((await get({ ...headers, 'x-moa-profile': other })).json(), { settings: null });
     const secondHeaders = { ...headers, 'x-moa-device': second };
-    assert.equal((await patch({ shortsScreenFit: false, subtitleStep: 10, holdSpeed: 2.5 }, secondHeaders)).statusCode, 200);
+    assert.equal((await patch({ experimentalAnime4k: true, shortsScreenFit: false, subtitleStep: 10, holdSpeed: 2.5 }, secondHeaders)).statusCode, 200);
     assert.equal((await get()).json().settings.subtitleStep, 5);
     assert.equal((await get()).json().settings.holdSpeed, 2);
     assert.equal((await get()).json().settings.shortsScreenFit, null, 'another device does not change this device');
@@ -35,11 +36,15 @@ test('device settings persist by account, profile and device with validated valu
     assert.equal((await get(secondHeaders)).json().settings.shortsScreenFit, false);
     assert.equal((await server.app.inject({ url: '/api/settings', headers })).json().shortsScreenFit, true, 'device choice does not change shared profile settings');
 
+    assert.equal((await get()).json().settings.experimentalAnime4k, false);
+    assert.equal((await server.app.inject({ url: '/api/settings', headers })).json().experimentalAnime4k, undefined);
+    assert.equal((await server.app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { experimentalAnime4k: true } })).statusCode, 400);
+
     const foreign = { ...headers, 'x-moa-account': 'foreign', 'x-moa-role': 'member' };
     assert.equal((await get(foreign)).statusCode, 401);
     assert.equal((await patch({ subtitleScale: 150 }, foreign)).statusCode, 401);
     assert.equal((await get({ ...headers, 'x-moa-device': '../bad' })).statusCode, 400);
-    for (const settings of [{ subtitleScale: 251 }, { subtitleShadow: -1 }, { seekStep: 3 }, { subtitleStep: 3 }, { subtitleStep: 'invalid' }, { holdSpeed: 4 }, { holdSpeed: 'invalid' }, { autoSkip: 'yes' }, { surprise: true }, { subtitlePreserveAss: 'yes' }, { shortsScreenFit: 'yes' }, { shortsScreenFit: {} }]) assert.equal((await patch(settings)).statusCode, 400, JSON.stringify(settings));
+    for (const settings of [{ experimentalAnime4k: "invalid" }, { experimentalSegmentedSubtitleSync: true }, { subtitleScale: 251 }, { subtitleShadow: -1 }, { seekStep: 3 }, { subtitleStep: 3 }, { subtitleStep: 'invalid' }, { holdSpeed: 4 }, { holdSpeed: 'invalid' }, { autoSkip: 'yes' }, { surprise: true }, { subtitlePreserveAss: 'yes' }, { shortsScreenFit: 'yes' }, { shortsScreenFit: {} }]) assert.equal((await patch(settings)).statusCode, 400, JSON.stringify(settings));
     assert.equal((await patch({ subtitleScale: 80 }, headers, true)).json().settings.subtitleScale, 127);
     assert.equal((await server.app.inject({ url: '/api/settings', headers })).json().subtitleScale, undefined);
     const shortcuts = { ...DEFAULT_PLAYER_SHORTCUTS, playPause: 'KeyP', mute: null, subtitleLater: 'Shift+BracketRight' };
@@ -58,13 +63,16 @@ test('device settings persist by account, profile and device with validated valu
     server = await buildApp({ dataDir: directory, mediaRoot: directory }, false);
     assert.deepEqual((await get()).json(), { settings: { ...saved.json().settings, shortsScreenFit: true, playerShortcuts: shortcuts } });
     assert.equal((await get(secondHeaders)).json().settings.shortsScreenFit, false);
+    assert.equal((await get(secondHeaders)).json().settings.experimentalAnime4k, true);
     assert.equal((await get(secondHeaders)).json().settings.subtitleStep, 10);
     assert.equal((await get(secondHeaders)).json().settings.holdSpeed, 2.5);
     assert.equal((await patch({ shortsScreenFit: null }, secondHeaders)).json().settings.shortsScreenFit, null);
     assert.deepEqual((await patch({ playerShortcuts: DEFAULT_PLAYER_SHORTCUTS })).json().settings.playerShortcuts, DEFAULT_PLAYER_SHORTCUTS);
     // Older device records lack this flag: unrelated edits must preserve their ASS appearance.
     server.db.run('UPDATE device_settings SET value=? WHERE profile_id=? AND device_id=?', JSON.stringify({ subtitleScale: 150, subtitleShadow: 3 }), owner, device);
+    assert.equal((await get()).json().settings.experimentalAnime4k, false);
     const legacy = await patch({ seekStep: 15 });
+    assert.equal(legacy.json().settings.experimentalAnime4k, false);
     assert.equal(legacy.json().settings.subtitlePreserveAss, false);
     assert.equal(legacy.json().settings.subtitleScale, 150);
     assert.equal(legacy.json().settings.subtitleShadow, 3);

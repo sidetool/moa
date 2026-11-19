@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
-      - run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+      - run: sudo apt-get update && sudo apt-get install -y libarchive-tools ffmpeg
       - run: pnpm --filter @moa/server build
       - run: pnpm build:auth:css
       - run: pnpm typecheck
@@ -27,7 +27,8 @@ jobs:
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/components.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
       - name: Device settings, subtitles and sessions
         run: |
-          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts
+          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/enrichment.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts ../web/tests/subtitle-timing.test.ts
+          node --experimental-vm-modules apps/web/scripts/verify-subtitle-controller.mjs
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
         run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
@@ -48,6 +49,13 @@ jobs:
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
         run: node apps/web/tests/automatic-source.browser.mjs
+      - name: Experimental playback filters
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+        run: |
+          node apps/web/scripts/verify-settings-browse.mjs
+          node apps/web/scripts/verify-segmented-subtitles.mjs
+          node apps/web/scripts/verify-anime4k.mjs
       - name: Search results and back navigation
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core

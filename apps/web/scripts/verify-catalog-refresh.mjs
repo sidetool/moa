@@ -15,6 +15,13 @@ function installFixture() {
   const wait = key => new Promise(resolve => { state[key] = resolve; });
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
   function withSeasons(detail) {
+    if (localStorage.getItem('verify.episodeCase') === 'shrink') {
+      const season = detail.seasons[0];
+      const episodes = Array.from({ length: state.refreshes.length ? 60 : 150 }, (_, i) => ({
+        ...season.episodes[0], id: `episode-${i + 1}`, number: i + 1, title: `${i + 1}화`
+      }));
+      return { ...detail, seasons: [{ ...season, episodes }] };
+    }
     if (!state.layoutTitle) return detail;
     const second = { number: 2, title: '시즌 2 · 아주 긴 부제가 붙은 시즌', episodes: detail.seasons[0].episodes.slice(0, 2)
       .map(episode => ({ ...episode, id: `s2-${episode.id}`, season: 2 })) };
@@ -48,7 +55,7 @@ function installFixture() {
           if (episodeCase === 'live') return json({ ...detail, badge: 'LIVE', refreshing: false });
           return json({ ...withSeasons(detail), title: profile === 'p2' ? '가족의 작품' : !state.titleReady ? '저장한 작품' : state.layoutTitle || '확인한 작품',
             ...(state.titleReady && state.layoutLogo ? { logo: state.layoutLogo } : {}),
-            refreshing: profile === 'p1' && !state.titleReady });
+            refreshing: episodeCase !== 'shrink' && profile === 'p1' && !state.titleReady });
         }
         if (url.pathname === '/api/media/demo-1/refresh' && method === 'POST') {
           state.refreshes.push(profile);
@@ -253,6 +260,18 @@ try {
       await screenshot(page, `list-${width}`);
     });
   }
+
+  await scenario('episode-range-shrinks', 390, async page => {
+    await open(page, '/title/demo-1');
+    await page.getByRole('tab', { name: '101–150', exact: true }).click();
+    await page.locator('li[data-episode="episode-101"]').waitFor();
+    await page.getByRole('button', { name: '회차 새로고침', exact: true }).click();
+    await page.waitForFunction(() => typeof window.catalogFixture.finishTitle === 'function');
+    await fixture(page, () => window.catalogFixture.finishTitle());
+    await page.getByRole('tab', { name: '51–60', selected: true, exact: true }).waitFor();
+    assert.equal(await page.locator('.episode-list > li').count(), 10);
+    await page.locator('li[data-episode="episode-60"]').waitFor();
+  }, () => localStorage.setItem('verify.episodeCase', 'shrink'));
 
   await scenario('empty-episodes', 320, async page => {
     await open(page, '/title/demo-1');

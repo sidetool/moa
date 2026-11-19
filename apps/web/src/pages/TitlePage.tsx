@@ -74,7 +74,11 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   const episodes = season?.episodes ?? [];
   const long = episodes.length > RANGE;
   const targetIndex = Math.max(0, episodes.findIndex(episode => episode.id === target));
-  const [range, setRange] = useState(Math.floor(targetIndex / RANGE));
+  const rangeCount = Math.ceil(episodes.length / RANGE);
+  const [selectedRange, setRange] = useState(Math.floor(targetIndex / RANGE));
+  // A refresh of the current source can remove the selected page.
+  const range = Math.min(selectedRange, Math.max(0, rangeCount - 1));
+  if (selectedRange !== range) setRange(range);
   const [jump, setJump] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
   const [batchResult, setBatchResult] = useState<DownloadBatchResult | null>(null);
@@ -88,7 +92,6 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   useEffect(() => { setRange(Math.floor(Math.max(0, episodes.findIndex(episode => episode.id === target)) / RANGE)); setBatchResult(null); }, [seasonNumber]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!season && (!canRefresh || media.provider.kind === "local")) return null;
-  const rangeCount = long ? Math.ceil(episodes.length / RANGE) : 0;
   // Newest-first also flips the ranges: 1–49 · 50–99 becomes 50–99 · 1–49 and starts at the newest.
   const ranges = Array.from({ length: rangeCount }, (_, i) => descending ? rangeCount - 1 - i : i);
   const slice = long ? episodes.slice(range * RANGE, range * RANGE + RANGE) : episodes;

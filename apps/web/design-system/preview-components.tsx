@@ -3,7 +3,8 @@ import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleCon
 import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
-import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
+import { SubtitleSyncSettings } from '../src/features/settings/SubtitleAdvancedSettings';
+import { Anime4kSetting, NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
 import { useEffect, useId, useRef, useState } from 'react';
 import { ArrowDownUp, Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
@@ -127,8 +128,20 @@ export function PlayerShortcutsPreview() {
   return <div className="preview-shortcuts"><PlayerShortcutSettings shortcuts={shortcuts} save={async value => { setShortcuts(value); }} /></div>;
 }
 
+export function PlaybackExperimentsPreview() {
+  const [sync, setSync] = useState({ experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false });
+  const [anime4k, setAnime4k] = useState(false);
+  return <div className="preview-settings">
+    <p className="settings-advanced-label">한국어 온라인 자막 · 모든 기기</p>
+    <SubtitleSyncSettings automatic={sync.experimentalSubtitleSync} segmented={sync.experimentalSegmentedSubtitleSync}
+      save={patch => setSync(current => ({ ...current, ...patch }))} />
+    <p className="settings-advanced-label">재생 · 이 기기에서만</p>
+    <Anime4kSetting checked={anime4k} onChange={setAnime4k} />
+  </div>;
+}
+
 export function SubtitleCompatibilityPreview() {
-  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
+  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, experimentalSegmentedSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
   return <SubtitleStyleControls format="ass" settings={settings} save={patch => setSettings(previous => ({ ...previous, ...patch }))} />;
 }
 

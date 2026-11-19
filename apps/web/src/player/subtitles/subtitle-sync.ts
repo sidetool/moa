@@ -1,31 +1,54 @@
-import type {SubtitleTrack} from '@moa/shared';
-import {readTrack} from '../translation/subtitle-translation';
-import type {Alignment} from './subtitle-timing';
-const empty=():Alignment=>({status:'uncertain',offsetSeconds:0,match:0});
-const cache=new Map<string,Alignment>();
-/** Online Korean subtitles only; translated tracks already inherit their original timings. */
-export async function checkSubtitleAlignment(target:SubtitleTrack,tracks:SubtitleTrack[],signal:AbortSignal):Promise<Alignment>{
-  if(target.source!=='online'||signal.aborted)return empty();
-  const originals=tracks.filter(t=>!/(?:forced|signs?|songs?|karaoke|가사|간판)/i.test(t.label));
-  const reference=originals.find(t=>t.id!==target.id && ['embedded','local','extension'].includes(t.source||'') && /^(?:en|eng|ja|jpn|jp)(?:-|$)/i.test(t.lang||''))
-    ??originals.find(t=>t.id!==target.id && !t.provenance && t.source!=='online' && t.source!=='translation' && /english|japanese|日本語|영어|일본어/i.test(t.label));
-  if(!reference)return empty();
-  // Only read authenticated app assets; remote extensions use the existing subtitle proxy.
-  if([target,reference].some(t=>new URL(t.url,location.href).origin!==location.origin))return empty();
-  const key=JSON.stringify([target.url,reference.url]);if(cache.has(key))return cache.get(key)!;
-  const stop=new AbortController(), abort=()=>stop.abort();signal.addEventListener('abort',abort,{once:true});
-  const timer=setTimeout(abort,5000);
-  let worker:Worker|undefined;
-  try{
-    const [a,b]=await Promise.all([readTrack(target,stop.signal),readTrack(reference,stop.signal)]);stop.signal.throwIfAborted();
-    worker=new Worker(new URL('./subtitle-sync-worker.ts',import.meta.url),{type:'module'});
-    const result=await new Promise<Alignment>((resolve,reject)=>{
-      const fail=()=>reject(new Error('sync-cancelled'));
-      stop.signal.addEventListener('abort',fail,{once:true});
-      worker!.onmessage=e=>{stop.signal.removeEventListener('abort',fail);resolve(e.data);};
-      worker!.onerror=()=>{stop.signal.removeEventListener('abort',fail);reject(new Error('sync-worker'));};
-      worker!.postMessage({candidate:a.content,reference:b.content});
+import type { PlaybackSession, SubtitleTrack } from '@moa/shared';
+import { readTrack } from '../translation/subtitle-translation';
+import type { Alignment, SubtitleTimingStep } from './subtitle-timing';
+import { isKorean } from './subtitle-language';
+
+export type RenderAlignment = Alignment & { step?: SubtitleTimingStep; blob?: Blob };
+const empty = (): Alignment => ({ status: 'uncertain', offsetSeconds: 0, match: 0 });
+// A new playback session must compare its own files, even when both track URLs are reused.
+const sessions = new WeakMap<PlaybackSession, Map<string, RenderAlignment>>();
+
+/** Online Korean subtitles only. Translated tracks already inherit their original timings. */
+export async function checkSubtitleAlignment(target: SubtitleTrack, session: PlaybackSession, signal: AbortSignal, segmented = false): Promise<RenderAlignment> {
+  if (target.source !== 'online' || !isKorean(target) || signal.aborted) return empty();
+  const originals = session.subtitles.filter(track => !/(?:forced|signs?|songs?|karaoke|가사|간판)/i.test(track.label));
+  const reference = originals.find(track => track.id !== target.id && ['embedded', 'local', 'extension'].includes(track.source || '') &&
+    /^(?:en|eng|ja|jpn|jp)(?:-|$)/i.test(track.lang || ''))
+    ?? originals.find(track => track.id !== target.id && !track.provenance && track.source !== 'online' && track.source !== 'translation' &&
+      /english|japanese|日本語|영어|일본어/i.test(track.label));
+  if (!reference) return empty();
+  const stop = new AbortController(), abort = () => stop.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(abort, 5000);
+  let worker: Worker | undefined;
+  try {
+    // Remote extensions use the existing same-origin subtitle proxy.
+    if ([target, reference].some(track => new URL(track.url, location.href).origin !== location.origin)) return empty();
+    let cache = sessions.get(session);
+    if (!cache) { cache = new Map(); sessions.set(session, cache); }
+    const key = JSON.stringify([target.id, target.url, target.format, reference.id, reference.url, segmented]);
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const [candidate, original] = await Promise.all([readTrack(target, stop.signal), readTrack(reference, stop.signal)]);
+    stop.signal.throwIfAborted();
+    worker = new Worker(new URL('./subtitle-sync-worker.ts', import.meta.url), { type: 'module' });
+    const result = await new Promise<RenderAlignment>((resolve, reject) => {
+      const fail = () => reject(new Error('sync-cancelled'));
+      stop.signal.addEventListener('abort', fail, { once: true });
+      worker!.onmessage = event => { stop.signal.removeEventListener('abort', fail); resolve(event.data); };
+      worker!.onerror = () => { stop.signal.removeEventListener('abort', fail); reject(new Error('sync-worker')); };
+      worker!.postMessage({ candidate: candidate.content, reference: original.content, format: target.format, segmented });
     });
-    cache.set(key,result);while(cache.size>32)cache.delete(cache.keys().next().value!);return result;
-  }catch{return empty();}finally{clearTimeout(timer);signal.removeEventListener('abort',abort);stop.abort();worker?.terminate();}
+    stop.signal.throwIfAborted();
+    cache.set(key, result);
+    if (cache.size > 4) cache.delete(cache.keys().next().value!);
+    return result;
+  } catch {
+    return empty();
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', abort);
+    stop.abort();
+    worker?.terminate();
+  }
 }

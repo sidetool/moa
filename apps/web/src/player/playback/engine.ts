@@ -94,7 +94,7 @@ async function hlsSupported() {
 
 /* ---------- Subtitles ---------- */
 
-type Jassub = Pick<import("jassub").default, "destroy" | "ready" | "timeOffset" | "renderer" | "resize" | "_demandRender" | "_lastDemandTime">;
+type Jassub = Pick<import("jassub").default, "destroy" | "ready" | "timeOffset" | "renderer" | "resize" | "manualRender" | "_demandRender" | "_lastDemandTime">;
 type AssStyle = Awaited<ReturnType<Jassub["renderer"]["getStyles"]>>[number];
 export type SubtitleAppearance = { size: "small" | "medium" | "large" | "xlarge"; background: "original" | "none" | "soft" | "solid"; shadow?: "original" | "none" | "soft" | "strong" | number; outline?: "original" | "none" | "thin" | "thick" | number; scale?: number; padding?: number; preserveAss?: boolean };
 
@@ -195,7 +195,11 @@ export class SubtitleController {
         if (outline !== "original") { style.Outline = typeof outline === "number" ? outline : { none: 0, thin: 1, thick: 3 }[outline]; style.OutlineColour = 0; }
         await renderer.renderer.setStyle(style, index);
       }
-      if (!originalEffects && !this.originalEvents) this.originalEvents = await renderer.renderer.getEvents();
+      if (!originalEffects && !this.originalEvents) {
+        const events = await renderer.renderer.getEvents();
+        if (token !== this.token) return;
+        this.originalEvents = events;
+      }
       for (const [index, event] of this.originalEvents?.entries() ?? []) {
         if (token !== this.token) return;
         const Text = event.Text?.replace(/\{[^}]*\}/g, block => {
@@ -268,8 +272,11 @@ export class SubtitleController {
       this.ass = renderer;
       await renderer.ready;
       if (token !== this.token) return;
-      this.originalStyles = await renderer.renderer.getStyles();
-      if (token === this.token) await this.applyAppearance();
+      const styles = await renderer.renderer.getStyles();
+      if (token !== this.token) return;
+      this.originalStyles = styles;
+      await this.applyAppearance();
+      if (token === this.token) await this.renderPausedAss(renderer);
     } catch (error) {
       if (token !== this.token) return;
       this.clear();
@@ -295,7 +302,9 @@ export class SubtitleController {
         if (stale()) return;
         await renderer.renderer.setTrackByUrl(track.url);
         if (token !== this.token) return;
-        this.originalStyles = await renderer.renderer.getStyles();
+        const styles = await renderer.renderer.getStyles();
+        if (stale()) return;
+        this.originalStyles = styles;
         this.originalEvents = null;
         this.styled = false;
         if (token === this.token) await this.applyAppearance();
@@ -398,10 +407,22 @@ export class SubtitleController {
     this.renderVtt();
   }
 
+  // A new ASS worker can finish after the last paused video frame was delivered.
+  // Present that frame immediately when a corrected copy loads or a manual offset changes.
+  private async renderPausedAss(renderer: Jassub) {
+    if (this.video.paused && this.video.videoWidth && this.video.videoHeight && !this.video.seeking) {
+      await renderer.manualRender({ mediaTime: this.video.currentTime, width: this.video.videoWidth,
+        height: this.video.videoHeight, expectedDisplayTime: performance.now() }, true);
+    }
+  }
+
   /** Shift subtitles by `seconds` (positive = show later). */
   setOffset(seconds: number) {
     this.offset = seconds;
-    if (this.ass) this.ass.timeOffset = -seconds;
+    if (this.ass && this.ass.timeOffset !== -seconds) {
+      this.ass.timeOffset = -seconds;
+      if (this.ass.renderer) void this.renderPausedAss(this.ass).catch(() => {});
+    }
     this.applyVttOffset();
   }
 
