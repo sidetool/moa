@@ -27,6 +27,25 @@ test('Jimaku page parsing only accepts fixed-origin text subtitle files', () => 
   assert.ok(parsed.every((f) => f.url.startsWith('https://jimaku.cc/entry/9001/download/')));
   assert.equal(jimakuFiles(file('x.ass', 'https://evil.example/entry/9001/download/x.ass'), '9001').length, 0);
 });
+
+test('Jimaku applies file-only release tokens after removing language suffixes without certifying ambiguous files', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-jimaku-release-'));
+  const valid = ['Starlight Academy [03].ja.srt', 'Starlight Academy - 03Group.ja.srt', 'Starlight_Academy_03_1080p_x264.ja.srt'];
+  const names = [...valid, 'Starlight Academy [03] [04].ja.srt', 'Starlight Academy S02 [03].ja.srt', 'Starlight Academy [04].ja.srt'];
+  const env = await buildApp({ dataDir: dir, mediaRoot: dir, webDir: path.join(dir, 'web') }, false, {
+    jimakuFetch: async url => new Response(String(url).endsWith('/') ? index : names.map(name => file(name)).join('')),
+  });
+  try {
+    const profile = (await env.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Synthetic' } })).json();
+    env.db.run("INSERT INTO media VALUES('release',NULL,'Starlight Academy','anime','{}','2026')");
+    env.db.run("INSERT INTO episodes VALUES('release-3','release',1,3,'3화',100,NULL)");
+    const response = await env.app.inject({ url: '/api/episodes/release-3/subtitles/jimaku', headers: { 'x-moa-profile': profile.id } });
+    assert.equal(response.statusCode, 200, response.body);
+    const candidates = response.json().candidates;
+    assert.deepEqual(candidates.filter((candidate: { match: string }) => candidate.match === 'episode').map((candidate: { filename: string }) => candidate.filename).sort(), [...valid].sort());
+    assert.ok(!candidates.some((candidate: { filename: string }) => /S02|\[04\]/.test(candidate.filename)));
+  } finally { await env.app.close(); await rm(dir, { recursive: true, force: true }); }
+});
 test('Jimaku aliases, episode/season filtering, source cache, ownership and Japanese-to-Korean handoff', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-jimaku-'));
   let requests = 0,
@@ -117,4 +136,30 @@ test('Jimaku aliases, episode/season filtering, source cache, ownership and Japa
     await env.app.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('Jimaku verifies explicit episodes without using numbers from the series title or its entry aliases', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'moa-jimaku-numeric-'));
+  const series = { name: 'Room 12 Files', english_name: 'Case 12', japanese_name: '第12の部屋' };
+  const exact = ['Room_12_Files S01E03.ja.srt', '[Group] Case_12_03_1080p_x264.ja.srt', '03.ja.srt'];
+  const unnumbered = ['Room_12_Files_1080p_x264.ja.srt', 'Case_12_1080p_x264.ja.srt'];
+  const conflicting = ['Case_12_S01E03_E04.ja.srt', 'Room_12_Files_S02E03.ja.srt'];
+  const env = await buildApp({ dataDir: dir, mediaRoot: dir }, false, {
+    jimakuFetch: async url => new Response(String(url).endsWith('/')
+      ? entry(series, '/entry/9001') : [...exact, ...unnumbered, ...conflicting].map(name => file(name)).join('')),
+  });
+  try {
+    const profile = (await env.app.inject({ method: 'POST', url: '/api/profiles', payload: { name: 'Synthetic' } })).json();
+    env.db.run("INSERT INTO media VALUES('room',NULL,'Room 12 Files','anime','{}','2026')");
+    for (const number of [3, 12]) {
+      const id = 'room-' + number;
+      env.db.run("INSERT INTO episodes VALUES(?,'room',1,?,?,100,NULL)", id, number, String(number));
+      const response = await env.app.inject({ url: '/api/episodes/' + id + '/subtitles/jimaku', headers: { 'x-moa-profile': profile.id } });
+      assert.equal(response.statusCode, 200, response.body);
+      const candidates = response.json().candidates as { filename: string; match: string }[];
+      assert.deepEqual(candidates.filter(item => item.match === 'episode').map(item => item.filename).sort(), number === 3 ? [...exact].sort() : []);
+      assert.deepEqual(candidates.filter(item => item.match === 'unverified').map(item => item.filename).sort(), [...unnumbered].sort());
+      assert.ok(candidates.every(item => !conflicting.includes(item.filename)));
+    }
+  } finally { await env.app.close(); await rm(dir, { recursive: true, force: true }); }
 });

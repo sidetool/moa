@@ -1,3 +1,4 @@
+import { EpisodeRefreshButton, useEpisodeRefresh } from '../features/title/EpisodeRefresh';
 import { TitleReviews } from '../features/title/TitleReviews';
 import { TitleSources } from '../features/title/TitleSources';
 import { InlinePlugins } from '../features/plugins/WebsitePlugins';
@@ -5,7 +6,7 @@ import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, Shi
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { DownloadBatchResult, DownloadQuality, Episode, MediaDetail } from "@moa/shared";
-import { useMe, useMedia, useWatchlistToggle } from "../api/queries";
+import { useGroupWatchlist, useMe, useMedia, useWatchlistToggle } from "../api/queries";
 import { jobsByEpisode, useDownloadStatus } from "../api/downloads";
 import { useOneTapDownload } from "../features/title/ServerSave";
 import { BatchDownload, BatchDownloadResultLine, DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../features/title/ServerSave";
@@ -15,7 +16,7 @@ import { MetadataCredit, PeopleRow, SimilarRow } from "../features/title/TitleEx
 import { TrailerDialog } from "../features/title/TrailerDialog";
 import { trailerKeys } from "../lib/youtube";
 import { Button, ButtonLink, EmptyState, ProgressBar, Skeleton } from "../components/ui";
-import { ApiError } from "../lib/api";
+import { ApiError, currentProfileId } from "../lib/api";
 import { foreignCode, foreignLang, langLabel, seasonInfo, type SeasonInfo } from "../features/catalog/card-meta";
 import { useFranchise, type FranchiseSeason } from "../features/catalog/franchise";
 import { useDevicePrefs } from "../lib/device-prefs";
@@ -57,6 +58,8 @@ function EpisodeItem({ episode, highlight, save, status }: { episode: Episode; h
 const RANGE = 50;
 
 function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves }) {
+  const refresh = useEpisodeRefresh(media.id);
+  const canRefresh = media.badge !== "LIVE";
   const target = media.playTarget?.episodeId;
   const navigate = useNavigate();
   const location = useLocation();
@@ -71,7 +74,11 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   const episodes = season?.episodes ?? [];
   const long = episodes.length > RANGE;
   const targetIndex = Math.max(0, episodes.findIndex(episode => episode.id === target));
-  const [range, setRange] = useState(Math.floor(targetIndex / RANGE));
+  const rangeCount = Math.ceil(episodes.length / RANGE);
+  const [selectedRange, setRange] = useState(Math.floor(targetIndex / RANGE));
+  // A refresh of the current source can remove the selected page.
+  const range = Math.min(selectedRange, Math.max(0, rangeCount - 1));
+  if (selectedRange !== range) setRange(range);
   const [jump, setJump] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
   const [batchResult, setBatchResult] = useState<DownloadBatchResult | null>(null);
@@ -84,8 +91,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
 
   useEffect(() => { setRange(Math.floor(Math.max(0, episodes.findIndex(episode => episode.id === target)) / RANGE)); setBatchResult(null); }, [seasonNumber]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!season) return null;
-  const rangeCount = long ? Math.ceil(episodes.length / RANGE) : 0;
+  if (!season && (!canRefresh || media.provider.kind === "local")) return null;
   // Newest-first also flips the ranges: 1–49 · 50–99 becomes 50–99 · 1–49 and starts at the newest.
   const ranges = Array.from({ length: rangeCount }, (_, i) => descending ? rangeCount - 1 - i : i);
   const slice = long ? episodes.slice(range * RANGE, range * RANGE + RANGE) : episodes;
@@ -103,7 +109,7 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
   };
 
   const regular = franchise.data?.seasons ?? [];
-  const choices: (SeasonChoice & { season?: FranchiseSeason })[] = regular.length > 1
+  const choices: (SeasonChoice & { season?: FranchiseSeason })[] = !season ? [] : regular.length > 1
     ? regular.map(item => {
       const here = item.mediaId === media.id && (item.seasonNumber === undefined || item.seasonNumber === season.number);
       const code = foreignCode(item.provider.lang);
@@ -130,10 +136,11 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
               <input inputMode="numeric" pattern="[0-9]*" value={jump} placeholder="회차 번호" aria-label="회차 번호로 이동" onChange={event => setJump(event.target.value.replace(/\D/g, ""))} />
             </form>
           )}
-          {episodes.length > 1 && (
-            <button className="icon-btn" aria-label={descending ? "1화부터 보기" : "최신화부터 보기"} title={descending ? "1화부터" : "최신화부터"} onClick={() => { const next = !descending; setDescending(next); if (long) setRange(next ? rangeCount - 1 : 0); }}><ArrowDownUp size={18} /></button>
-          )}
-          {saves && episodes.length > 1 && (
+          <div className="episode-order-actions">
+            {canRefresh && <EpisodeRefreshButton state={refresh.state} onRefresh={refresh.run} />}
+            {episodes.length > 1 && <button className="icon-btn" aria-label={descending ? "1화부터 보기" : "최신화부터 보기"} title={descending ? "1화부터" : "최신화부터"} onClick={() => { const next = !descending; setDescending(next); if (long) setRange(next ? rangeCount - 1 : 0); }}><ArrowDownUp size={18} /></button>}
+          </div>
+          {saves && season && episodes.length > 1 && (
             // Only this title's shown season; without season splits the server takes the whole title.
             <BatchDownload key={`${media.id}:${season.number}`} mediaId={media.id} season={media.seasons.length > 1 ? season.number : undefined}
               label={media.seasons.length > 1 ? `${season.title} 전체` : "전체 회차"} quality={saves.quality} onDone={setBatchResult} />
@@ -141,6 +148,8 @@ function Episodes({ media, saves }: { media: MediaDetail; saves?: ServerSaves })
           <SeasonPicker choices={choices} count={episodes.length} onPick={pick} />
         </div>
       </header>
+      {refresh.error && <p role="alert" className="settings-error">{refresh.error}</p>}
+      {!episodes.length && canRefresh && <p className="settings-hint">아직 제공된 회차가 없습니다.</p>}
       {saves && batchResult && <BatchDownloadResultLine result={batchResult} />}
       {long && (
         <div className="range-tabs no-scrollbar" role="tablist" aria-label="회차 구간">
@@ -196,6 +205,8 @@ export function TitlePage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const media = useMedia(id);
+  const savedEdition = new URLSearchParams(useLocation().search).get("savedEdition");
+  const savedGroup = useGroupWatchlist(id, savedEdition);
   const toggle = useWatchlistToggle();
   const [expanded, setExpanded] = useState(false);
   const [trailer, setTrailer] = useState(false);
@@ -215,6 +226,8 @@ export function TitlePage() {
   }
 
   const m = media.data;
+  const inWatchlist = savedGroup.data?.grouped ? savedGroup.data.inWatchlist : m.inWatchlist;
+  const retryGroupRead = Boolean(savedEdition && savedGroup.isError && !savedGroup.data);
   const isMovie = m.type === "movie";
   const trailers = trailerKeys(m);
   const lang = foreignLang(m), season = seasonInfo(m);
@@ -264,13 +277,15 @@ export function TitlePage() {
             )}
             <Button
               variant="secondary" size="l"
-              icon={m.inWatchlist ? <Check size={22} /> : <Plus size={22} />}
-              aria-pressed={Boolean(m.inWatchlist)}
-              onClick={() => toggle.mutate({ id: m.id, add: !m.inWatchlist })}
-            >{m.inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
+              icon={inWatchlist ? <Check size={22} /> : <Plus size={22} />}
+              aria-pressed={Boolean(inWatchlist)}
+              disabled={toggle.isPending || Boolean(savedEdition && !savedGroup.data && !retryGroupRead)}
+              onClick={() => retryGroupRead ? void savedGroup.refetch() : toggle.mutate({ id: m.id, add: !inWatchlist, savedEdition: savedGroup.data?.grouped ? savedEdition! : undefined })}
+            >{retryGroupRead ? "내 목록 상태 다시 확인" : inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
+          {toggle.isError && toggle.variables.savedEdition && toggle.variables.id === id && <p role="alert">내 목록을 변경하지 못했어요. 다시 시도해 주세요.</p>}
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
           {m.overview && (
@@ -284,7 +299,7 @@ export function TitlePage() {
         <InlinePlugins key={`plugins:${m.id}`} placement="detail" />
         <TitleReviews mediaId={m.id} />
         <TitleSources key={m.id} id={m.id} title={m.title}/>
-        {!isMovie && <Episodes media={m} saves={saves} />}
+        {!isMovie && <Episodes key={`${currentProfileId()}:${m.id}`} media={m} saves={saves} />}
         <PeopleRow key={`people:${m.id}`} people={m.people ?? []} mediaId={m.id} linked={Boolean(m.metadata?.id)} />
         {!!m.similar?.length && <SimilarRow items={m.similar} />}
         {m.fileInfo && (

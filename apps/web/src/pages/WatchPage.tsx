@@ -1,11 +1,14 @@
 import { mergePlaybackMarkers } from '../player/playback/skip-markers';
 import { nextUpTiming } from '../player/playback/next-up';
+import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
+import { attachAnime4k } from '../player/playback/anime4k';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
 import { PluginScripts, PluginTools } from '../features/plugins/WebsitePlugins';
 import { CastButton } from '../player/casting/CastButton';
 import type { CastMedia } from '../player/casting/cast';
+import type { SubtitleTimingStep } from '../player/subtitles/subtitle-timing';
 import { checkSubtitleAlignment } from '../player/subtitles/subtitle-sync';
 import { preparePlayback, retirePlayback } from '../player/playback/session-lifecycle';
 import { subtitlesOffForTitle, rememberSubtitlesOff, subtitleOffsetForEpisode, rememberSubtitleOffset, subtitlePreference, rememberSubtitle, loadSubtitlePreference, restoreSubtitle } from "../player/subtitles/subtitle-preference";
@@ -167,6 +170,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   };
   const video = useRef<HTMLVideoElement>(null);
   const engine = useRef<EngineHandle | null>(null);
+  const [casting, setCasting] = useState(false);
   const [airplayMedia, setAirplayMedia] = useState<CastMedia | null>(null);
   const subs = useRef<SubtitleController | null>(null);
   const hideTimer = useRef<number>(0);
@@ -205,6 +209,24 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ key: number; side: "left" | "right" | "center"; label: string } | null>(null);
   const prefs = useDevicePrefs();
+  const [anime4kStatus, setAnime4kStatus] = useState<Anime4kStatus>('waiting');
+  const failedAnime4kSession = useRef<{ id: string; reason: Anime4kFailure } | null>(null);
+  useLayoutEffect(() => {
+    if (prefs.experimentalAnime4k !== true) { failedAnime4kSession.current = null; return; }
+    if (!session || !video.current) { setAnime4kStatus('waiting'); return; }
+    if (fatal) { setAnime4kStatus('videoError'); return; }
+    if (session.live) { setAnime4kStatus('live'); return; }
+    if (casting || airplayMedia) { setAnime4kStatus('remote'); return; }
+    if (pipWindow) { setAnime4kStatus('pip'); return; }
+    const failure = failedAnime4kSession.current;
+    if (failure?.id === session.sessionId) { setAnime4kStatus(failure.reason); return; }
+    return attachAnime4k(video.current, session.url, status => {
+      if (status === 'unsupported' || status === 'filterError' || status === 'performance') {
+        failedAnime4kSession.current = { id: session.sessionId, reason: status };
+      }
+      setAnime4kStatus(status);
+    });
+  }, [prefs.experimentalAnime4k, session, casting, airplayMedia, pipWindow, fatal]);
   const shortcutLabel = (action: PlayerShortcutAction, label: string) => {
     const key = playerShortcutLabel(prefs.playerShortcuts[action]);
     return key ? `${label} (${key})` : label;
@@ -240,11 +262,18 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     return () => { for (const event of ["loadedmetadata", "resize", "emptied"]) v.removeEventListener(event, update); };
   }, [session]);
   const [manualSubOffset, setSubOffset] = useState(0);
-  const [autoAlignment, setAutoAlignment] = useState<{key:string;offset:number} | null>(null);
-  const alignmentKey = `${session?.sessionId}:${subtitle?.id}`;
-  const autoSubOffset = settings?.experimentalSubtitleSync && autoAlignment?.key === alignmentKey ? autoAlignment.offset : 0;
+  const segmentedSync = settings?.experimentalSegmentedSubtitleSync === true;
+  const alignmentKey = JSON.stringify([session?.sessionId, subtitle?.id, subtitle?.url, segmentedSync]);
+  const [autoAlignment, setAutoAlignment] = useState<{ key: string; offset: number; step?: SubtitleTimingStep; url?: string } | null>(null);
   const manualSyncChoice = useRef(false);
-  const subOffset = manualSyncChoice.current || manualSubOffset !== 0 ? manualSubOffset : autoSubOffset;
+  const manualSync = manualSyncChoice.current || manualSubOffset !== 0;
+  const alignment = !manualSync && settings?.experimentalSubtitleSync && autoAlignment?.key === alignmentKey ? autoAlignment : null;
+  // A segmented render copy contains its final cue times. The controls show the correction
+  // for the current scene, while the renderer and cast sender both use a zero extra offset.
+  const renderTrack = useMemo(() => subtitle && alignment?.url ? { ...subtitle, url: alignment.url } : subtitle, [subtitle, alignment?.url]);
+  const renderOffset = manualSync ? manualSubOffset : alignment?.offset ?? 0;
+  const stepTiming = alignment?.step;
+  const subOffset = stepTiming ? (time >= stepTiming.boundary + stepTiming.after ? stepTiming.after : stepTiming.before) : renderOffset;
   const subOffsetRef = useRef(0);
   const saveSettings = useSaveSettings();
   const subSize = settings?.subtitleSize ?? 'medium';
@@ -287,6 +316,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       void client.invalidateQueries({ queryKey: ["home"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["recommendations"], refetchType: "none" });
       void client.invalidateQueries({ queryKey: ["history"], refetchType: keepalive ? "active" : "none" });
+      void client.invalidateQueries({ queryKey: ["grouped-cards"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["media", session.mediaId], refetchType: keepalive ? "active" : "none" });
     }).catch(() => {});
   }, [session, client]);
@@ -296,7 +326,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const v = video.current;
     if (!session || !v) return;
     setAirplayMedia(null);
-    castProgress.current = null;
+    castProgress.current = null; setCasting(false);
     let disposed = false;
     let advancedStream = false;
     window.clearTimeout(nextHideTimer.current); nextPress.current?.abort();
@@ -410,41 +440,46 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   }, [episodeId]);
 
   useLayoutEffect(() => {
-    subOffsetRef.current = subOffset;
-    subs.current?.setOffset(airplayMedia ? 0 : subOffset);
-  }, [subOffset, session, airplayMedia]);
+    subOffsetRef.current = renderOffset;
+    subs.current?.setOffset(airplayMedia ? 0 : renderOffset);
+  }, [renderOffset, session, airplayMedia]);
 
   useEffect(() => {
     setAutoAlignment(null);
-    if (!session || !subtitle || !settings?.experimentalSubtitleSync || manualSyncChoice.current || manualSubOffset !== 0) return;
+    if (!session || !subtitle || !settings?.experimentalSubtitleSync || manualSync) return;
     const stop = new AbortController(), choice = subtitleChoice.current;
-    void checkSubtitleAlignment(subtitle, session.subtitles, stop.signal).then(result => {
+    let renderUrl: string | undefined;
+    void checkSubtitleAlignment(subtitle, session, stop.signal, segmentedSync).then(result => {
       if (stop.signal.aborted || subtitleChoice.current !== choice || manualSyncChoice.current) return;
-      if (result.status === 'aligned') setAutoAlignment({key:alignmentKey,offset:result.offsetSeconds});
+      if (result.status === 'aligned') {
+        renderUrl = result.blob && URL.createObjectURL(result.blob);
+        setAutoAlignment({ key: alignmentKey, offset: result.offsetSeconds, step: result.step, url: renderUrl });
+      }
       else if (result.status === 'mismatch' && choice === 0) {
         // A weak timing match vetoes automatic selection only; the track remains available manually.
         setSubtitle(session.subtitles.find(t => t.source !== 'online' && !isTranslationTrack(t)) ?? null);
       }
     });
-    return () => stop.abort();
-  }, [session, subtitle, settings?.experimentalSubtitleSync, manualSubOffset, alignmentKey]);
+    return () => { stop.abort(); if (renderUrl) URL.revokeObjectURL(renderUrl); };
+  }, [session, subtitle, settings?.experimentalSubtitleSync, manualSync, alignmentKey, segmentedSync]);
 
   const shownTrack = useRef<{ controller: SubtitleController | null; track: SubtitleTrack | null }>({ controller: null, track: null });
   useEffect(() => {
     const controller = subs.current;
-    const track: SubtitleTrack | null = airplayMedia ? airplayMedia.subtitle ? { id: 'cast-caption', format: 'vtt', ...airplayMedia.subtitle } : null : subtitle;
+    const track: SubtitleTrack | null = airplayMedia ? airplayMedia.subtitle ? { id: 'cast-caption', format: 'vtt', ...airplayMedia.subtitle } : null : renderTrack;
     let cancelled = false;
     const previous = shownTrack.current;
     shownTrack.current = { controller, track };
     // A newer revision of the same track (live AI translation) is swapped in place instead of reloaded.
     const revision = Boolean(controller && track && previous.controller === controller && previous.track?.id === track.id);
     if (revision && previous.track!.url === track!.url) return;
-    const load = revision ? controller!.replace(track!).catch(() => controller!.show(track)) : controller?.show(track);
+    const copyChanged = previous.track?.url.startsWith('blob:') || track?.url.startsWith('blob:');
+    const load = revision && !copyChanged ? controller!.replace(track!).catch(() => cancelled ? undefined : controller!.show(track)) : controller?.show(track);
     void load?.then(() => {
       if (!cancelled) controller!.setOffset(airplayMedia ? 0 : subOffsetRef.current);
     }).catch(() => { if (!cancelled) setNotice("자막을 불러오지 못했습니다. 다른 자막을 선택해 주세요."); });
     return () => { cancelled = true; };
-  }, [subtitle, session, airplayMedia]);
+  }, [renderTrack, session, airplayMedia]);
 
   useEffect(() => {
     if(!session?.streams?.length || !waiting || fatal) return;
@@ -485,10 +520,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     try {
       const track = await api<SubtitleTrack>(`/episodes/${encodeURIComponent(session.episodeId)}/subtitles/online`, { method: "POST", body: { searchId: result.searchId, candidateId }, signal: controller.signal });
       if (controller.signal.aborted || subtitleChoice.current !== choice) return;
-      if (quiet && settings?.experimentalSubtitleSync) {
-        const alignment = await checkSubtitleAlignment(track, session.subtitles, controller.signal);
+      if (quiet && settings?.experimentalSubtitleSync && !manualSyncChoice.current) {
+        const alignment = await checkSubtitleAlignment(track, session, controller.signal, segmentedSync);
         if (controller.signal.aborted || subtitleChoice.current !== choice) return;
-        if (alignment.status === 'mismatch') return;
+        if (alignment.status === 'mismatch' && !manualSyncChoice.current) return;
       }
       setExtraSubs(list => [...list.filter(item => item.id !== track.id), track]);
       setSubtitle(track);
@@ -501,7 +536,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     } finally {
       if (applyAbort.current === controller) setOnline(state => ({ ...state, applying: undefined }));
     }
-  }, [session, settings?.experimentalSubtitleSync]);
+  }, [session, settings?.experimentalSubtitleSync, segmentedSync]);
 
   useEffect(() => {
     // Translations belong to the episode, not the playback session, so they survive audio/stream switches.
@@ -1504,7 +1539,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             <span className="player-time">{live ? <b className="live-label">● LIVE</b> : <>{clock(shown)} <span>/ {clock(total)}</span></>}</span>
           </div>
           <div className="controls-right">
-            {session && <CastButton key={session.sessionId} session={session} subtitle={subtitle} offset={subOffset} video={video} onProgress={value => { castProgress.current = value; }} onAirPlay={async target => {
+            {session && <CastButton key={session.sessionId} session={session} subtitle={renderTrack} offset={renderOffset} video={video} onProgress={value => { castProgress.current = value; setCasting(value !== null); }} onAirPlay={async target => {
               const v = video.current;
               if (!v) return;
               const position = v.currentTime, playing = !v.paused;
@@ -1675,6 +1710,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               <QualityControl levels={levels} level={level} onLevel={index => { setLevel(index); engine.current?.setLevel(index); }}
                 streams={session.streams} streamId={session.streamId} onStream={switchServer}
                 playingHeight={playingHeight} transcode={session.mode === "transcode"} />
+              {prefs.experimentalAnime4k && <Anime4kStatusNote status={anime4kStatus} />}
               <ServerControl streams={session.streams} streamId={session.streamId} onStream={switchServer} />
               {!!session.streams?.length && (
                 <button className="panel-link" onClick={() => { setPanel(null); setSourcePicker(true); }}><Shuffle size={18} /><span>다른 소스 선택</span><ChevronRight size={18} /></button>

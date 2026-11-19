@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
 import { NetworkSettings } from "../features/settings/NetworkSettings";
+import { CatalogRefreshSettings } from "../features/settings/CatalogRefreshSettings";
 import { TmdbSettings } from "../features/settings/TmdbSettings";
 import { YouTubeSettings } from "../features/settings/YouTubeSettings";
 import { TranslationSettings } from "../features/settings/TranslationSettings";
@@ -22,7 +23,7 @@ import { ComponentSettings } from "../features/settings/ComponentSettings";
 import { SystemInfo } from "../features/settings/SystemInfo";
 import { SubtitleAdvancedSettings, RequestControls } from "../features/settings/SubtitleAdvancedSettings";
 import { ShortsSettings } from "../features/settings/ShortsSettings";
-import { PlaybackAdvancedSettings } from "../features/settings/PlaybackAdvancedSettings";
+import { Anime4kSetting, PlaybackAdvancedSettings } from "../features/settings/PlaybackAdvancedSettings";
 import { translationModeOf, useTranslationConfig, type TranslationMode } from "../api/translation";
 import { keys, useFolders, useMe, useProfiles, useScanStatus, useSettings, useSaveSettings } from "../api/queries";
 import { AccountSection, AccountsPage } from "./AccountsPage";
@@ -258,6 +259,7 @@ export function SettingsPage() {
         {row("재생 시 전체 화면", "작품을 누르면 바로 전체 화면으로 재생합니다. 끄면 재생 화면에서 직접 전환해요.", <Toggle label="재생 시 전체 화면" checked={device.fullscreenOnPlay} onChange={value => setPref("fullscreenOnPlay", value)} />)}
         {row("오프닝·엔딩 자동 건너뛰기", "구간 정보가 있는 회차에서 오프닝과 엔딩을 알아서 넘깁니다. 되감으면 다시 볼 수 있어요.", <Toggle label="오프닝·엔딩 자동 건너뛰기" checked={device.autoSkip} onChange={value => setPref("autoSkip", value)} />)}
         {row("화면 채우기", "영상을 화면 비율에 맞춰 꽉 채웁니다. 가장자리가 조금 잘릴 수 있어요.", <Toggle label="화면 채우기" checked={device.videoFill} onChange={value => setPref("videoFill", value)} />)}
+        <Anime4kSetting checked={device.experimentalAnime4k} onChange={value => setPref("experimentalAnime4k", value)} />
       </div></section>}
       {category === "controls" && <section className="settings-group"><div className="settings-card">
         {row("TV 리모컨 모드", "방향키로 이동하고 확인 버튼으로 선택합니다. 자동 모드는 TV 감지 또는 탐색 화면의 방향키 입력으로 켜집니다.", <Select className="setting-select" aria-label="TV 리모컨 모드" value={remote} onChange={value => { setRemote(value as RemotePreference); setRemotePreference(value as RemotePreference); }} options={[{ value: "auto", label: "자동" }, { value: "on", label: "항상 켜기" }, { value: "off", label: "끄기" }]} />)}
@@ -290,7 +292,7 @@ export function SettingsPage() {
         onChange={patch => void save(patch).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
       {admin && category === "sources" && <SourcesPage embedded />}
       {admin && category === "accounts" && <AccountsPage embedded />}
-      {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}
+      {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><CatalogRefreshSettings /><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}
       {admin && category === "subtitle-library" && <><SubtitleLibrarySettings /><SubtitleMemorySettings /></>}
       {admin && category === "plugins" && <WebsitePlugins admin />}
       {admin && category === "translation" && <><TranslationSettings /><section className="settings-group"><h2>요청 설정</h2><div className="settings-card"><RequestControls /></div></section></>}

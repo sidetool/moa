@@ -37,15 +37,27 @@ async function slide(group, target) {
 async function disclosure(details, width) {
   const page = details.page();
   const summary = details.locator(':scope > summary');
-  await page.waitForTimeout(330);
-  const height = () => details.evaluate(element => parseFloat(getComputedStyle(element, '::details-content').height));
-  const full = await height();
-  assert.ok(full > 0);
-  await summary.click();
-  const during = await details.evaluate(async element => {
-    for (let i = 0; i < 4; i++) await new Promise(requestAnimationFrame);
-    return parseFloat(getComputedStyle(element, '::details-content').height);
+  await summary.scrollIntoViewIfNeeded();
+  const { full, during } = await details.evaluate(element => {
+    const height = () => parseFloat(getComputedStyle(element, '::details-content').height);
+    // Chromium interpolates ::details-content but omits its transitions from getAnimations().
+    // Start the real closing transition halfway through and read it in the same browser task.
+    const style = document.createElement('style');
+    style.textContent = `
+      details[data-verify-motion][open]::details-content { transition: none; }
+      details[data-verify-motion]:not([open])::details-content { transition-delay: calc(var(--motion-slow) / -2); }`;
+    document.head.append(style);
+    element.setAttribute('data-verify-motion', '');
+    try {
+      const full = height();
+      element.querySelector('summary').click();
+      return { full, during: height() };
+    } finally {
+      element.removeAttribute('data-verify-motion');
+      style.remove();
+    }
   });
+  assert.ok(full > 0);
   assert.ok(during > 0 && during < full, `details closes through an intermediate height: ${during}/${full}`);
   await summary.press('Enter');
   assert.ok(await details.evaluate(element => element.open));
@@ -60,12 +72,16 @@ async function disclosure(details, width) {
 try {
   for (const width of [1280, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: width < 900 });
-    await context.addInitScript(() => { localStorage.setItem('moa.profile', 'test'); localStorage.setItem('moa.remoteMode', 'off'); });
+    await context.addInitScript(width => {
+      localStorage.setItem('moa.profile', 'test');
+      const tv = width >= 900 && ['#playback', '#subtitle-advanced'].includes(location.hash);
+      localStorage.setItem('moa.remoteMode', tv ? 'on' : 'off');
+    }, width);
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     const pages = [], previews = [], installs = [], navigationSaves = [], deviceSaves = [];
     let device = {};
-    let fail = true, settings = { autoplayNext: true, autoplayDelay: 5, preferredQuality: 'auto', defaultSubtitleLang: 'ko', subtitleSize: 'medium', translationMode: 'manual', translationSourcePriority: 'site', navigation: ['홈', '영화', '애니', '시리즈'].map((name, index) => ({ id: ['home', 'movies', 'anime', 'series'][index], name, sourceIds: ['test-source'], includeLocal: true })) };
+    let fail = true, settings = { experimentalSubtitleSync: true, autoplayNext: true, autoplayDelay: 5, preferredQuality: 'auto', defaultSubtitleLang: 'ko', subtitleSize: 'medium', translationMode: 'manual', translationSourcePriority: 'site', navigation: ['홈', '영화', '애니', '시리즈'].map((name, index) => ({ id: ['home', 'movies', 'anime', 'series'][index], name, sourceIds: ['test-source'], includeLocal: true })) };
     await context.route(url => url.pathname.startsWith('/api/'), async route => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/api/me') return route.fulfill({ json: { id: 'admin', username: '테스트', role: 'admin' } });
@@ -204,6 +220,28 @@ try {
     await page.waitForFunction(() => document.querySelectorAll('.tab-item')[2].dataset.id === 'movies');
     assert.equal(await tabList.evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation.effect.getKeyframes().some(frame => frame.transform?.startsWith('translateY(')))), false);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto(`${base}settings#playback`);
+    if (width >= 900) await page.locator('html[data-tv]').waitFor();
+    const deviceCard = page.locator('.settings-group').filter({ has: page.getByRole('heading', { name: '이 기기에서만', exact: true }) });
+    const anime4k = deviceCard.getByRole('switch', { name: 'Anime4K 화질 보정' });
+    await anime4k.waitFor();
+    assert.equal(await anime4k.isChecked(), false);
+    if (width >= 900) {
+      await deviceCard.getByRole('switch', { name: '화면 채우기', exact: true }).press('ArrowDown');
+      assert.ok(await anime4k.evaluate(button => document.activeElement === button), 'TV down stays with device playback settings');
+    }
+    const deviceSave = page.waitForResponse(response => response.url().endsWith('/api/settings/device') && response.request().method() === 'PATCH');
+    await anime4k.press('Enter');
+    await deviceSave;
+    assert.deepEqual(deviceSaves.at(-1), { experimentalAnime4k: true });
+    assert.equal(settings.experimentalAnime4k, undefined);
+    if (width >= 900) {
+      await anime4k.press('ArrowLeft');
+      assert.ok(await menu.evaluate(nav => nav.contains(document.activeElement)), 'TV left can return to settings navigation');
+    }
+    await page.reload();
+    await anime4k.waitFor();
+    assert.equal(await anime4k.isChecked(), true);
     await page.goto(`${base}settings#controls`);
     const hold = page.getByRole('combobox', { name: '길게 누르기 배속', exact: true });
     await hold.waitFor();
@@ -230,13 +268,44 @@ try {
     await page.locator('#updates').waitFor();
     assert.equal(await title.textContent(), '정보');
     await page.goto(`${base}settings#subtitle-advanced`);
+    if (width >= 900) {
+      // #updates → #subtitle-advanced is a same-document navigation. Reload to apply the TV fixture.
+      await page.reload();
+      await page.locator('html[data-tv]').waitFor();
+    }
     await page.getByRole('region', { name: '자막 고급설정', exact: true }).waitFor();
+    const automatic = page.getByRole('switch', { name: '싱크 자동 맞춤', exact: true });
+    const segmented = page.getByRole('switch', { name: '구간별 싱크 맞춤', exact: true });
+    assert.equal(await segmented.isChecked(), false);
+    if (width >= 900) {
+      await page.getByRole('switch', { name: '구간별 싱크 맞춤', disabled: false, exact: true }).waitFor();
+      await automatic.press('ArrowDown');
+      assert.ok(await segmented.evaluate(button => document.activeElement === button), 'TV down reaches the dependent subtitle switch');
+    }
+    const pressAndSave = async toggle => {
+      const saved = page.waitForResponse(response => response.url().endsWith('/api/settings') && response.request().method() === 'PATCH');
+      await toggle.press(width >= 900 ? 'Enter' : 'Space');
+      await saved;
+    };
+    const syncState = (disabled, checked) => page.getByRole('switch', { name: '구간별 싱크 맞춤', exact: true, disabled, checked }).waitFor();
+    await pressAndSave(segmented);
+    await syncState(false, true);
+    assert.equal(settings.experimentalSegmentedSubtitleSync, true);
+    assert.equal(device.experimentalSegmentedSubtitleSync, undefined);
+    await pressAndSave(automatic);
+    assert.equal(settings.experimentalSubtitleSync, false);
+    await syncState(true, false);
+    await page.reload();
+    await syncState(true, false);
+    await pressAndSave(automatic);
+    assert.equal(settings.experimentalSubtitleSync, true);
+    await syncState(false, true);
     await disclosure(page.locator('#subtitle-advanced'), width);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     assert.ok(parseFloat(await page.locator('.settings-panel').evaluate(element => getComputedStyle(element).animationDuration)) <= .00001);
     await page.locator('#subtitle-advanced > summary').click();
     assert.equal(await page.locator('#subtitle-advanced').evaluate(element => element.open), false);
-    assert.equal(await page.locator('#subtitle-advanced').evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation.transitionProperty === 'height')), false);
+    assert.equal(await page.locator('#subtitle-advanced').evaluate(element => parseFloat(getComputedStyle(element, '::details-content').height)), 0);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto(`${base}sources/test-source`);
     await page.waitForFunction(() => document.querySelectorAll('.poster-card').length === 24);

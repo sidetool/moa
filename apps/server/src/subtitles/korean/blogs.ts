@@ -3,7 +3,7 @@ import { load } from "cheerio";
 import { PublicHttpClient, validatePublicUrl, type HttpResponse } from "./http.js";
 import { extractSubtitleBuffer } from "./archive.js";
 import { decodeSubtitleBuffer } from "./convert.js";
-import { normalizeTitle, parseEpisodes, parseSeason, titleKey } from "./normalize.js";
+import { normalizeTitle, parseEpisodes, parseSubtitleFilenameEpisodes, parseSeason, titleKey } from "./normalize.js";
 import { stableId } from "./metadata.js";
 import { failureCode } from "./async.js";
 import type { AliasEntry, Diagnostic, ResolvedTitle, SubtitleCandidate, SubtitleCreator } from "./types.js";
@@ -11,6 +11,7 @@ import type { AliasEntry, Diagnostic, ResolvedTitle, SubtitleCandidate, Subtitle
 interface Link { url: string; label: string }
 interface PostLink { url: string; priority: number }
 const filePattern = /\.(?:ass|ssa|srt|smi|vtt|zip|7z|rar|tar)(?:[?#\s]|$)/i;
+const filenameExtension = /\.(?:ass|ssa|srt|smi|vtt|zip|7z|rar|tar)$/i;
 function absolute(href: string | undefined, base: string): string | undefined {
   if (!href) return undefined;
   try { return validatePublicUrl(new URL(href.replace(/&amp;/g, "&"), base).href).href; } catch { return undefined; }
@@ -128,11 +129,16 @@ export class BlogCollector {
     private readonly report: (diagnostic: Diagnostic) => void = () => {},
     private readonly index = new BloggerIndex(http)) {}
 
-  private titleMatches(title: string, creator: SubtitleCreator): boolean {
+  private titleNames(creator: SubtitleCreator): string[] {
     const base = normalizeTitle(creator.title).baseTitle;
     const alias = this.options.aliases.find(a => titleKey(a.korean) === titleKey(base));
+    return [base, ...(creator.aliases ?? []), ...(alias?.aliases ?? []), ...(alias?.seasonTitles?.[String(creator.season)] ?? [])]
+      .sort((a, b) => b.length - a.length);
+  }
+
+  private titleMatches(title: string, creator: SubtitleCreator): boolean {
+    const names = this.titleNames(creator);
     const clean = postTitle(title);
-    const names = [base, ...(creator.aliases ?? []), ...(alias?.aliases ?? []), ...(alias?.seasonTitles?.[String(creator.season)] ?? [])];
     // A title number (Mob Psycho 100) is not an episode token.
     if (names.some(name => titleKey(clean) === titleKey(name))) return true;
     const explicitEpisode = /\d+\s*(?:화|話)|\b(?:EP?(?:ISODE)?\s*|S\d+E)\d+/i.test(title);
@@ -150,17 +156,27 @@ export class BlogCollector {
   }
 
   /** Fallback identity check when the article has not established the requested episode/series. */
-  private fileIdentity(raw: string, creator: SubtitleCreator): boolean | undefined {
-    const name = (raw.split(/[\\/]/).at(-1) ?? raw).split("\n")[0]!.trim()
-      .replace(/\.(?:zip|7z|rar|tar|ass|ssa|srt|smi|vtt)$/i, "")
+  private fileIdentity(raw: string, creator: SubtitleCreator, titles = this.titleNames(creator)): boolean | undefined {
+    const filename = (raw.split(/[\\/]/).at(-1) ?? raw).split("\n")[0]!.trim();
+    // A label may be prose; release token handling requires an actual file extension.
+    const fileEpisodes = filenameExtension.test(filename) ? parseSubtitleFilenameEpisodes(filename, titles) : [];
+    const name = filename
+      .replace(filenameExtension, "")
       .replace(/^\[[^\]]+\]\s*(?=\S)/, "")
       .replace(/\[[^\]]*(?:\d{3,4}p|HEVC|AVC|[A-F\d]{8})[^\]]*\]|\([^)]*(?:\d{3,4}p|HEVC|WEB|BD|AAC|FLAC)[^)]*\)/gi, "")
       .replace(/^(?:ns|spon|non[- ]?spon)\s*[-_]\s*/i, "")
       .replace(/[._]/g, " ");
-    if (!parseEpisodes(name).length) return undefined;
-    const title = postTitle(name).replace(/(?:^|\s)(?:[-–]\s*)?\d+(?:\.\d)?\s*$/, "").trim();
+    if (!parseEpisodes(name).length && !fileEpisodes.length) return undefined;
+    // Remove file-only release suffixes so the existing title identity rules
+    // keep checking the complete work name (including numbers in that name).
+    const identityName = fileEpisodes.length === 1 ? name
+      .replace(/\[\d{1,3}\]\s*$/, "")
+      .replace(/(?:^|\s)0\d{1,2}[A-Za-z][A-Za-z\d-]*\s*$/, "")
+      .replace(/(?:\s+(?:\d{3,4}p|[xh]26[45]|HEVC|AVC|AAC|FLAC))+\s*$/gi, "")
+      .trim() : name;
+    const title = postTitle(identityName).replace(/(?:^|\s)(?:[-–]\s*)?\d+(?:\.\d)?\s*$/, "").trim();
     if (!title || /^(?:자막|subtitle|episode|ep|통합|완결)$/i.test(title)) return undefined;
-    if (this.titleMatches(name, creator)) return true;
+    if (this.titleMatches(identityName, creator)) return true;
     // Short Korean file labels are common. They are not sufficient to establish a
     // title, but also not evidence of a different work (the article must match).
     if (/^[가-힣]{1,3}(?:\s*\d+기)?$/.test(title)) {
@@ -213,9 +229,11 @@ export class BlogCollector {
   }
 
   private episodeMatch(text: string, creator: SubtitleCreator, episode: number): boolean {
-    const season = this.postSeason(text, creator);
+    return this.episodeNumbersMatch(this.pageEpisodes(text, creator), this.postSeason(text, creator), creator, episode);
+  }
+
+  private episodeNumbersMatch(episodes: number[], season: number | undefined, creator: SubtitleCreator, episode: number): boolean {
     if (season !== undefined && season !== creator.season) return false;
-    const episodes = this.pageEpisodes(text, creator);
     if (season !== undefined) return episodes.includes(episode) || creator.episodeOffset > 0 && episodes.includes(episode + creator.episodeOffset);
     // For a later season, a post with no season token must use the verified absolute number.
     return episodes.includes(episode + creator.episodeOffset) && (creator.season === 1 || creator.episodeOffset > 0);
@@ -283,27 +301,41 @@ export class BlogCollector {
         expanded.push(...publicDriveFiles(folder.body.toString('utf8'),folderId));
       } catch(error) { this.failure('page',error,creator,signal); }
     }
-    const links = [...attachments.filter(link=>!googleDriveFolderId(link.url)), ...expanded].sort((a, b) => Number(this.episodeMatch(b.label, creator, episode)) - Number(this.episodeMatch(a.label, creator, episode)));
-    for (const link of links.slice(0, 6)) {
-      if (signal.aborted) break;
-      const label = link.label || decodeURIComponentSafe(new URL(link.url).pathname.split("/").at(-1) ?? "");
-      if (!confirmedArticle && this.fileIdentity(label, creator) === false) continue;
-      const linkSeason = this.postSeason(label, creator);
-      if (linkSeason !== undefined && linkSeason !== creator.season) continue;
-      const numbers = parseEpisodes(label);
-      const confirmedLink = this.episodeMatch(label, creator, episode) || seriesPage && numbers.includes(episode);
-      if (!title && !this.titleMatches(label, creator)) continue;
+    const titles = this.titleNames(creator);
+    const links = [...attachments.filter(link => !googleDriveFolderId(link.url)), ...expanded].flatMap(link => {
+      const pathName = decodeURIComponentSafe(new URL(link.url).pathname.split("/").at(-1) ?? "");
+      const label = link.label || pathName;
+      const archive = /\.(?:zip|7z|rar|tar)(?:\b|$)/i.test(label) || /\.(?:zip|7z|rar|tar)$/i.test(pathName);
+      let numbers: number[] = [];
+      // The visible label and actual filename may each identify an episode. Reject contradictions.
+      for (const text of new Set([label, ...(filenameExtension.test(pathName) ? [pathName] : [])])) {
+        const firstLine = text.split("\n", 1)[0]!.trim();
+        const file = filenameExtension.test(firstLine);
+        if (!confirmedArticle && this.fileIdentity(text, creator, titles) === false) return [];
+        const season = this.postSeason(text, creator);
+        if (season !== undefined && season !== creator.season) return [];
+        const episodes = file ? parseSubtitleFilenameEpisodes(firstLine, titles) : this.pageEpisodes(text, creator);
+        if (!episodes.length) continue;
+        // A batch range can cover the requested episode. Two competing single-file tokens cannot.
+        if (file && episodes.length > 1 && !(archive && /\d\s*[-~～]\s*\d/.test(firstLine))) return [];
+        if (!this.episodeNumbersMatch(episodes, season, creator, episode) && !(seriesPage && episodes.includes(episode))) return [];
+        if (episodes.length > numbers.length) numbers = episodes;
+      }
+      const confirmedLink = numbers.length > 0;
+      if (!title && !this.titleMatches(label, creator)) return [];
       // A different episode article may supply a genuine series ZIP, never a conflicting single file.
-      if (pageEpisodes.length && !confirmedPost && !(numbers.length > 1 && /\.(?:zip|7z|rar|tar)(?:\b|$)/i.test(label))) continue;
-      // Anissia's latest post may contain a batch archive; inspect its explicit episode label.
-      if (numbers.length && !confirmedLink) continue;
-      if (!confirmedPost && !confirmedLink && !(seriesPage && googleDriveDownloadUrl(link.url)) && !/\.(?:zip|7z|rar|tar)(?:\b|$)|통합|전편|완결/i.test(label)) continue;
+      if (pageEpisodes.length && !confirmedPost && !(numbers.length > 1 && archive)) return [];
+      if (!confirmedPost && !confirmedLink && !(seriesPage && googleDriveDownloadUrl(link.url)) && !archive && !/통합|전편|완결/.test(label)) return [];
+      return [{ link, label, numbers, confirmedLink }];
+    }).sort((a, b) => Number(b.confirmedLink) - Number(a.confirmedLink));
+    for (const { link, label, numbers, confirmedLink } of links.slice(0, 6)) {
+      if (signal.aborted) break;
       try {
         const response = await this.download(link, page.url, signal);
         const filename = responseFilename(response, label || "subtitle");
         const extracted = await extractSubtitleBuffer(response.body, filename, {
-          episode, alternateEpisode: creator.episodeOffset ? episode + creator.episodeOffset : undefined,
-          acceptFilename: name => confirmedArticle || this.fileIdentity(name, creator) !== false,
+          titles, episode, alternateEpisode: creator.episodeOffset ? episode + creator.episodeOffset : undefined,
+          acceptFilename: name => confirmedArticle || this.fileIdentity(name, creator, titles) !== false,
           season: creator.season, allowUnnumbered: (confirmedPost || confirmedLink) && numbers.length <= 1 && pageEpisodes.length <= 1,
           maxZipBytes: this.options.maxZipBytes, maxEntries: this.options.maxZipEntries, signal,
         });
@@ -475,7 +507,7 @@ export class BlogCollector {
       try {
         const response = await this.download({ url: creator.website, label: "" }, creator.website, signal);
         const extracted = await extractSubtitleBuffer(response.body, responseFilename(response, "subtitle"), {
-          episode, alternateEpisode: creator.episodeOffset ? episode + creator.episodeOffset : undefined,
+          titles: this.titleNames(creator), episode, alternateEpisode: creator.episodeOffset ? episode + creator.episodeOffset : undefined,
           acceptFilename: name => creator.source === "anissia" || this.fileIdentity(name, creator) !== false,
           season: creator.season, allowUnnumbered: creator.isCurrentEpisode,
           maxZipBytes: this.options.maxZipBytes, maxEntries: this.options.maxZipEntries, signal,

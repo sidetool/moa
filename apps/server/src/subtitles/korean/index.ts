@@ -134,7 +134,7 @@ export class SubtitleClient {
   async searchSubtitles(query: SubtitleQuery): Promise<SubtitleCandidate[]> {
     this.validateQuery(query);
     const normalized = normalizeTitle(query.title, query.season);
-    const cacheKey = `subtitles-ko:v4:${stableId(this.configKey, JSON.stringify(query.aliases || []), titleKey(normalized.baseTitle), normalized.season, query.episode, query.episodeOffset ?? "default")}`;
+    const cacheKey = `subtitles-ko:v5:${stableId(this.configKey, JSON.stringify(query.aliases || []), titleKey(normalized.baseTitle), normalized.season, query.episode, query.episodeOffset ?? "default")}`;
     const scope = deadline(query);
     const collected: SubtitleCandidate[] = [];
     try {

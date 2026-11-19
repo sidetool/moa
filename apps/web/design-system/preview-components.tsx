@@ -1,11 +1,14 @@
 import { DEFAULT_PLAYER_SHORTCUTS, type Settings as ProfileSettings } from '@moa/shared';
 import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleControls';
+import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
-import { NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
+import { SubtitleSyncSettings } from '../src/features/settings/SubtitleAdvancedSettings';
+import { Anime4kStatusNote } from '../src/player/playback/Anime4kStatusNote';
+import { Anime4kSetting, NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
-import { useId, useRef, useState } from 'react';
-import { Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { ArrowDownUp, Check, FastForward, RefreshCw, Settings, Trash2 } from 'lucide-react';
 import { Button, ConfirmDialog, EmptyState, IconButton, NumberStepper, PasswordInput, ProgressBar, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../src/components/ui';
 
 export function ButtonsPreview() {
@@ -126,8 +129,24 @@ export function PlayerShortcutsPreview() {
   return <div className="preview-shortcuts"><PlayerShortcutSettings shortcuts={shortcuts} save={async value => { setShortcuts(value); }} /></div>;
 }
 
+export function PlaybackExperimentsPreview() {
+  const [sync, setSync] = useState({ experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false });
+  const [anime4k, setAnime4k] = useState(false);
+  return <div className="preview-settings">
+    <p className="settings-advanced-label">한국어 온라인 자막 · 모든 기기</p>
+    <SubtitleSyncSettings automatic={sync.experimentalSubtitleSync} segmented={sync.experimentalSegmentedSubtitleSync}
+      save={patch => setSync(current => ({ ...current, ...patch }))} />
+    <p className="settings-advanced-label">재생 · 이 기기에서만</p>
+    <Anime4kSetting checked={anime4k} onChange={setAnime4k} />
+    {anime4k && <>
+      <p className="settings-advanced-label">플레이어 재생 설정 · 기본 자막 예시</p>
+      <div className="preview-player-panel panel-form"><Anime4kStatusNote status="captions" /></div>
+    </>}
+  </div>;
+}
+
 export function SubtitleCompatibilityPreview() {
-  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
+  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, experimentalSegmentedSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
   return <SubtitleStyleControls format="ass" settings={settings} save={patch => setSettings(previous => ({ ...previous, ...patch }))} />;
 }
 
@@ -181,5 +200,24 @@ export function PlayerQualityPreview() {
       <QualityControl levels={levels} level={level} onLevel={setLevel} streams={streams} streamId={streamId} onStream={setStreamId} playingHeight={playing} transcode={false} />
       <ServerControl streams={streams} streamId={streamId} onStream={setStreamId} />
     </div>
+  </div>;
+}
+
+export function CatalogRefreshPattern() {
+  const [interval, setInterval] = useState('60');
+  const [sort, setSort] = useState('saved');
+  const [descending, setDescending] = useState(false);
+  const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = setTimeout(() => setState(state === 'busy' ? 'done' : 'idle'), state === 'busy' ? 800 : 2200);
+    return () => clearTimeout(timer);
+  }, [state]);
+  return <div className="preview-stack">
+    <div className="preview-row"><b>정보 갱신 빈도</b><Select aria-label="정보 갱신 빈도" value={interval} onChange={setInterval} options={[{ value: '15', label: '자주' }, { value: '60', label: '기본' }, { value: '360', label: '드물게' }]} /></div>
+    <div className="preview-row"><b>내 목록</b><Select aria-label="내 목록 정렬" value={sort} onChange={setSort} options={[{ value: 'saved', label: '담은 순' }, { value: 'updated', label: '회차 업데이트순' }]} /></div>
+    <ol className="preview-results">{(sort === 'saved' ? ['여름의 끝에서', '새벽 기차'] : ['새벽 기차', '여름의 끝에서']).map(title =>
+      <li key={title}>{title}{title === '새벽 기차' && <small> · 안 본 회차 2개</small>}</li>)}</ol>
+    <div className="preview-row"><b>회차</b><EpisodeRefreshButton state={state} onRefresh={() => setState('busy')} /><IconButton label={descending ? '1화부터 보기' : '최신화부터 보기'} onClick={() => setDescending(!descending)}><ArrowDownUp size={18} /></IconButton></div>
   </div>;
 }

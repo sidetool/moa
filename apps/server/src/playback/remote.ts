@@ -132,8 +132,10 @@ export class RemotePlayback {
     if (!Number.isInteger(index) || index < 0 || index >= videos.length) throw new ApiFailure(400, 'invalid-stream');
     const item: SourceVideo = videos[index];
     const detail = this.catalog.detail(mapping.media_id, profile), source = this.sources.row(mapping.source_id);
-    const ep = detail.seasons.flatMap(s => s.episodes).find(e => e.id === episodeId)!;
-    const episodes = detail.seasons.flatMap(s => s.episodes), next = episodes[episodes.indexOf(ep) + 1];
+    const episodes = detail.seasons.flatMap(s => s.episodes);
+    const indexOfEpisode = episodes.findIndex(e => e.id === episodeId);
+    if (indexOfEpisode < 0) throw new ApiFailure(404, 'episode-not-found');
+    const ep = episodes[indexOfEpisode], next = episodes[indexOfEpisode + 1];
     const live = Boolean(source.live), id = token();
     const state: RemoteSession = { apkLease: videos.apkLease, proxy: this.sources.proxy(mapping.source_id), profile, touched: this.clock(), renewAt: this.clock()+45_000, assets: new Map(), reverse: new Map(), abort: new AbortController(), response: {} as PlaybackSession };
     const headers = item.headers || {};

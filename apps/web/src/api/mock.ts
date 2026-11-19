@@ -2,7 +2,7 @@
 // as apps/server so screens can be built before the server lands.
 import type { DownloadJob, DownloadQuality, DownloadStatus, RecommendationItem, ShortsItem, VideoSource, Episode, EpisodeProgress, HistoryEntry, HomeResponse, MediaCard, MediaDetail, PlaybackSession, Profile, ProviderRef, Row, Settings, SubtitleTrack } from "@moa/shared";
 import type { JimakuCandidate, JimakuSearch, TranslationConfig, TranslationJob } from "./translation";
-import { TRANSLATION_MAX_KEYS } from "@moa/shared";
+import { DEFAULT_DEVICE_SETTINGS, PROFILE_HEADER, TRANSLATION_MAX_KEYS } from "@moa/shared";
 
 const local: ProviderRef = { id: "local", name: "내 라이브러리", kind: "local" };
 const ext: ProviderRef = { id: "ext-demo", name: "데모 확장", kind: "mangayomi-js" };
@@ -43,7 +43,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true };
+let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */
@@ -114,6 +114,7 @@ const mockTrailers: Record<string, Pick<MediaDetail, "trailer" | "trailers">> = 
 
 /* Optional YouTube precheck. With a saved key, `e101`/`e150` keys count as embedding-disabled (dropped) and
    `rgn` keys as region-blocked (moved to the end). `moa.mockTrailerPreflight=error|slow` previews failures. */
+let catalogRefreshMinutes = 60;
 let youtubeConfig = { configured: false, source: "none" as "environment" | "database" | "none", hasSavedCredential: false, regionCode: "KR" };
 function trailerPreflight(id: string) {
   const d = mockTrailers[id] ?? {};
@@ -503,6 +504,18 @@ export function installMockApi() {
       await delay(mode === "slow" ? 8000 : 400);
       return json(trailerPreflight(decodeURIComponent(trailerCheck[1])));
     }
+    if (path === "/admin/catalog-refresh") {
+      if (method === "PATCH") {
+        if (!Number.isInteger(body.intervalMinutes) || body.intervalMinutes < 1 || body.intervalMinutes > 10080) return json({ error: "invalid-request" }, 400);
+        catalogRefreshMinutes = body.intervalMinutes;
+      }
+      return json({ intervalMinutes: catalogRefreshMinutes });
+    }
+    const titleRefresh = /^\/media\/([^/]+)\/refresh$/.exec(path);
+    if (titleRefresh && method === "POST") {
+      const updated = detail(decodeURIComponent(titleRefresh[1]));
+      return updated ? json({ detail: updated, errors: [] }) : json({ error: "media-not-found" }, 404);
+    }
     if (path === "/admin/youtube/config") {
       if (method === "PATCH") {
         if (typeof body.regionCode === "string") { if (!/^[A-Z]{2}$/.test(body.regionCode)) return json({ error: "youtube-region-invalid" }, 400); youtubeConfig = { ...youtubeConfig, regionCode: body.regionCode }; }
@@ -515,7 +528,18 @@ export function installMockApi() {
     if (path === "/media") { const type = url.searchParams.get("type"); const items = cards.filter(card => !type || card.type === type); return json({ items, page: 1, hasNextPage: false, total: items.length }); }
     if (path === "/genres") return json(["드라마", "로맨스", "뮤지컬", "미스터리", "음악", "코미디", "스릴러"]);
     if (path === "/search") { const q = (url.searchParams.get("q") ?? "").toLowerCase(); const hit = cards.filter(card => card.title.toLowerCase().includes(q)); return json({ query: q, groups: [{ provider: local, items: hit.filter(card => card.provider.id === "local") }, { provider: ext, items: hit.filter(card => card.provider.id !== "local") }] }); }
-    if (path === "/watchlist") return json(cards.filter(card => watchlist.has(card.id)));
+    if (path === "/watchlist/refresh-status") return json({ running: false, revision: "mock-watchlist" });
+    if (path === "/watchlist") {
+      const saved = [...watchlist].reverse().map(id => byId.get(id)!).filter(Boolean).map(card => {
+        if (card.type === "movie" || card.provider.kind === "local") return card;
+        const episodes = episodesOf(card.id);
+        const last = episodes.findLastIndex(e => e.progress && (e.progress.position > 0 || e.progress.completed));
+        return { ...card, ...(card.id === "demo-1" ? { episodesUpdatedAt: ago(3_600_000) } : {}),
+          ...(last >= 0 ? { unseenEpisodeCount: episodes.length - last - 1 } : {}) };
+      });
+      if (url.searchParams.get("sort") === "updated") saved.sort((a,b) => (b.episodesUpdatedAt ?? "").localeCompare(a.episodesUpdatedAt ?? ""));
+      return json(saved);
+    }
     if (path.startsWith("/watchlist/")) { const id = decodeURIComponent(path.slice(11)); watchlist = new Set(watchlist); if (method === "PUT") watchlist.add(id); else watchlist.delete(id); return json(null, 204); }
     if (path === "/history") return json({ items: history(), page: 1, hasNextPage: false });
     if (path.startsWith("/history/media/") && method === "DELETE") { episodesOf(decodeURIComponent(path.slice(15))).forEach(e => progressLog.delete(e.id)); return json(null, 204); }
@@ -750,6 +774,17 @@ export function installMockApi() {
       }
       if (short[2] !== "trailers") { if (method !== "POST") return json({ error: "not-found" }, 404); shortsSeen.add(key); return json({ ok: true }); }
       return json({ trailers: shortsTrailerKeys[key] ?? [], checked: true });
+    }
+    if (path === "/settings/device") {
+      const headers = new Headers(init?.headers);
+      const key = `moa.mockDevice:${headers.get(PROFILE_HEADER)}:${headers.get("x-moa-device")}`;
+      const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (method === "PATCH" && (!saved || !body.migrate)) {
+        const next = { ...DEFAULT_DEVICE_SETTINGS, ...saved, ...body.settings };
+        sessionStorage.setItem(key, JSON.stringify(next));
+        return json({ settings: next });
+      }
+      return json({ settings: saved });
     }
     if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);

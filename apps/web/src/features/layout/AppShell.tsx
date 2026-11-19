@@ -136,7 +136,6 @@ export function AppShell() {
   const overHero = ["/", "/series", "/movies", "/anime"].includes(location.pathname) || location.pathname.startsWith("/tabs/") || location.pathname === "/local" || location.pathname.startsWith("/title/");
 
   useEffect(() => { if (location.pathname === "/search") setSearchOpen(true); }, [location.pathname]);
-  useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;

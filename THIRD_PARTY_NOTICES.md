@@ -19,6 +19,7 @@ QuickJS 호스트, 소스 호환 모듈, 외부 연결 프록시, MOA worker·�
 
 | 구성 요소 | 출처·라이선스·배포 시 확인 사항 |
 | --- | --- |
+| Anime4K.js 1.1.3 · Anime4K shaders | 기기에서 선택한 2배 확대 효과에 사용합니다. 두 구성 요소의 MIT 라이선스와 저작권 고지를 [웹 빌드](apps/web/public/licenses/Anime4K.txt)에 포함합니다. |
 | rvfc-polyfill 1.0.8 | [원본](https://github.com/ThaUnknown/rvfc-polyfill)은 `GPL-3.0`을 선언합니다. 이후 버전 허용을 추정하지 않고 보수적으로 GPL-3.0-only로 취급합니다. JASSUB에서 가져오며, MOA 자체 코드의 or-later 조건과 별개로 합쳐진 브라우저 배포물은 GPLv3를 충족해야 합니다. |
 | JASSUB 2.5.16 | [원본](https://github.com/ThaUnknown/jassub)의 JS 연결 코드는 MIT입니다. WASM 선언은 `LGPL-2.1-or-later AND (FTL OR GPL-2.0-or-later) AND MIT AND MIT-Modern-Variant AND ISC AND NTP AND Zlib AND BSL-1.0`이며, JS의 LICENSE가 모든 WASM 구성 요소에 적용되지는 않습니다. 배포할 실행 파일에 필요한 정확한 libass·FreeType·기본 글꼴 소스, 고지, 빌드 옵션, 재연결·교체 자료는 **UNKNOWN**입니다. 선택한 배포물에 맞게 확보해야 합니다. |
 | sharp 0.34.5 / libvips 사전 빌드 1.2.4 | [sharp](https://github.com/lovell/sharp)는 Apache-2.0, 설치한 [libvips](https://github.com/libvips/libvips) 사전 빌드는 LGPL-3.0-or-later입니다. 포함된 모든 라이브러리의 고지, 정확한 소스, 교체·재연결에 필요한 자료를 보존해야 합니다. 사전 빌드 전체 구성 요소의 고지·소스 목록은 **UNKNOWN**입니다. |
@@ -74,6 +75,7 @@ QuickJS 호스트, 소스 호환 모듈, 외부 연결 프록시, MOA worker·�
 | `agent-base` | 7.1.4 | MIT | [원본](https://github.com/TooTallNate/proxy-agents#readme) | 포함 |
 | `ajv` | 8.20.0 | MIT | [원본](https://ajv.js.org) | 포함 |
 | `ajv-formats` | 3.0.1 | MIT | [원본](https://github.com/ajv-validator/ajv-formats#readme) | 포함 |
+| `anime4k.js` | 1.1.3 | MIT | [원본](https://github.com/monyone/Anime4K.js) | [셰이더 포함 전체 고지](LICENSES/npm/anime4k.js_1.1.3/LICENSE) |
 | `anynum` | 1.0.1 | MIT | [원본](https://github.com/NaturalIntelligence/anynum#readme) | 포함 |
 | `atomic-sleep` | 1.0.0 | MIT | [원본](https://github.com/davidmarkclements/atomic-sleep#readme) | 포함 |
 | `avvio` | 9.3.0 | MIT | [원본](https://github.com/fastify/avvio#readme) | 포함 |

@@ -1,3 +1,4 @@
+import { catalogReadOptions } from '../api/catalog-refresh';
 import { SourceFilters, useSourceFilters } from '../features/sources/SourceFilters';
 import { sourcePage, parseSelection } from '../features/sources/source-browse';
 import { useEffect, useId, useState } from 'react';
@@ -5,7 +6,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ChevronRight, Plus, Radio, RefreshCw, Search, Settings2, Trash2, Tv, X } from 'lucide-react';
 import type { BrowseSelection, MediaCard, MediaType, Page, SourcePreference, SourcePreload, SourceRemovalImpact, SourceRemovalResult, VideoSource } from '@moa/shared';
-import { api, ApiError, sized } from '../lib/api';
+import { api, ApiError, currentProfileId, sized } from '../lib/api';
 import { useMe } from '../api/queries';
 import { Button, ButtonLink, EmptyState, IconButton, ScrollLoader, SegmentedControl, Select, Skeleton, Spinner, Toggle } from '../components/ui';
 import { LandscapeCard, PosterCard } from '../components/Cards';
@@ -16,7 +17,7 @@ export const useSources = () => useQuery({ queryKey: ['sources'], queryFn: () =>
 const path = (id: string) => `/sources/${encodeURIComponent(id)}`;
 const message = '소스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 function useSourcePage(source: VideoSource, mode: string, q = '') {
-  return useQuery({ queryKey: ['source-page',source.id,mode,q], queryFn: ({ signal }) => api<Page<MediaCard>>(`${path(source.id)}/browse?mode=${mode}&q=${encodeURIComponent(q)}`, { signal }), staleTime: 5 * 60_000, retry: false });
+  return useQuery({ ...catalogReadOptions, queryKey: ['source-page',source.id,mode,q,currentProfileId()], queryFn: ({ signal }) => api<Page<MediaCard>>(`${path(source.id)}/browse?mode=${mode}&q=${encodeURIComponent(q)}`, { signal }), staleTime: 5 * 60_000, retry: false });
 }
 export function SourceRow({ source, type }: { source: VideoSource; type?: MediaType }) {
   const page = useSourcePage(source,'popular');
@@ -48,7 +49,7 @@ export function SourceBrowsePage() {
   useEffect(() => setDraft(selection), [rawFilters,id]);
   const mode = term || selection?.filters?.length ? 'search' : params.get('mode') === 'latest' ? 'latest' : 'popular';
   const setMode = (mode: 'popular' | 'latest' | 'search') => setParams({ mode }, { replace: true });
-  const query = useInfiniteQuery({ queryKey: ['source-browse',id,mode,term,selection], initialPageParam: 1, queryFn: ({ pageParam, signal }) => sourcePage(id,mode,term,pageParam,selection,signal), getNextPageParam: last => last.hasNextPage ? last.page + 1 : undefined, enabled: Boolean(source?.enabled), staleTime: 5 * 60_000, retry: false });
+  const query = useInfiniteQuery({ ...catalogReadOptions, queryKey: ['source-browse',id,mode,term,selection,currentProfileId()], initialPageParam: 1, queryFn: ({ pageParam, signal }) => sourcePage(id,mode,term,pageParam,selection,signal), getNextPageParam: last => last.hasNextPage ? last.page + 1 : undefined, enabled: Boolean(source?.enabled), staleTime: 5 * 60_000, retry: false });
   const items = [...new Map(query.data?.pages.flatMap(p => p.items).map(item => [item.id,item]) || []).values()];
   const modes = ([{ value: 'popular', label: '인기' }, { value: 'latest', label: '최신' }] as const).filter(({ value }) => schema.data?.availableModes.includes(value));
   return <div className="page-pad"><header className="page-head"><button type="button" className="text-btn" onClick={() => window.history.state?.idx > 0 ? navigate(-1) : navigate("/", { replace: true })}><ArrowLeft size={16}/>뒤로</button><h1>{source?.name || '소스'}</h1></header>

@@ -161,6 +161,9 @@ test('local single seasons join their season while multi-season and unknown libr
   const queries: string[] = [], all = db.all.bind(db);
   db.all = ((sql: string,...params: Parameters<Store['all']>[1][]) => { queries.push(sql); return all(sql,...params); }) as Store['all'];
   groups.resolve([],'p1');
+  assert.equal(queries.length,0,'warm mapping reuses the identity snapshot');
+  db.run("UPDATE media SET title='Updated Local Show II' WHERE id='roman'");
+  groups.resolve([],'p1');
   assert.equal(queries.length,4,'mapping query count is independent of media and local season counts');
   assert.equal(queries.filter(sql=>sql.includes('tmdb_links')).length,1,'TMDB links loaded in one join');
 }));

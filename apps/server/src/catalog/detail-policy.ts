@@ -3,6 +3,14 @@ import { Store } from '../db.js';
 const DAY = 86400_000;
 export const ACTIVE_DETAIL_POLICY = { freshMs: 15 * 60_000, staleMs: DAY };
 export const COMPLETED_DETAIL_POLICY = { freshMs: 3 * DAY, staleMs: 7 * DAY };
+type EpisodeIdentity = { id: string; number: number };
+function sortEpisodes(episodes: EpisodeIdentity[]) {
+  return [...episodes].sort((a,b) => a.number-b.number || a.id.localeCompare(b.id));
+}
+function fingerprintOf(sorted: EpisodeIdentity[]) {
+  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+}
+
 export class DetailPolicy {
   constructor(private db: Store, private clock = Date.now) {
     // Old detail_at is not evidence of 21 days of stable episodes.
@@ -10,18 +18,52 @@ export class DetailPolicy {
       media_id TEXT PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
       fingerprint TEXT NOT NULL, episode_count INTEGER NOT NULL, last_episode_id TEXT,
       changed_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
-      completed INTEGER NOT NULL, reset_until INTEGER NOT NULL DEFAULT 0)`);
+      completed INTEGER NOT NULL, reset_until INTEGER NOT NULL DEFAULT 0, episode_ids TEXT, episodes_updated_at INTEGER)`);
+    const columns = db.all('PRAGMA table_info(source_detail_observations)').map(row=>row.name);
+    if (!columns.includes('episode_ids')) db.transaction(() => {
+      db.db.exec('ALTER TABLE source_detail_observations ADD COLUMN episode_ids TEXT');
+      // Catalog rows for withdrawn episodes may still hold progress. Only recover
+      // the last observed membership when its original fingerprint agrees.
+      for (const row of db.all('SELECT media_id,fingerprint FROM source_detail_observations')) {
+        const episodes = sortEpisodes(db.all('SELECT id,number FROM episodes WHERE media_id=?', row.media_id).map(e=>({id:e.id,number:e.number})));
+        if (fingerprintOf(episodes) === row.fingerprint) db.run('UPDATE source_detail_observations SET episode_ids=? WHERE media_id=?', JSON.stringify(episodes.map(e=>e.id)), row.media_id);
+      }
+    });
+    if (!columns.includes('episodes_updated_at')) db.db.exec('ALTER TABLE source_detail_observations ADD COLUMN episodes_updated_at INTEGER');
+    // Cache invalidation can discard freshness without making a withdrawn episode playable.
+    if (!db.get("SELECT 1 FROM sqlite_master WHERE name='withdrawn_episodes'")) db.transaction(() => {
+      if (db.get("SELECT 1 FROM sqlite_master WHERE name='withdrawn_episodes'")) return;
+      db.db.exec(`CREATE TABLE withdrawn_episodes(episode_id TEXT PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE);
+        CREATE VIEW available_episodes AS SELECT e.* FROM episodes e
+        WHERE NOT EXISTS(SELECT 1 FROM withdrawn_episodes w WHERE w.episode_id=e.id)`);
+      const observations = db.db.prepare('SELECT media_id,episode_ids FROM source_detail_observations WHERE episode_ids IS NOT NULL');
+      for (const row of observations.iterate()) {
+        this.recordWithdrawals(row.media_id as string, row.episode_ids as string);
+      }
+    });
   }
-  observe(id: string, episodes: { id: string; number: number }[], completed: boolean) {
-    const sorted = [...episodes].sort((a,b) => a.number-b.number || a.id.localeCompare(b.id));
-    const fingerprint = createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+  private recordWithdrawals(mediaId: string, currentIds: string) {
+    this.db.run('DELETE FROM withdrawn_episodes WHERE episode_id IN (SELECT value FROM json_each(?))', currentIds);
+    this.db.run(`INSERT OR IGNORE INTO withdrawn_episodes
+      SELECT id FROM episodes WHERE media_id=? AND id NOT IN (SELECT value FROM json_each(?))`, mediaId, currentIds);
+  }
+  observe(id: string, episodes: EpisodeIdentity[], completed: boolean) {
+    const sorted = sortEpisodes(episodes);
+    const fingerprint = fingerprintOf(sorted);
     const old = this.db.get('SELECT * FROM source_detail_observations WHERE media_id=?', id), now = this.clock();
     const changed = old && old.fingerprint !== fingerprint;
-    this.db.run('INSERT OR REPLACE INTO source_detail_observations VALUES(?,?,?,?,?,?,?,?)', id, fingerprint,
-      sorted.length, sorted.at(-1)?.id ?? null, !old || changed ? now : old.changed_at, now, Number(completed), changed ? now + 21*DAY : old?.reset_until ?? 0);
+    const previous = old?.episode_ids ? new Set<string>(JSON.parse(old.episode_ids)) : null;
+    const added = previous && sorted.some(episode=>!previous.has(episode.id));
+    const ids = JSON.stringify(sorted.map(episode => episode.id));
+    if (!old?.episode_ids || changed) this.recordWithdrawals(id, ids);
+    this.db.run('INSERT OR REPLACE INTO source_detail_observations(media_id,fingerprint,episode_count,last_episode_id,changed_at,observed_at,completed,reset_until,episode_ids,episodes_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)', id, fingerprint,
+      sorted.length, sorted.at(-1)?.id ?? null, !old?.observed_at || changed ? now : old.changed_at, now, Number(completed), changed ? now + 21*DAY : old?.reset_until ?? 0, ids, added ? now : old?.episodes_updated_at ?? null);
   }
   invalidateSource(source: string) {
-    this.db.run('DELETE FROM source_detail_observations WHERE media_id IN (SELECT media_id FROM source_media WHERE source_id=?)', source);
+    // Restart completion evidence on the next successful read. The last complete
+    // listing and its addition timestamp belong to the catalog across cache resets.
+    this.db.run(`UPDATE source_detail_observations SET observed_at=0,completed=0,reset_until=0
+      WHERE media_id IN (SELECT media_id FROM source_media WHERE source_id=?)`, source);
   }
   policy(id: string) {
     const now = this.clock(), observation = this.db.get('SELECT * FROM source_detail_observations WHERE media_id=?', id);

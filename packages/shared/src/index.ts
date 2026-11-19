@@ -9,7 +9,7 @@ export type MediaType = "movie" | "series" | "anime";
 export type ProviderKind = "local" | "mangayomi-js" | "aniyomi-apk";
 
 export interface ApiError { error: string; message?: string }
-export interface Page<T> { items: T[]; page: number; hasNextPage: boolean; total?: number }
+export interface Page<T> { refreshing?: boolean; items: T[]; page: number; hasNextPage: boolean; total?: number }
 
 /* ---------- Profiles ---------- */
 
@@ -55,6 +55,14 @@ export interface ResumeTarget {
   kind: 'resume' | 'next';
 }
 export interface MediaCard {
+  /** Stable identity of the visible title group, independent of its representative source. */
+  groupId?: string;
+  /** Visible selected members used to reconcile incremental search cards. */
+  groupMemberIds?: string[];
+  /** Allowed member whose playback history supplies resume/progress for this group. */
+  resumeMediaId?: string;
+  /** Saved representative whose group is managed when opening this watchlist card. */
+  watchlistMediaId?: string;
   seasonInfo?: SeasonInfo;
   audio?: 'sub' | 'dub';
   baseTitle?: string;
@@ -76,6 +84,10 @@ export interface MediaCard {
   provider: ProviderRef;
   /** Number of episodes for series/anime. */
   episodeCount?: number;
+  /** Available episodes after the latest watched episode, never premiere schedules. */
+  unseenEpisodeCount?: number;
+  /** Last observed source episode-list change, independent of metadata refresh. */
+  episodesUpdatedAt?: string;
   progress?: ProgressSummary;
   /** Next playable target; does not create viewing progress. */
   resume?: ResumeTarget;
@@ -130,6 +142,7 @@ export interface Franchise { title: string; seasons: FranchiseSeason[]; complete
 // GET /api/media/:id/franchise -> Franchise
 
 export interface MediaDetail extends MediaCard {
+  refreshing?: boolean;
   overview?: string;
   rating?: number;
   /** Seconds, movies only. */
@@ -176,6 +189,7 @@ export interface Row {
 }
 
 export interface HomeResponse {
+  refreshing?: boolean;
   /** 1..5 featured items for the rotating hero. */
   hero: MediaCard[];
   rows: Row[];
@@ -473,6 +487,7 @@ export interface Settings {
   autoFetchSubtitles: boolean;
   /** Compare dialogue timing before applying a confident constant offset. */
   experimentalSubtitleSync: boolean;
+  experimentalSegmentedSubtitleSync: boolean;
   translationMode: "manual" | "ask" | "auto";
   /** Preferred original when automatic translation is needed. */
   translationSourcePriority: "site" | "jimaku";
@@ -532,9 +547,10 @@ export type DeviceSettings = Pick<Settings, 'subtitleSize' | 'subtitleScale' | '
   /** null follows the device's mobile/desktop default. */
   shortsScreenFit: boolean | null;
   playerShortcuts: PlayerShortcuts;
+  experimentalAnime4k: boolean;
   fullscreenOnPlay: boolean; autoSkip: boolean; seekStep: 5 | 10 | 15 | 30; holdSpeed: 1.25 | 1.5 | 2 | 2.5 | 3; videoFill: boolean; seasonSwitcher: boolean; titleGrouping: boolean;
 };
-export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: false, subtitleStep: 5 };
+export const DEFAULT_DEVICE_SETTINGS: DeviceSettings = { experimentalAnime4k: false, playerShortcuts: DEFAULT_PLAYER_SHORTCUTS, shortsScreenFit: null, fullscreenOnPlay: true, autoSkip: false, seekStep: 10, holdSpeed: 2, videoFill: false, seasonSwitcher: true, titleGrouping: true, subtitleSize: 'medium', subtitleScale: null, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitleHeight: 0, subtitlePadding: 6, subtitlePreserveAss: false, subtitleStep: 5 };
 
 export const ACCOUNT_PERMISSIONS = ['video.watch', 'subtitles.add', 'subtitles.translate'] as const;
 export type AccountPermission = typeof ACCOUNT_PERMISSIONS[number];
