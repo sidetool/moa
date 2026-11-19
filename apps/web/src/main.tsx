@@ -14,7 +14,7 @@ import { SettingsPage } from "./pages/AdminPages";
 import { SourceBrowsePage } from "./pages/SourcesPage";
 import { WatchPage } from "./pages/WatchPage";
 import { ShortsPage } from "./pages/ShortsPage";
-import { useMe } from "./api/queries";
+import { listenForScenePreference, useMe } from "./api/queries";
 import { EmptyState } from "./components/ui";
 import { ApiError, currentProfileId } from "./lib/api";
 import type { MediaType } from "@moa/shared";
@@ -97,9 +97,10 @@ const router = createBrowserRouter([{ element: <BrowsingLayout />, children: [
   }
 ]}]);
 
+const disposeScenePreference = listenForScenePreference(queryClient);
 const disposeRemote = installRemoteNavigation(router);
 const disposeFullscreen = installPlaybackFullscreen(router);
-if (import.meta.hot) import.meta.hot.dispose(() => { disposeRemote(); disposeFullscreen(); });
+if (import.meta.hot) import.meta.hot.dispose(() => { disposeRemote(); disposeFullscreen(); disposeScenePreference(); });
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -1,4 +1,5 @@
 import { EpisodeRefreshButton, useEpisodeRefresh } from '../features/title/EpisodeRefresh';
+import { TitleOverview } from '../features/title/TitleOverview';
 import { TitleReviews } from '../features/title/TitleReviews';
 import { TitleSources } from '../features/title/TitleSources';
 import { InlinePlugins } from '../features/plugins/WebsitePlugins';
@@ -208,7 +209,6 @@ export function TitlePage() {
   const savedEdition = new URLSearchParams(useLocation().search).get("savedEdition");
   const savedGroup = useGroupWatchlist(id, savedEdition);
   const toggle = useWatchlistToggle();
-  const [expanded, setExpanded] = useState(false);
   const [trailer, setTrailer] = useState(false);
   const closeTrailer = useCallback(() => setTrailer(false), []);
   const admin = useMe().data?.role === "admin";
@@ -288,9 +288,7 @@ export function TitlePage() {
           {toggle.isError && toggle.variables.savedEdition && toggle.variables.id === id && <p role="alert">내 목록을 변경하지 못했어요. 다시 시도해 주세요.</p>}
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
-          {m.overview && (
-            <p className={cx("title-overview", expanded && "is-expanded")} onClick={() => setExpanded(true)}>{m.overview}</p>
-          )}
+          {m.overview && <TitleOverview key={m.id} text={m.overview} />}
           {m.cast?.length ? <p className="title-cast"><span>출연</span>{m.cast.slice(0, 4).join(", ")}{m.cast.length > 4 ? " 외" : ""}</p> : null}
         </div>
       </section>

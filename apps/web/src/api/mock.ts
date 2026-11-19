@@ -43,7 +43,7 @@ let profiles: Profile[] = [
 // Development-only PIN state, reset on reload; never return PINs in profile JSON.
 const profilePins = new Map<string, string>();
 let unlockedProfile: string | null = null;
-let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false };
+let settings: Settings = { shortsQuality: "auto", recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, showResumeScene: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: "ko", subtitleSize: "medium", preferredQuality: "auto", hardwareTranscoding: true, autoFetchSubtitles: true, translationMode: "manual", translationSourcePriority: "site", skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false };
 
 /* Viewing progress per episode. Seeded with a half-watched episode, a half-watched movie and a
    finished episode whose next one should lead "continue watching" without a progress bar. */
@@ -72,7 +72,7 @@ function continueOf(id: string) {
   const latest = episodes.filter(e => e.progress && (e.progress.position > 0 || e.progress.completed))
     .sort((a, b) => b.progress!.updatedAt.localeCompare(a.progress!.updatedAt))[0];
   if (!latest) return null;
-  if (!latest.progress!.completed) return { episode: latest, resume: { episodeId: latest.id, position: latest.progress!.position, kind: "resume" as const, label: movie ? "이어보기" : `이어보기 S${latest.season}:E${latest.number}` } };
+  if (!latest.progress!.completed) return { episode: latest, resume: { episodeId: latest.id, thumb: latest.thumb, updatedAt: latest.progress!.updatedAt, position: latest.progress!.position, kind: "resume" as const, label: movie ? "이어보기" : `이어보기 S${latest.season}:E${latest.number}` } };
   const next = movie ? undefined : episodes.slice(episodes.indexOf(latest) + 1).find(e => !e.progress?.completed);
   return next ? { episode: next, resume: { episodeId: next.id, position: next.progress?.position || 0, kind: "next" as const, label: `다음 회차 S${next.season}:E${next.number}` } } : null;
 }
@@ -88,16 +88,16 @@ function withProgress(card: MediaCard): MediaCard {
   return { ...card, resume: target.resume, progress: { episodeId: e.id, ratio: p.position / p.duration, label: card.type === "movie" ? remaining : `S${e.season}:E${e.number} · ${remaining}` } };
 }
 
-function history(): HistoryEntry[] {
+function history(grouped: boolean): HistoryEntry[] {
   const records = [...progressLog].map(([episodeId, progress]) => ({ episodeId, progress, mediaId: episodeId.replace(/-(m|e\d+)$/, "") }))
     .sort((a, b) => b.progress.updatedAt.localeCompare(a.progress.updatedAt) || b.episodeId.localeCompare(a.episodeId));
   const counts = new Map<string, number>();
   records.forEach(r => counts.set(r.mediaId, (counts.get(r.mediaId) ?? 0) + 1));
   const seen = new Set<string>();
   // Grouping is display-only: every episode record stays stored.
-  return records.filter(r => !settings.groupHistory || (!seen.has(r.mediaId) && !!seen.add(r.mediaId))).flatMap(r => {
+  return records.filter(r => !grouped || (!seen.has(r.mediaId) && !!seen.add(r.mediaId))).flatMap(r => {
     const card = byId.get(r.mediaId), episode = episodesOf(r.mediaId).find(e => e.id === r.episodeId);
-    return card && episode ? [{ media: withProgress(card), episode, watchedAt: r.progress.updatedAt, ...(settings.groupHistory ? { groupedCount: counts.get(r.mediaId) } : {}) }] : [];
+    return card && episode ? [{ media: withProgress(card), episode, watchedAt: r.progress.updatedAt, ...(grouped ? { groupedCount: counts.get(r.mediaId) } : {}) }] : [];
   });
 }
 
@@ -527,7 +527,18 @@ export function installMockApi() {
     if (path.startsWith("/media/")) { const d = detail(decodeURIComponent(path.slice(7))); return d ? json(d) : json({ error: "not-found" }, 404); }
     if (path === "/media") { const type = url.searchParams.get("type"); const items = cards.filter(card => !type || card.type === type); return json({ items, page: 1, hasNextPage: false, total: items.length }); }
     if (path === "/genres") return json(["드라마", "로맨스", "뮤지컬", "미스터리", "음악", "코미디", "스릴러"]);
-    if (path === "/search") { const q = (url.searchParams.get("q") ?? "").toLowerCase(); const hit = cards.filter(card => card.title.toLowerCase().includes(q)); return json({ query: q, groups: [{ provider: local, items: hit.filter(card => card.provider.id === "local") }, { provider: ext, items: hit.filter(card => card.provider.id !== "local") }] }); }
+    if (path === "/search") {
+      const query = url.searchParams.get("q") ?? "";
+      const normalize = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[\p{P}\p{Z}\s_]+/gu, "");
+      const q = normalize(query);
+      const groups = [local, ext].map(provider => {
+        const items = cards.filter(card => card.provider.id === provider.id);
+        const titleMatches = items.filter(card => [card.title, card.originalTitle].some(title => title && normalize(title).includes(q)));
+        const genres = items.filter(card => !titleMatches.includes(card) && card.genres?.some(genre => normalize(genre).includes(q)));
+        return { provider, items: [...titleMatches, ...genres.map(card => ({ ...card, genreMatch: true }))] };
+      });
+      return json({ query, groups });
+    }
     if (path === "/watchlist/refresh-status") return json({ running: false, revision: "mock-watchlist" });
     if (path === "/watchlist") {
       const saved = [...watchlist].reverse().map(id => byId.get(id)!).filter(Boolean).map(card => {
@@ -541,7 +552,12 @@ export function installMockApi() {
       return json(saved);
     }
     if (path.startsWith("/watchlist/")) { const id = decodeURIComponent(path.slice(11)); watchlist = new Set(watchlist); if (method === "PUT") watchlist.add(id); else watchlist.delete(id); return json(null, 204); }
-    if (path === "/history") return json({ items: history(), page: 1, hasNextPage: false });
+    if (path === "/history") {
+      const mode = url.searchParams.get("groupHistory");
+      const items = history(mode === null ? settings.groupHistory : mode === "true");
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return json({ items: items.slice((page - 1) * 40, page * 40), total: items.length, page, hasNextPage: items.length > page * 40 });
+    }
     if (path.startsWith("/history/media/") && method === "DELETE") { episodesOf(decodeURIComponent(path.slice(15))).forEach(e => progressLog.delete(e.id)); return json(null, 204); }
     if (path.startsWith("/history/") && method === "DELETE") { progressLog.delete(decodeURIComponent(path.slice(9))); return json(null, 204); }
     if (path === "/progress") {
@@ -786,7 +802,15 @@ export function installMockApi() {
       }
       return json({ settings: saved });
     }
-    if (path === "/settings") { if (method === "PATCH") settings = { ...settings, ...body }; return json(settings); }
+    if (path === "/settings") {
+      const key = `moa.mockResumeScene:${selectedProfile}`;
+      if (method === "PATCH") {
+        const { showResumeScene, ...other } = body;
+        if (typeof showResumeScene === "boolean") localStorage.setItem(key, String(showResumeScene));
+        settings = { ...settings, ...other };
+      }
+      return json({ ...settings, showResumeScene: localStorage.getItem(key) !== "false" });
+    }
     if (path === "/library/folders") return json([{ id: "f1", path: "/media/library", type: "anime", label: "내 영상", itemCount: 2, lastScanAt: new Date(now - 600_000).toISOString() }]);
     if (path === "/library/status") return json({ running: false, done: 15, total: 15 });
     if (path === "/library/scan") return json({ running: true, phase: "probing", done: 3, total: 15 });

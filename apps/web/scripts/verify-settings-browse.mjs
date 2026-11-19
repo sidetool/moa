@@ -80,14 +80,22 @@ try {
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     const pages = [], previews = [], installs = [], navigationSaves = [], deviceSaves = [];
-    let device = {};
+    let device = {}, failSceneSave = true;
     let fail = true, settings = { experimentalSubtitleSync: true, autoplayNext: true, autoplayDelay: 5, preferredQuality: 'auto', defaultSubtitleLang: 'ko', subtitleSize: 'medium', translationMode: 'manual', translationSourcePriority: 'site', navigation: ['홈', '영화', '애니', '시리즈'].map((name, index) => ({ id: ['home', 'movies', 'anime', 'series'][index], name, sourceIds: ['test-source'], includeLocal: true })) };
     await context.route(url => url.pathname.startsWith('/api/'), async route => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/api/me') return route.fulfill({ json: { id: 'admin', username: '테스트', role: 'admin' } });
       if (path === '/api/profiles') return route.fulfill({ json: [{ id: 'test', name: '테스트', color: 'blue' }] });
       if (path === '/api/settings') {
-        if (route.request().method() === 'PATCH') { const patch = route.request().postDataJSON(); settings = { ...settings, ...patch }; if (patch.navigation) navigationSaves.push(patch.navigation.map(tab => tab.id)); }
+        if (route.request().method() === 'PATCH') {
+          const patch = route.request().postDataJSON();
+          if (failSceneSave && patch.showResumeScene === false) {
+            failSceneSave = false;
+            return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+          }
+          settings = { ...settings, ...patch };
+          if (patch.navigation) navigationSaves.push(patch.navigation.map(tab => tab.id));
+        }
         return route.fulfill({ json: settings });
       }
       if (path === '/api/settings/device') {
@@ -161,6 +169,19 @@ try {
     await disclosure(page.locator('.pick-conditions'), width);
     await page.getByRole('button', { name: '닫기', exact: true }).click();
     assert.equal(await title.textContent(), '홈 화면');
+    const sceneToggle = page.getByRole('switch', { name: '이어보기에 마지막 장면 표시', exact: true });
+    assert.equal(await sceneToggle.getAttribute('aria-checked'), 'true');
+    await sceneToggle.click();
+    await page.getByRole('alert').filter({ hasText: '저장하지 못했어요. 다시 시도해 주세요.' }).waitFor();
+    assert.equal(await sceneToggle.getAttribute('aria-checked'), 'true');
+    await sceneToggle.click();
+    await page.getByRole('switch', { name: '이어보기에 마지막 장면 표시', checked: false }).waitFor();
+    assert.equal(settings.showResumeScene, false);
+    await page.reload();
+    await page.getByRole('switch', { name: '이어보기에 마지막 장면 표시', checked: false }).waitFor();
+    await sceneToggle.press('Space');
+    await page.getByRole('switch', { name: '이어보기에 마지막 장면 표시', checked: true }).waitFor();
+    assert.equal(settings.showResumeScene, true);
     const tabOrder = () => page.locator('.tab-item').evaluateAll(items => items.map(item => item.dataset.id));
     const tabList = page.locator('.tab-list');
     await page.getByRole('button', { name: '영화 아래로', exact: true }).click();

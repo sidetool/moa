@@ -75,9 +75,9 @@ export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, group
   app.get('/api/search', { schema: { querystring: object({ q: { type: 'string', maxLength: 200, default: '' } }) } }, async req => {
     const q = query(req).q, found = catalog.search(profile(req), q);
     if (!tmdb.enabled || q.trim().length < 2) return found;
-    const visible = found.groups.flatMap(group=>group.items.map(card=>card.id));
-    if (visible.length) {
-      await tmdb.ensure(visible,0,'background');
+    if (found.groups.some(group => group.items.length)) {
+      const visible = found.groups.flatMap(group => group.items.filter(card => !card.genreMatch).map(card => card.id));
+      if (visible.length) await tmdb.ensure(visible,0,'background');
       return {...found,refreshing:visible.some(id=>tmdb.detailRefreshing(id))};
     }
     const matches = await tmdb.search(q).catch(()=>[]);

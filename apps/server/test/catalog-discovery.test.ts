@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
+import type { SearchGroup } from '@moa/shared';
+import { Tmdb } from '../src/metadata/tmdb.js';
 
 test('grouped continue keeps the representative card and the latest source progress without reviving finished sources', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'moa-grouped-continue-'));
@@ -21,6 +23,9 @@ test('grouped continue keeps the representative card and the latest source progr
       for (const number of [1, 2]) db.run('INSERT INTO episodes VALUES(?,?,?,?,?,?,NULL)', id + number, id, 1, number, `${number}화`, 1200);
     }
     db.run("INSERT INTO tmdb_titles VALUES('tv',100,?,?,?)", JSON.stringify({ title: '작품', originalTitle: 'The Show' }), '{}', Date.now());
+    db.run("UPDATE episodes SET thumb='/art/edition-a-first' WHERE id='a1'");
+    db.run("UPDATE episodes SET thumb='/art/unseen' WHERE number=2");
+    db.run('INSERT INTO tmdb_seasons VALUES(?,?,?,?)', 100, 1, JSON.stringify([{ number: 1, still: '/art/cached-first' }, { number: 2, still: '/art/unseen' }]), Date.now());
     db.run('INSERT INTO progress VALUES(?,?,?,?,?,?)', profile, 'a1', 120, 1200, 0, '2026-10-01');
     db.run('INSERT INTO progress VALUES(?,?,?,?,?,?)', profile, 'b1', 360, 1200, 0, '2026-10-02');
     db.run('INSERT INTO progress VALUES(?,?,?,?,?,?)', other, 'a1', 80, 1200, 0, '2026-10-03');
@@ -32,13 +37,28 @@ test('grouped continue keeps the representative card and the latest source progr
     let cards = await ongoing();
     assert.equal(cards.length, 1); assert.equal(cards[0].id, 'a'); assert.equal(cards[0].sourceCount, 2);
     assert.equal(cards[0].resume.episodeId, 'b1'); assert.equal(cards[0].resume.position, 360); assert.equal(cards[0].progress.ratio, 0.3);
-    assert.equal((await ongoing('', other))[0].resume.position, 80);
+    assert.equal(cards[0].resume.thumb, '/art/cached-first', 'a grouped card uses the cached still for the watched edition');
+    assert.equal(cards[0].resume.updatedAt, '2026-10-02');
+    const otherResume = (await ongoing('', other))[0].resume;
+    assert.equal(otherResume.position, 80);
+    assert.equal(otherResume.thumb, '/art/edition-a-first');
+    assert.equal(otherResume.updatedAt, '2026-10-03');
     assert.equal((await ongoing('&titleGrouping=false')).length, 2);
     await app.inject({ method: 'PATCH', url: '/api/media/b/group', headers, payload: { action: 'separate' } });
     assert.equal((await ongoing()).length, 2);
     await app.inject({ method: 'PATCH', url: '/api/media/b/group', headers, payload: { action: 'reset' } });
     const tab = (await app.inject({ url: '/api/home?providers=a', headers })).json().rows.find((row: any) => row.kind === 'continue').items;
     assert.equal(tab[0].resume.episodeId, 'a1'); assert.equal(tab[0].sourceCount, 1);
+    const post = await app.inject({ method: 'POST', url: '/api/progress', headers, payload: { episodeId: 'b1', position: 400, duration: 1200 } });
+    assert.equal(post.statusCode, 200);
+    assert.equal((await ongoing())[0].resume.updatedAt, post.json().updatedAt);
+    db.run("UPDATE progress SET updated_at='2026-10-02',completed=1,position=1200 WHERE profile_id=? AND episode_id='b1'", profile);
+    const next = (await ongoing())[0].resume;
+    assert.equal(next.episodeId, 'b2');
+    assert.equal(next.kind, 'next');
+    assert.equal(next.thumb, undefined);
+    assert.equal(next.updatedAt, undefined);
+    db.run("UPDATE progress SET completed=0,position=360 WHERE profile_id=? AND episode_id='b1'", profile);
     db.run('INSERT INTO progress VALUES(?,?,?,?,?,?)', profile, 'b2', 1200, 1200, 1, '2026-10-04');
     assert.equal((await ongoing()).length, 0);
     db.run("DELETE FROM progress WHERE episode_id='b2'");
@@ -81,6 +101,65 @@ test('search uses stored originals, aliases and confirmed TMDB identities while 
     assert.deepEqual(calls, ['Different English Name']);
     await app.inject({ url: '/api/search?q=Saved%20English%20Name', headers: { 'x-moa-profile': profile } });
     assert.equal(calls.length, 1);
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('library search appends visible stored genre matches after title matches without external genre lookups', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'moa-genre-search-'));
+  const { app, db } = await buildApp({ dataDir: directory, mediaRoot: directory }, false, { tmdb: { token: 'fixture', key: '' } });
+  const enrich = t.mock.method(Tmdb.prototype, 'ensure', async () => {});
+  const search = t.mock.method(Tmdb.prototype, 'search', async () => []);
+  try {
+    const createProfile = async (name: string, kids: boolean) =>
+      (await app.inject({ method: 'POST', url: '/api/profiles', payload: { name, kids } })).json().id;
+    const viewer = await createProfile('Viewer', false), kid = await createProfile('Child', true);
+    const get = async (url: string, profile = viewer) => {
+      const result = await app.inject({ url, headers: { 'x-moa-profile': profile } });
+      assert.equal(result.statusCode, 200, result.body);
+      return result.json();
+    };
+    const results = async (q: string, profile = viewer) => {
+      const { groups } = await get('/api/search?q=' + encodeURIComponent(q), profile);
+      return (groups as SearchGroup[]).flatMap(group => group.items);
+    };
+    const add = (id: string, title: string, metadata: object = {}, date = '2026') =>
+      db.run('INSERT INTO media VALUES(?,NULL,?,?,?,?)', id, title, 'movie', JSON.stringify(metadata), date);
+    add('title', 'Sci-Fi Memoir', { genres: ['Sci Fi'] }, '2001');
+    add('original', 'First Steps', { originalTitle: 'Early SCI FI' }, '2002');
+    add('alias', 'Journey', { altTitles: ['Sci Fi Chronicles'] }, '2003');
+    add('stored', 'Midnight Train', { genres: ['Mystery', 'Sci-Fi'] });
+    add('approved', 'North Wind');
+    add('rejected', 'Snowfall');
+    add('missing', 'Summer');
+    add('malformed', 'Winter', { genres: 'Sci-Fi' });
+    for (const [id, status] of [['approved', 'manual'], ['rejected', 'off']]) {
+      db.run("INSERT INTO tmdb_links VALUES(?,'movie',123,NULL,?,100,0)", id, status);
+    }
+    db.run("INSERT INTO tmdb_titles VALUES('movie',123,?,'{}',0)", JSON.stringify({ title: 'North Wind', genres: ['Sci Fi', 'Space Opera'], certification: 'ALL' }));
+    for (const [id, enabled] of [['on', 1], ['off', 0]] as const) {
+      db.run('INSERT INTO source_entries(id,repository,entry,code,enabled) VALUES(?,?,?,?,?)', id, 'synthetic', '{}', 'fixture', enabled);
+      add('source-' + id, 'Distant World', { genres: ['Sci Fi'], provider: { id, name: id, kind: 'mangayomi-js' } });
+    }
+
+    const mixed = await results('  ＳＣＩ-ＦＩ  ');
+    assert.deepEqual(mixed.map(c => c.id), ['alias', 'original', 'title', 'approved', 'stored', 'source-on']);
+    assert.deepEqual(mixed.filter(c => c.genreMatch).map(c => c.id), ['approved', 'stored', 'source-on']);
+    assert.deepEqual(enrich.mock.calls.map(call => call.arguments[0]), [['alias', 'original', 'title']]);
+    assert.deepEqual((await results('Space-Opera')).map(c => c.id), ['approved']);
+    assert.deepEqual((await results('sci-fi', kid)).map(c => c.id), ['approved']);
+    assert.equal(enrich.mock.callCount(), 1);
+    assert.equal(search.mock.callCount(), 0);
+    assert.deepEqual((await get('/api/media/groups/candidates?q=Sci-Fi')).map((c: { id: string }) => c.id), ['alias', 'original', 'title']);
+
+    db.transaction(() => {
+      for (let i = 0; i < 42; i++) add('collection-' + i, 'Test Film ' + i, { genres: ['Anthology'] });
+    });
+    const library = await results('anthology');
+    assert.equal(library.length, 42);
+    assert.ok(library.every(card => card.genreMatch));
+    const second = await get('/api/media?type=movie&provider=local&genre=Anthology&page=2');
+    assert.equal(second.total, 42);
+    assert.deepEqual(second.items.map((c: { id: string }) => c.id), library.slice(40).map(c => c.id));
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

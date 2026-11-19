@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { openState, setupCode } from './state.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { migrateAccounts, accountsService, accountView, fail, transaction } from './accounts.mjs';
+import { migrateAccounts, accountsService, accountView, sessionEnded, fail, transaction } from './accounts.mjs';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +45,13 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
 
   function cookie(name, value, maxAge) {
     return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax${isSecure() ? '; Secure' : ''}${maxAge == null ? '' : `; Max-Age=${maxAge}`}`;
+  }
+  // The next script-enabled app or auth page consumes this non-authentication cookie.
+  function sceneResetCookie() {
+    return `moa_scene_reset=${randomUUID()}; Path=/; SameSite=Lax; Max-Age=31536000${isSecure() ? '; Secure' : ''}`;
+  }
+  function logoutCookies() {
+    return [cookie(cookieName('session'), '', 0), sceneResetCookie()];
   }
   function cookies(req) {
     return Object.fromEntries((req.headers.cookie ?? '').split(';').map(item => {
@@ -162,7 +169,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
       database.prepare('UPDATE accounts SET last_login_at=? WHERE id=?').run(now(), user.id);
       return token;
     });
-    return redirect(res, `${PREFIX}continue?next=${encodeURIComponent(target(next))}`, { 'Set-Cookie': [cookie(cookieName('session'), token, remember ? days * 86400 : null), cookie(cookieName('csrf'), '', 0)] });
+    return redirect(res, `${PREFIX}continue?next=${encodeURIComponent(target(next))}`, { 'Set-Cookie': [cookie(cookieName('session'), token, remember ? days * 86400 : null), cookie(cookieName('csrf'), '', 0), sceneResetCookie()] });
   }
 
   const server = http.createServer((req, res) => context.run({ secure: trustProxy ? req.headers['x-forwarded-proto'] === 'https' : secure }, async () => {
@@ -198,18 +205,15 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
           if (!current) fail(401, 'login-required');
         }
         const path = url.pathname.slice(`${PREFIX}api/`.length);
-        if (path === 'logout' && req.method === 'POST') {
-          database.prepare('DELETE FROM sessions WHERE token_hash=?').run(current.token_hash);
-          return send(res, 204, '', { 'Set-Cookie': cookie(cookieName('session'), '', 0) });
-        }
         const expensive = req.method === 'POST' && (path === 'password' || path.endsWith('/reset-password'));
         if (expensive) { rateLimit(req); verifying++; }
         let result;
         try { result = await accounts.api(req.method, path, current, data, context.getStore().origin); }
         finally { if (expensive) verifying--; }
+        if (result === sessionEnded) return send(res, 204, '', { 'Set-Cookie': logoutCookies() });
         return send(res, result === null ? 204 : path === 'invites' && req.method === 'POST' ? 201 : 200,
           result === null ? '' : JSON.stringify(result), { 'Content-Type': 'application/json; charset=utf-8',
-          ...(path === 'password' ? { 'Set-Cookie': cookie(cookieName('session'), '', 0) } : path === 'session-settings' && req.method === 'PATCH' && current.remember ? { 'Set-Cookie': cookie(cookieName('session'), cookieValue(req, 'session'), result.days * 86400) } : {}) });
+          ...(path === 'session-settings' && req.method === 'PATCH' && current.remember ? { 'Set-Cookie': cookie(cookieName('session'), cookieValue(req, 'session'), result.days * 86400) } : {}) });
       }
       if (url.pathname === `${PREFIX}setup`) {
         if (!needsSetup()) return send(res, 404, '설정이 이미 완료되었습니다.');
@@ -314,7 +318,7 @@ export function createAuthServer({ credentials, database, origin, allowedOrigins
         if (!validCsrf(req, form)) return send(res, 403, '로그인 화면을 다시 열어 주세요.');
         const current = session(req);
         if (current) database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(current.token_hash);
-        return redirect(res, `${PREFIX}login`, { 'Set-Cookie': [cookie(cookieName('session'), '', 0), cookie(cookieName('csrf'), '', 0)] });
+        return redirect(res, `${PREFIX}login`, { 'Set-Cookie': [...logoutCookies(), cookie(cookieName('csrf'), '', 0)] });
       }
       return send(res, 404, '페이지를 찾을 수 없습니다.');
     } catch (error) {

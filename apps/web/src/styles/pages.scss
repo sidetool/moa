@@ -46,23 +46,9 @@
 
 .title-hero-copy { width: min(720px, 100%); padding: 0 var(--gutter) 28px; animation: rise .5s var(--ease) both; }
 .title-name { font-size: clamp(2.2rem, 5vw, 4rem); font-weight: 900; line-height: 1.04; letter-spacing: -.055em; }
-.title-overview {
-  margin-top: 20px;
-  max-width: 620px;
-  color: var(--text-2);
-  font-size: 1rem;
-  line-height: 1.65;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  cursor: pointer;
-}
-.title-overview.is-expanded { -webkit-line-clamp: unset; cursor: auto; }
 .title-name.has-logo img { width: auto; max-width: min(480px, 88%); max-height: clamp(96px, 18vh, 180px); object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 24px rgba(0, 0, 0, .45)); }
 .title-original { margin-top: 8px; color: var(--text-3); font-size: .92rem; font-weight: 600; }
 .title-tagline { margin-top: 18px; color: var(--text-2); font-size: .95rem; font-weight: 600; }
-.title-tagline + .title-overview { margin-top: 6px; }
 .title-cast { margin-top: 10px; font-size: .88rem; color: var(--text-3); }
 .title-cast span { margin-right: 8px; color: var(--text-2); font-weight: 600; }
 .title-body { padding: 8px var(--gutter) 40px; max-width: 1040px; }
@@ -159,11 +145,12 @@
 
 /* ---------- History ---------- */
 .history-grouping { display: inline-flex; align-items: center; gap: 10px; color: var(--text-2); font-size: .9rem; cursor: pointer; }
-.history-grouping:has(:disabled) { cursor: progress; opacity: .7; }
+.history-grouping:has([aria-disabled=true]) { cursor: progress; opacity: .7; }
 .history-error { margin: 0 0 12px; color: var(--danger); font-size: .88rem; }
 .history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .history-item { display: grid; grid-template-columns: clamp(120px, 16vw, 180px) minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 10px; border-radius: var(--radius-m); }
 .history-item:hover { background: var(--surface-1); }
+.history-item .icon-btn[aria-disabled=true] { cursor: progress; opacity: var(--disabled-opacity); }
 .history-thumb { position: relative; display: block; }
 .history-body { display: grid; gap: 3px; min-width: 0; }
 .history-body b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -381,7 +368,6 @@
   .title-hero-copy .hero-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .title-hero-copy .hero-actions .btn-primary { grid-column: 1 / -1; }
   .title-hero-copy .hero-actions .btn { height: 46px; font-size: .95rem; }
-  .title-overview { font-size: .92rem; }
   .episode { grid-template-columns: 112px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-radius: 0; }
   .episode:hover { background: none; }
   .episode-number { display: none; }

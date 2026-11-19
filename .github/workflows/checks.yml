@@ -11,7 +11,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,7 +62,7 @@ jobs:
           node apps/web/scripts/verify-settings-browse.mjs
           node apps/web/scripts/verify-segmented-subtitles.mjs
           node apps/web/scripts/verify-anime4k.mjs
-      - name: Search results and back navigation
+      - name: Search, viewing history and title navigation
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
           MOA_TEST_BASE: http://127.0.0.1:5137
@@ -73,6 +73,10 @@ jobs:
           curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
           node apps/web/scripts/verify-search-loading.mjs
           node apps/web/scripts/verify-search-return.mjs
+          node apps/web/scripts/verify-library-genre-search.mjs
+          node apps/web/scripts/verify-history-pagination.mjs
+          node apps/web/scripts/verify-title-overview.mjs
+          node apps/web/scripts/verify-resume-art.mjs
       - name: Catalog refresh and saved-title updates
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core

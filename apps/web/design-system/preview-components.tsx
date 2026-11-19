@@ -1,5 +1,6 @@
 import { DEFAULT_PLAYER_SHORTCUTS, type Settings as ProfileSettings } from '@moa/shared';
 import { SubtitleStyleControls } from '../src/features/settings/SubtitleStyleControls';
+import { TitleOverview } from '../src/features/title/TitleOverview';
 import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
@@ -51,7 +52,11 @@ export function SelectPreview() {
 
 export function TogglePreview() {
   const [checked, setChecked] = useState(true);
-  return <div className="preview-stack"><div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="다음 화 자동 재생" checked={checked} onChange={setChecked} /></div><div className="preview-row"><span>사용 불가</span><Toggle label="사용 불가" checked={false} disabled onChange={() => {}} /></div></div>;
+  return <div className="preview-stack">
+    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="다음 화 자동 재생" checked={checked} onChange={setChecked} /></div>
+    <div className="preview-row"><span>저장 중</span><Toggle label="저장 중" checked aria-disabled onChange={() => {}} /></div>
+    <div className="preview-row"><span>사용 불가</span><Toggle label="사용 불가" checked={false} disabled onChange={() => {}} /></div>
+  </div>;
 }
 
 export function FeedbackPreview() {
@@ -220,4 +225,8 @@ export function CatalogRefreshPattern() {
       <li key={title}>{title}{title === '새벽 기차' && <small> · 안 본 회차 2개</small>}</li>)}</ol>
     <div className="preview-row"><b>회차</b><EpisodeRefreshButton state={state} onRefresh={() => setState('busy')} /><IconButton label={descending ? '1화부터 보기' : '최신화부터 보기'} onClick={() => setDescending(!descending)}><ArrowDownUp size={18} /></IconButton></div>
   </div>;
+}
+
+export function TitleOverviewPreview() {
+  return <TitleOverview text="오래전 문을 닫은 극장이 헐리기 전날, 영사 기사가 마지막 상영을 준비한다. 창고에서 발견한 필름에는 마을 사람들이 어릴 때 함께 만든 영화가 담겨 있다. 소식을 듣고 하나둘 극장으로 돌아온 이들은 사라진 마지막 장면을 저마다 다르게 기억한다. 첫 장면이 스크린에 비치자, 그날 카메라를 들고 있던 아이가 누구였는지 비로소 알게 된다." />;
 }
