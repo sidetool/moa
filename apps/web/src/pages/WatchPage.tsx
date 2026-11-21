@@ -3,6 +3,7 @@ import { nextUpTiming } from '../player/playback/next-up';
 import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
 import { attachAnime4k } from '../player/playback/anime4k';
 import { captureResumeScene, resumeSceneEnabled, storeResumeScene, type ResumeScene } from '../player/playback/resume-scene';
+import { PlayerNotice, type PlayerNoticeValue } from '../player/playback/PlayerNotice';
 import { SeekPreview } from '../player/playback/SeekPreview';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
@@ -51,6 +52,11 @@ type Panel = null | "subs" | "settings" | "episodes";
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const HIDE_AFTER = 2600;
 const VOLUME_KEY = "moa.volume";
+const LAST_VOLUME_KEY = "moa.lastAudibleVolume";
+function savedVolume(key: string) {
+  const value = Number(localStorage.getItem(key) ?? 1);
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 1;
+}
 /** Longest a newer translation revision waits for a quiet moment (no translated cue on screen). */
 const REVISION_MAX_WAIT = 45_000;
 
@@ -130,15 +136,18 @@ export function WatchPage() {
   useNoPageZoom();
   const { episodeId = "" } = useParams();
   const fullscreenHost = useRef<HTMLDivElement>(null);
+  const profile = currentProfileId();
+  const [speedChoice, setSpeedChoice] = useState<{ profile: string | null; rate: number }>();
+  const speed = speedChoice?.profile === profile ? speedChoice.rate : 1;
   // A stable portal slot can move into a Document PiP window without remounting the player.
   const [slot] = useState(() => Object.assign(document.createElement("div"), { className: "watch-player-slot" }));
   useLayoutEffect(() => { if (slot.ownerDocument === document) fullscreenHost.current?.append(slot); }, [slot]);
   const pip = useDocumentPip(slot, fullscreenHost);
   // The fullscreen target survives episode changes; only playback state resets.
-  return <div className="watch-fullscreen-host" ref={fullscreenHost}>{createPortal(<WatchPlayer key={episodeId} episodeId={episodeId} fullscreenHost={fullscreenHost} pip={pip} />, slot)}</div>;
+  return <div className="watch-fullscreen-host" ref={fullscreenHost}>{createPortal(<WatchPlayer key={episodeId} episodeId={episodeId} speed={speed} onSpeed={rate => setSpeedChoice({ profile, rate })} fullscreenHost={fullscreenHost} pip={pip} />, slot)}</div>;
 }
 
-function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeId: string; fullscreenHost: RefObject<HTMLDivElement | null>; pip: ReturnType<typeof useDocumentPip> }) {
+function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentPip }: { episodeId: string; speed: number; onSpeed: (rate: number) => void; fullscreenHost: RefObject<HTMLDivElement | null>; pip: ReturnType<typeof useDocumentPip> }) {
   const pipWindow = documentPip.pipWindow;
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -188,9 +197,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [mediaDuration, setMediaDuration] = useState<{ sessionId: string; seconds: number }>();
   const duration = mediaDuration?.sessionId === session?.sessionId ? mediaDuration?.seconds ?? 0 : 0;
   const [buffered, setBuffered] = useState(0);
-  const [volume, setVolume] = useState(() => Number(localStorage.getItem(VOLUME_KEY) ?? 1));
+  const [volume, setVolume] = useState(() => savedVolume(VOLUME_KEY));
   const [muted, setMuted] = useState(false);
-  const [speed, setSpeed] = useState(1);
   const [chrome, setChrome] = useState(true);
   const [panel, setPanelState] = useState<Panel>(null);
   const [subsView, setSubsView] = useState<"main" | "style" | "search" | "translate">("main");
@@ -295,12 +303,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const uploadAbort = useRef<AbortController | null>(null);
   useEffect(() => () => { uploadAbort.current?.abort(); }, []);
   const [online, setOnline] = useState<{ status: "idle" | "searching" | "done" | "error"; result?: OnlineSubtitleSearch; applying?: string }>({ status: "idle" });
-  const [notice, setNotice] = useState<string | { text: string; action: { label: string; run: () => void } } | null>(null);
+  const [notice, setNotice] = useState<PlayerNoticeValue | null>(null);
+  const offerSubtitleChoice = (text: string) => setNotice({ text, action: { label: "변경", run: () => setPanel("subs") } });
   const onlineAbort = useRef<AbortController | null>(null);
   const applyAbort = useRef<AbortController | null>(null);
   const subtitleChoice = useRef(carried?.subtitle ? 1 : 0);
   const [subtitlesReady, setSubtitlesReady] = useState<string | null>(null);
-  const saveSubtitle = (...args: Parameters<typeof rememberSubtitle>) => { void rememberSubtitle(...args).catch(() => setNotice("자막 선택을 서버에 저장하지 못했어요. 다시 선택해 주세요.")); };
+  const saveSubtitle = (...args: Parameters<typeof rememberSubtitle>) => { void rememberSubtitle(...args).catch(() => offerSubtitleChoice("자막 선택을 서버에 저장하지 못했어요. 다시 선택해 주세요.")); };
 
   useEffect(()=>{if(sourcePicker) video.current?.pause();},[sourcePicker]);
   const live = session?.live || false;
@@ -369,12 +378,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     };
     failPlayback.current = onFailure;
     setLevels([]); setLevel(-1);
+    v.volume = volume;
+    v.defaultPlaybackRate = session.live ? 1 : speed;
+    v.playbackRate = v.defaultPlaybackRate;
     attach(v, session, start, onFailure, false, { preferredHeight: defaultHeightRef.current }).then(handle => {
       if (disposed) { handle.destroy(); return; }
       engine.current = handle;
       handle.setPreferredHeight(defaultHeightRef.current);
-      v.volume = volume;
-      v.playbackRate = speed;
       const shouldPlay = resumePlaying.current !== false; resumePlaying.current = null;
       if (shouldPlay) v.play().catch(() => setPlaying(false)); else setPlaying(false);
     }).catch(() => { if(!disposed) onFailure("이 영상을 재생하지 못했습니다."); });
@@ -435,7 +445,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
           setNotice(null);
           return;
         }
-        setNotice("이전에 사용한 자막이 없어졌어요.");
+        offerSubtitleChoice("이전에 사용한 자막이 없어졌어요.");
       }
       if (subtitleChoice.current || isTranslationTrack(subtitle) || subtitle?.source === 'upload') {
         setSubtitle(current => current ? session.subtitles.find(track => track.id === current.id) ?? (current.provenance || isTranslationTrack(current) || current.source === 'upload' ? current : null) : null);
@@ -445,7 +455,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       const own = session.subtitles.filter(track => !isTranslationTrack(track));
       setSubtitle(preferred === "off" ? null
         : own.find(track => track.lang === preferred) ?? own.find(track => track.default) ?? own[0] ?? null);
-    }).catch(() => { if (!controller.signal.aborted) setNotice("이전에 사용한 자막을 불러오지 못했어요. 다시 선택해 주세요."); })
+    }).catch(() => { if (!controller.signal.aborted) offerSubtitleChoice("이전에 사용한 자막을 불러오지 못했어요. 다시 선택해 주세요."); })
       .finally(() => { if (!controller.signal.aborted) setSubtitlesReady(session.sessionId); });
     return () => controller.abort();
   }, [session, Boolean(settings)]);
@@ -495,7 +505,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     const load = revision && !copyChanged ? controller!.replace(track!).catch(() => cancelled ? undefined : controller!.show(track)) : controller?.show(track);
     void load?.then(() => {
       if (!cancelled) controller!.setOffset(airplayMedia ? 0 : subOffsetRef.current);
-    }).catch(() => { if (!cancelled) setNotice("자막을 불러오지 못했습니다. 다른 자막을 선택해 주세요."); });
+    }).catch(() => { if (!cancelled) offerSubtitleChoice("자막을 불러오지 못했습니다. 다른 자막을 선택해 주세요."); });
     return () => { cancelled = true; };
   }, [renderTrack, session, airplayMedia]);
 
@@ -548,9 +558,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       saveSubtitle(session.episodeId, track);
       if (!quiet) rememberSubtitlesOff(session.mediaId, false);
       const who = track.provenance?.creatorName ?? result.candidates.find(item => item.id === candidateId)?.creatorName;
-      setNotice(quiet ? `${who ? `${who} 님의 ` : ""}한국어 자막을 찾아 적용했어요` : null);
+      if (quiet) offerSubtitleChoice(`${who ? `${who} 님의 ` : ""}한국어 자막을 찾아 적용했어요`);
+      else setNotice(null);
     } catch {
-      if (!controller.signal.aborted) setNotice("자막을 적용하지 못했습니다");
+      if (!controller.signal.aborted) offerSubtitleChoice("자막을 적용하지 못했습니다");
     } finally {
       if (applyAbort.current === controller) setOnline(state => ({ ...state, applying: undefined }));
     }
@@ -558,7 +569,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
   useEffect(() => {
     // Translations belong to the episode, not the playback session, so they survive audio/stream switches.
-    setExtraSubs(list => list.filter(track => isTranslationTrack(track) || track.source === 'upload')); setOnline({ status: "idle" }); setNotice(null);
+    setExtraSubs(list => list.filter(track => isTranslationTrack(track) || track.source === 'upload')); setOnline({ status: "idle" });
+    setNotice(previous => !session && typeof previous === "string" ? previous : null);
     return () => { onlineAbort.current?.abort(); applyAbort.current?.abort(); };
   }, [session]);
 
@@ -622,7 +634,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       liveShown.current = { id: track.id, ranges: job.translatedRanges };
       pendingRevision.current = null;
       showTranslated(track);
-      if (final) setNotice(`AI 번역 자막을 적용했어요${job.cached ? " · 저장된 번역" : ""}`);
+      if (final) offerSubtitleChoice(`AI 번역 자막을 적용했어요${job.cached ? " · 저장된 번역" : ""}`);
     } else {
       translationChoice.current = -1;
       if (final) setNotice({ text: "한국어 AI 번역이 끝났어요", action: { label: "적용", run: () => chooseSubtitle(track) } });
@@ -697,7 +709,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       void startTranslation(source, origin);
       if (origin === "auto") setNotice({ text: `한국어 자막이 없어 ${source.label} 자막을 AI로 번역하고 있어요`, action: { label: "취소", run: () => void cancelTranslation() } });
     },
-    useSaved: track => { showTranslated(track); setNotice("저장된 AI 번역 자막을 적용했어요"); }
+    useSaved: track => { showTranslated(track); offerSubtitleChoice("저장된 AI 번역 자막을 적용했어요"); }
   });
   // A suggestion steps aside after a while; the subtitle menu keeps offering translation.
   useEffect(() => {
@@ -748,11 +760,11 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       controller.signal.throwIfAborted();
       setExtraSubs(list => [...list.filter(item => !tracks.some(track => track.id === item.id)), ...tracks]);
       if (tracks.length === 1 && subtitleChoice.current === choice) chooseSubtitle(tracks[0]);
-      else setNotice('가져온 자막 중 사용할 파일을 선택해 주세요.');
+      else offerSubtitleChoice('가져온 자막 중 사용할 파일을 선택해 주세요.');
       if (showMenu) setPanel('subs');
       return true;
     } catch (error) {
-      if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : '자막 파일을 읽지 못했어요.');
+      if (!controller.signal.aborted) offerSubtitleChoice(error instanceof Error ? error.message : '자막 파일을 읽지 못했어요.');
       return false;
     } finally { if (!controller.signal.aborted) setImporting(false); }
   };
@@ -851,13 +863,20 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const changeVolume = (value: number) => {
     const v = video.current;
     const next = Math.max(0, Math.min(1, value));
+    if (next === 0 && volume > 0) localStorage.setItem(LAST_VOLUME_KEY, String(volume));
     setVolume(next); setMuted(next === 0);
     if (v) { v.volume = next; v.muted = next === 0; }
     localStorage.setItem(VOLUME_KEY, String(next));
   };
-  const toggleMute = () => { const v = video.current; if (!v) return; v.muted = !v.muted; setMuted(v.muted); };
+  const toggleMute = () => {
+    const v = video.current;
+    if (!v) return;
+    if (volume === 0) changeVolume(savedVolume(LAST_VOLUME_KEY) || 1);
+    else { v.muted = !v.muted; setMuted(v.muted); }
+  };
   const changeSpeed = (value: number) => {
-    setSpeed(value);
+    onSpeed(value);
+    if (video.current) video.current.defaultPlaybackRate = value;
     if (boosting.current) boosting.current.rate = value;
     else if (video.current) video.current.playbackRate = value;
   };
@@ -1131,7 +1150,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         else if (action === 'mute') toggleMute();
         else if (action === 'nextEpisode') goNext();
         else if (action === 'subtitles') chooseSubtitle(subtitle ? null : allSubs[0] ?? null);
-        else if (action === 'speedDown' || action === 'speedUp') {
+        else if (session && !live && (action === 'speedDown' || action === 'speedUp')) {
           const current = boosting.current?.rate ?? v.playbackRate;
           const next = (action === 'speedUp' ? SPEEDS.find(value => value > current) : [...SPEEDS].reverse().find(value => value < current)) ?? current;
           changeSpeed(next);
@@ -1233,7 +1252,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     holdOrigin.current = origin;
     pressTimer.current = window.setTimeout(() => {
       const v = video.current;
-      if (v && !v.paused && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
+      if (v && !v.paused && !live && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
     }, 450);
   };
   useEffect(() => { if (panel || sourcePicker) endPress(true); }, [panel, sourcePicker, endPress]);
@@ -1353,9 +1372,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const shown = scrub !== null ? scrub * total : remoteSeek ?? time;
 
   const episodes = useMemo(() => media.data?.seasons.flatMap(season => season.episodes) ?? [], [media.data]);
+  const revealCurrentEpisode = useCallback((row: HTMLLIElement | null) => {
+    row?.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+  }, []);
   const switchServer = (id: string) => { setPanel(null); switchStream(id, live ? 0 : video.current?.currentTime || 0); };
   const playbackSource = [session?.saved ? '저장한 영상' : media.data?.provider?.name, session?.streams?.find(stream => stream.id === session.streamId)?.label].filter(Boolean).join(' · ');
-  const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
+  const silent = muted || volume === 0;
+  const muteLabel = shortcutLabel('mute', silent ? '소리 켜기' : '음소거');
+  const VolumeIcon = silent ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const error = sessionError ?? fatal;
   const pluginPlayer = {
     episodeId, title: titleLine.join(' · '), getTime: () => video.current?.currentTime || 0, onImport: (files: File[]) => addSubtitleFiles(files, false),
@@ -1397,6 +1421,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         onSeeked={event => { setTime(event.currentTarget.currentTime); setEnded(event.currentTarget.ended || event.currentTarget.currentTime >= event.currentTarget.duration); setWaiting(false); swapRevision(); if (translation.busy) translation.prioritize(event.currentTarget.currentTime); }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
+        onVolumeChange={event => { setMuted(event.currentTarget.muted); setVolume(event.currentTarget.volume); }}
         onCanPlay={() => setWaiting(false)}
         onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); setLevel(engine.current?.level() ?? -1); }}
         onTimeUpdate={event => {
@@ -1525,12 +1550,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             </div>
           </div>
         )}
-        {notice && <div className="player-notice" role="status">
-          <Captions size={16} /><span>{typeof notice === "string" ? notice : notice.text}</span>
-          {typeof notice === "string"
-            ? <button onClick={() => { setNotice(null); setPanel("subs"); }}>변경</button>
-            : <button onClick={() => { setNotice(null); notice.action.run(); }}>{notice.action.label}</button>}
-        </div>}
+        {notice && <PlayerNotice notice={notice} onDismiss={() => setNotice(null)} />}
         <div className="player-controls-chrome">
         {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => setHover(null)}
           role="slider" aria-label="재생 위치" aria-valuemin={0} aria-valuemax={Math.round(total)} aria-valuenow={Math.round(shown)} aria-valuetext={clock(shown)} tabIndex={0}>
@@ -1550,8 +1570,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             </button>
             {!live && <><button className="icon-btn icon-btn-l" aria-label={shortcutLabel('seekBackward', `${step}초 뒤로`)} title={shortcutLabel('seekBackward', `${step}초 뒤로`)} onClick={() => seekBy(-step)}><RotateCcw size={26} /></button>
             <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('seekForward', `${step}초 앞으로`)} title={shortcutLabel('seekForward', `${step}초 앞으로`)} onClick={() => seekBy(step)}><RotateCw size={26} /></button></>}
-            <div className="volume">
-              <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('mute', '음소거')} title={shortcutLabel('mute', '음소거')} onClick={toggleMute}><VolumeIcon size={26} /></button>
+            <div className={cx("volume", silent && "is-silent")}>
+              <button className="icon-btn icon-btn-l" aria-label={muteLabel} title={muteLabel} onClick={toggleMute}><VolumeIcon size={26} /></button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="볼륨" onChange={event => changeVolume(Number(event.target.value))} style={{ "--fill": `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties} />
             </div>
             <span className="player-time">{live ? <b className="live-label">● LIVE</b> : <>{clock(shown)} <span>/ {clock(total)}</span></>}</span>
@@ -1717,14 +1737,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
           {panel === "settings" && (
             <div className="panel-body panel-form">
               <PluginTools {...pluginPlayer} />
-              <div className="pf-block">
+              {!live && <div className="pf-block">
                 <span className="pf-label">재생 속도</span>
                 <div className="seg seg-fill" role="group" aria-label="재생 속도" style={{ "--segments": SPEEDS.length, "--selected": SPEEDS.indexOf(speed) } as React.CSSProperties}>
                   {SPEEDS.map(value => (
                     <button key={value} className={cx(speed === value && "is-active")} aria-pressed={speed === value} onClick={() => changeSpeed(value)}>{value === 1 ? "1x" : `${value}x`}</button>
                   ))}
                 </div>
-              </div>
+              </div>}
               <QualityControl levels={levels} level={level} onLevel={index => { setLevel(index); engine.current?.setLevel(index); }}
                 streams={session.streams} streamId={session.streamId} onStream={switchServer}
                 playingHeight={playingHeight} transcode={session.mode === "transcode"} />
@@ -1757,7 +1777,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               {episodes.map(episode => {
                 const current = episode.id === session.episodeId;
                 return (
-                  <li key={episode.id}>
+                  <li key={episode.id} ref={current ? revealCurrentEpisode : undefined}>
                     <Link to={`/watch/${encodeURIComponent(episode.id)}`} replace className={cx("panel-episode", current && "is-current")} aria-current={current ? "true" : undefined}>
                       <span className="panel-episode-thumb"><Artwork src={episode.thumb} title={episode.title} ratio="landscape" width={240} labelFallback={false} />{episode.progress && !episode.progress.completed && episode.duration ? <ProgressBar ratio={episode.progress.position / episode.duration} className="card-progress" /> : null}</span>
                       <span className="panel-episode-body"><b>{episode.name ? `${episode.number}. ${episode.name}` : /^\d+화$/.test(episodeTitle(episode.title)) ? episodeTitle(episode.title) : `${episode.number}. ${episodeTitle(episode.title)}`}</b><small>{current ? "재생 중" : episode.progress?.completed ? "시청 완료" : episode.duration ? clock(episode.duration) : ""}</small></span>

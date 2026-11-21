@@ -36,6 +36,13 @@ export function SearchPage() {
   useSettledQuery(value, q, commit);
 
   const groups = result.data?.groups.filter(group => group.items.length || group.error) ?? [];
+  const failures = [];
+  if (result.isError) failures.push({ label: "내 라이브러리", retry: result.refetch });
+  else {
+    const failedGroups = groups.filter(group => group.error);
+    if (failedGroups.length) failures.push({ label: failedGroups.map(group => group.provider.name).join(", "), retry: result.refetch });
+  }
+  if (sources.isError) failures.push({ label: "설치된 소스 목록", retry: sources.refetch });
   const local = groups.flatMap(group => group.items).sort((a, b) => Number(!!a.genreMatch) - Number(!!b.genreMatch));
   return (
     <div className="page-pad search-page">
@@ -46,8 +53,7 @@ export function SearchPage() {
         {value && <button className="searchbox-clear" aria-label="지우기" onClick={() => { setValue(""); commit(""); input.current?.focus(); }}><X size={18} /></button>}
       </div>
       {!q && <EmptyState icon={<SearchIcon size={40} />} title="무엇을 볼까요?" body="내 라이브러리와 설치된 소스에서 한 번에 찾습니다." />}
-      {q && result.isSuccess && !groups.length && !installed.length && <EmptyState title={`'${q}'에 대한 결과가 없습니다`} body="다른 제목이나 원제로 검색해 보세요." />}
-      {q && <GroupedSearch key={q} sources={installed} query={q} local={local} pending={result.isPending || sources.isPending}/>}
+      {q && <GroupedSearch key={q} sources={installed} query={q} local={local} pending={result.isPending || sources.isPending} failures={failures} />}
 
     </div>
   );

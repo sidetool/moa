@@ -1,7 +1,8 @@
 import { Check, ChevronDown, ChevronUp, Clapperboard, Play, Plus, RotateCcw, Search, Volume2, VolumeX } from "lucide-react";
+import { useSettingSaveFeedback } from "../features/settings/useSettingSaveFeedback";
 import { Link } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useIsMutating, useQuery } from "@tanstack/react-query";
 import type { MediaCard, Settings, ShortsItem } from "@moa/shared";
 import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
@@ -25,7 +26,10 @@ function Centered({ children }: { children: React.ReactNode }) {
 export function ShortsPage() {
   const settings = useSettings();
   const profiles = useProfiles();
-  const save = useSaveSettings();
+  const write = useSaveSettings();
+  const { save, feedback } = useSettingSaveFeedback(write);
+  const enabling = useIsMutating({ mutationKey: keys.saveSettings(),
+    predicate: mutation => (mutation.state.variables as Partial<Settings>)?.shortsEnabled === true }) > 0;
   const admin = useMe().data?.role === "admin";
   const kids = profiles.data?.find(item => item.id === currentProfileId())?.kids;
   const on = shortsAvailable(settings.data, kids);
@@ -40,7 +44,7 @@ export function ShortsPage() {
   const status = feed.data?.pages[0]?.status;
   if (!on || status === "disabled") return <Centered><EmptyState icon={<Clapperboard size={32} />} title="쇼츠가 꺼져 있어요"
     body="작품 예고편을 세로로 넘겨 보는 실험 기능이에요. 이 프로필에만 적용돼요."
-    action={<Button variant="primary" disabled={!settings.data} onClick={() => void save({ shortsEnabled: true }).catch(() => {})}>켜기</Button>} /></Centered>;
+    action={feedback("shortsEnabled") ?? <Button variant="primary" disabled={!settings.data || enabling} onClick={() => void save({ shortsEnabled: true })}>켜기</Button>} /></Centered>;
   if (status === "restricted") return <Centered><EmptyState icon={<Clapperboard size={32} />} title="이 프로필에서는 쓸 수 없어요" /></Centered>;
   if (status === "unconfigured") return <Centered><EmptyState title="작품 정보 연결이 필요해요" body={admin ? "설정에서 TMDB를 연결하면 쓸 수 있어요." : "관리자가 TMDB를 연결하면 쓸 수 있어요."}
     action={admin ? <ButtonLink to="/settings#library">설정 열기</ButtonLink> : undefined} /></Centered>;
@@ -50,10 +54,10 @@ export function ShortsPage() {
   if (!items.length && !feed.hasNextPage) return <Centered><EmptyState icon={<Clapperboard size={32} />} title="새로 볼 예고편이 없어요"
     body={replay ? undefined : "본 작품은 설정한 기간 동안 빼고 보여줘요."}
     action={<span className="shorts-state-actions">{!replay && <Button onClick={() => setReplay(true)}>본 것도 보기</Button>}<ButtonLink to="/settings#experimental" variant="ghost">설정</ButtonLink></span>} /></Centered>;
-  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} onFit={value => void save({ shortsScreenFit: value }).catch(() => {})} native={native} quality={settings.data?.shortsQuality ?? "auto"} onReplay={() => setReplay(true)} />;
+  return <ShortsReel key={JSON.stringify(shortsFeedKey(settings.data, replay))} items={items} feed={feed} replay={replay} fit={settings.data?.shortsScreenFit !== false} onFit={value => void save({ shortsScreenFit: value })} fitError={feedback("shortsScreenFit")} native={native} quality={settings.data?.shortsQuality ?? "auto"} onReplay={() => setReplay(true)} />;
 }
 
-function ShortsReel({ items, feed, replay, fit, onFit, native, quality, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; onFit: (fit: boolean) => void; native: boolean; quality: NonNullable<Settings["shortsQuality"]>; onReplay: () => void }) {
+function ShortsReel({ items, feed, replay, fit, onFit, fitError, native, quality, onReplay }: { items: ShortsItem[]; feed: ReturnType<typeof useShortsFeed>; replay: boolean; fit: boolean; onFit: (fit: boolean) => void; fitError: React.ReactNode; native: boolean; quality: NonNullable<Settings["shortsQuality"]>; onReplay: () => void }) {
   const [embedded, setEmbedded] = useState<ReadonlySet<string>>(() => new Set()); // works switched to the YouTube player by hand
   const pool = useRef<NativePool | null>(null);
   pool.current ??= new NativePool();
@@ -182,12 +186,12 @@ function ShortsReel({ items, feed, replay, fit, onFit, native, quality, onReplay
   }, [active, items.length, hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage]);
 
   const current = items[active];
-  const watchlist = useQuery({ queryKey: keys.watchlist, queryFn: () => api<MediaCard[]>("/watchlist"), enabled: Boolean(current?.mediaId) });
+  const watchlist = useQuery({ queryKey: keys.shortsWatchlist(), queryFn: async ({ signal }) => (await api<MediaCard[]>("/watchlist", { signal })).map(card => card.id), enabled: Boolean(current?.mediaId) });
 
   return <div className={cx("shorts", fit && "is-fit", native && "is-native")} ref={scroller} role="feed" aria-label="쇼츠" aria-busy={isFetchingNextPage} tabIndex={-1}>
     {items.map((item, index) => <ShortsSlide key={item.key} item={item} index={index} total={hasNextPage ? -1 : items.length}
-      active={index === active} near={Math.abs(index - active) <= 2} muted={muted}
-      inWatchlist={Boolean(item.mediaId && watchlist.data?.some(card => card.id === item.mediaId))}
+      active={index === active} near={Math.abs(index - active) <= 2} muted={muted} fitError={index === active && fitError}
+      inWatchlist={Boolean(item.mediaId && watchlist.data?.includes(item.mediaId))}
       blocked={index === active && blocked} onPlay={() => control.current?.play()} native={native && !embedded.has(item.key)}
       onStep={step} onSound={() => setMuted(old => !old)}>
       {index === active && shownKey === item.key && visible && (native && !embedded.has(item.key)
@@ -213,18 +217,20 @@ function ShortsReel({ items, feed, replay, fit, onFit, native, quality, onReplay
   </div>;
 }
 
-function RailButton({ label, caption, pressed, disabled, onClick, children }: { label: string; caption?: string; pressed?: boolean; disabled?: boolean; onClick: () => void; children: React.ReactNode }) {
-  return <button type="button" className="shorts-rail-btn" aria-label={label} title={label} aria-pressed={pressed} disabled={disabled} onClick={onClick}>
+function RailButton({ label, caption, pressed, disabled, pending, onClick, children }: { label: string; caption?: string; pressed?: boolean; disabled?: boolean; pending?: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" className="shorts-rail-btn" aria-label={label} title={label} aria-pressed={pressed} disabled={disabled} aria-disabled={pending || undefined} onClick={() => { if (!pending) onClick(); }}>
     <span className="shorts-rail-icon">{children}</span>{caption && <small aria-hidden="true">{caption}</small>}
   </button>;
 }
 
 /** YouTube mode keeps title and actions outside the iframe; direct mode lays them over MOA’s own video. */
-function ShortsSlide({ item, index, total, active, near, muted, blocked, native, inWatchlist, onPlay, onStep, onSound, children }: {
+function ShortsSlide({ item, index, total, active, near, muted, blocked, native, inWatchlist, onPlay, onStep, onSound, fitError, children }: {
   item: ShortsItem; index: number; total: number; active: boolean; near: boolean; muted: boolean; blocked: boolean; native: boolean; inWatchlist: boolean;
-  onPlay: () => void; onStep: (delta: number) => void; onSound: () => void; children: React.ReactNode;
+  fitError: React.ReactNode; onPlay: () => void; onStep: (delta: number) => void; onSound: () => void; children: React.ReactNode;
 }) {
-  const toggle = useWatchlistToggle();
+  const toggle = useWatchlistToggle(item.mediaId ?? "");
+  const saved = toggle.isPending ? toggle.variables : inWatchlist;
+  const failedChange = toggle.isError && toggle.variables !== inWatchlist;
   const poster = sized(item.poster, 500);
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (!active) setExpanded(false); }, [active]);
@@ -242,6 +248,8 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
         {meta && <p className="shorts-sub">{meta}</p>}
         {/* Tap the description for the full text; it sits beside the video, so the tap never reaches it. */}
         {item.overview && <button type="button" className={cx("shorts-overview", expanded && "is-open")} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{item.overview}</button>}
+        {fitError}
+        {failedChange && <p role="alert" className="shorts-sub">내 목록{toggle.variables ? "에 추가하지" : "에서 빼지"} 못했어요.</p>}
         <Link className="shorts-open" to={recommendationTarget(item.href, item.title)}>
           {item.mediaId ? <Play size={14} fill="currentColor" /> : <Search size={14} strokeWidth={2.6} />}{item.mediaId ? "작품 보기" : "MOA에서 찾기"}
         </Link>
@@ -250,8 +258,8 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
         {blocked && <RailButton label="재생" caption="재생" onClick={onPlay}><Play size={24} fill="currentColor" /></RailButton>}
         {active && (muted || native) && <RailButton label={muted ? "소리 켜기" : "소리 끄기"} caption="소리" onClick={onSound}>{muted ? <VolumeX size={24} /> : <Volume2 size={24} />}</RailButton>}
         {native && active && <span className="shorts-rail-cc" />}
-        {item.mediaId && <RailButton label={inWatchlist ? "내 목록에서 빼기" : "내 목록에 추가"} caption="내 목록" pressed={inWatchlist} disabled={toggle.isPending}
-          onClick={() => toggle.mutate({ id: item.mediaId!, add: !inWatchlist })}>{inWatchlist ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
+        {item.mediaId && <RailButton label={failedChange ? "내 목록 변경 다시 시도" : saved ? "내 목록에서 빼기" : "내 목록에 추가"} caption={failedChange ? "다시 시도" : "내 목록"} pressed={saved} pending={toggle.isPending}
+          onClick={() => toggle.mutate(failedChange ? toggle.variables : !saved)}>{saved ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
         <span className="shorts-rail-steps">
           <RailButton label="이전 작품" disabled={index === 0} onClick={() => onStep(-1)}><ChevronUp size={24} /></RailButton>
           <RailButton label="다음 작품" onClick={() => onStep(1)}><ChevronDown size={24} /></RailButton>

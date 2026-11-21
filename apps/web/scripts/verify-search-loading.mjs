@@ -58,7 +58,13 @@ try {
  failResolve=true;
  await page.goto(base+'/search?q=실패');
  await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===6);
+ const retryGrouping = page.locator('.search-error').filter({hasText:'작품 묶기'}).getByRole('button');
+ await retryGrouping.waitFor();
+ const fallbackFrame = await page.evaluate(()=>window.framesSeen.length);
  failResolve=false;
+ await retryGrouping.click();
+ await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===1 && !document.querySelector('.search-error'));
+ assert.ok(await page.evaluate(start=>window.framesSeen.slice(start).every(frame=>frame.cards.length>0),fallbackFrame),'resolver retry retains the displayed fallback cards');
  await page.goto(base+'/search?q=오디오');
  await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===3);
  assert.deepEqual(await page.locator('a.poster-card .card-season').allTextContents(),['시즌 2','시즌 2 · 더빙','시즌 3']);

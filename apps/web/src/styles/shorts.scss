@@ -70,7 +70,7 @@ button.shorts-overview { padding: 0; text-align: left; text-shadow: inherit; cur
 .shorts-rail-btn:hover:not(:disabled) .shorts-rail-icon { background: rgba(255, 255, 255, .2); }
 .shorts-rail-btn:active:not(:disabled) .shorts-rail-icon { transform: scale(.94); }
 .shorts-rail-btn[aria-pressed="true"] .shorts-rail-icon { background: #fff; color: #0b0b0d; }
-.shorts-rail-btn:disabled { opacity: .3; cursor: default; }
+.shorts-rail-btn:disabled, .shorts-rail-btn[aria-disabled="true"] { opacity: .3; cursor: default; }
 .shorts-rail-btn small { font-size: .7rem; font-weight: 650; text-shadow: 0 1px 6px rgba(0, 0, 0, .6); }
 .shorts-rail-steps { display: none; }
 .shorts-nav { position: fixed; right: var(--gutter); top: calc(50% + (var(--nav-h) + var(--safe-top)) / 2); z-index: 5; display: grid; gap: 10px; transform: translateY(-50%); }

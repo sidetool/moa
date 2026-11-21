@@ -4,6 +4,8 @@ import { TitleOverview } from '../src/features/title/TitleOverview';
 import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
+import { PlayerNotice } from '../src/player/playback/PlayerNotice';
+import { SettingSaveError } from '../src/features/settings/useSettingSaveFeedback';
 import { SubtitleSyncSettings } from '../src/features/settings/SubtitleAdvancedSettings';
 import { Anime4kStatusNote } from '../src/player/playback/Anime4kStatusNote';
 import { Anime4kSetting, NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
@@ -16,7 +18,7 @@ export function ButtonsPreview() {
   const [message, setMessage] = useState('');
   return <div className="preview-stack">
     <div className="preview-row">{(['primary', 'secondary', 'ghost', 'accent'] as const).map(variant => <Button key={variant} variant={variant} onClick={() => setMessage(`${variant} 선택됨`)}>{variant}</Button>)}</div>
-    <div className="preview-row"><Button size="l" icon={<Check size={20} />} onClick={() => setMessage('저장됨')}>변경 저장</Button><Button disabled>사용 불가</Button><Button disabled aria-busy="true" icon={<Spinner size={16} />}>저장 중</Button><IconButton label="설정" onClick={() => setMessage('설정 선택됨')}><Settings size={20} /></IconButton></div>
+    <div className="preview-row"><Button size="l" icon={<Check size={20} />} onClick={() => setMessage('저장됨')}>변경 저장</Button><Button disabled>사용 불가</Button><Button aria-disabled="true" aria-busy="true" icon={<Spinner size={16} />}>저장 중</Button><IconButton label="설정" onClick={() => setMessage('설정 선택됨')}><Settings size={20} /></IconButton></div>
     <p className="preview-status" role="status">{message || '버튼을 선택하세요.'}</p>
   </div>;
 }
@@ -79,14 +81,18 @@ export function ConfirmationPreview() {
 export function SheetPreview() {
   const [height, setHeight] = useState<'normal' | 'short'>('short');
   const [name, setName] = useState(''), [picked, setPicked] = useState('');
+  const [failNext, setFailNext] = useState(false), [failed, setFailed] = useState(false);
   return <div className="preview-stack">
     <SegmentedControl label="시트 미리보기 화면" value={height} options={[{ value: 'normal', label: '보통 화면' }, { value: 'short', label: '낮은 가로 화면' }]} onChange={setHeight} />
+    <div className="preview-row"><span>다음 등록 실패</span><Toggle label="다음 폴더 등록 실패" checked={failNext} onChange={setFailNext} /></div>
     <div className={`preview-sheet-screen${height === 'short' ? ' is-short' : ''}`}>
       <section className="sheet" aria-label="폴더 선택 미리보기">
         <header className="sheet-head"><h2>폴더 선택</h2></header>
         <ul className="preview-sheet-list">{['애니', '드라마', '영화', '다큐멘터리', '예능', '기타'].map(item => <li key={item}>{item}</li>)}</ul>
         <div className="preview-sheet-fields"><label className="field"><span>이름 (선택)</span><input className="input" value={name} placeholder="media" onChange={event => setName(event.target.value)} /></label></div>
-        <footer className="sheet-foot"><span className="sheet-path">/media</span><Button variant="primary" onClick={() => setPicked(name.trim() || 'media')}>이 폴더 추가</Button></footer>
+        <footer className="sheet-foot"><span className="sheet-path">/media</span><Button variant="primary" onClick={() => {
+          setFailed(failNext); setFailNext(false); setPicked(failNext ? '' : name.trim() || 'media');
+        }}>이 폴더 추가</Button>{failed && <p className="preview-error" role="alert">폴더를 추가하지 못했어요. 다시 시도해 주세요.</p>}</footer>
       </section>
     </div>
     <p role="status" className="preview-status">{picked ? `${picked} 폴더를 추가했어요.` : '낮은 화면에서는 시트를 스크롤해 확인 버튼까지 이동합니다.'}</p>
@@ -97,6 +103,7 @@ export function FormPattern() {
   const id = useId(), input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(''), [error, setError] = useState(false), [saved, setSaved] = useState('');
   const [autoplay, setAutoplay] = useState(true);
+  const [failNext, setFailNext] = useState(false), [saveFailure, setSaveFailure] = useState(false);
   return <form className="preview-stack" noValidate onSubmit={event => {
     event.preventDefault();
     const valid = Boolean(name.trim());
@@ -105,16 +112,33 @@ export function FormPattern() {
     if (!valid) input.current?.focus();
   }}>
     <div className="preview-field"><label htmlFor={`${id}-name`}>프로필 이름</label><input ref={input} id={`${id}-name`} className="input" value={name} onChange={event => setName(event.target.value)} required aria-invalid={error || undefined} aria-describedby={error ? `${id}-error` : undefined} />{error && <p className="preview-error" id={`${id}-error`}>이름을 입력하세요.</p>}</div>
-    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="프로필 다음 화 자동 재생" checked={autoplay} onChange={setAutoplay} /></div>
+    <div className="preview-row"><span>다음 설정 저장 실패</span><Toggle label="다음 설정 저장 실패" checked={failNext} onChange={setFailNext} /></div>
+    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="프로필 다음 화 자동 재생" checked={autoplay} onChange={value => {
+      setSaveFailure(failNext); setFailNext(false); if (!failNext) setAutoplay(value);
+    }} /></div>
+    {saveFailure && <SettingSaveError onRetry={() => { setAutoplay(!autoplay); setSaveFailure(false); }} />}
     <div className="preview-row"><Button type="submit" variant="primary">프로필 저장</Button><Button type="button" onClick={() => { setName(''); setError(false); setSaved(''); input.current?.focus(); }}>초기화</Button></div><p className="preview-status" role="status">{saved || '입력한 내용은 미리보기에만 저장됩니다.'}</p>
   </form>;
 }
 
 export function FilterPattern() {
   const [query, setQuery] = useState(''), [language, setLanguage] = useState('all');
+  const [failed, setFailed] = useState(false);
   const entries = [{ name: '한국어 자막', language: 'ko' }, { name: 'English subtitles', language: 'en' }, { name: '日本語字幕', language: 'ja' }];
-  const filtered = entries.filter(entry => (language === 'all' || entry.language === language) && entry.name.toLowerCase().includes(query.toLowerCase()));
-  return <div className="preview-stack"><div className="preview-grid"><label className="preview-field">제목 검색<input className="input" type="search" value={query} onChange={event => setQuery(event.target.value)} /></label><div className="preview-field"><span>언어</span><Select aria-label="목록 언어" value={language} options={[{ value: 'all', label: '전체' }, ...options]} onChange={setLanguage} /></div></div><p className="preview-status" role="status">{filtered.length}개</p>{filtered.length ? <ul className="preview-results">{filtered.map(entry => <li key={entry.language}>{entry.name}</li>)}</ul> : <EmptyState title="검색 결과가 없어요." />}<div className="preview-row"><Button onClick={() => { setLanguage('all'); setQuery(''); }}>조건 초기화</Button></div></div>;
+  const filtered = entries.filter(entry => (!failed || entry.language !== 'ja') && (language === 'all' || entry.language === language) && entry.name.toLowerCase().includes(query.toLowerCase()));
+  return <div className="preview-stack">
+    <div className="preview-grid">
+      <label className="preview-field">제목 검색<input className="input" type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <div className="preview-field"><span>언어</span><Select aria-label="목록 언어" value={language}
+        options={[{ value: 'all', label: '전체' }, ...options]} onChange={setLanguage} /></div>
+    </div>
+    <div className="preview-row"><span>일부 소스 실패</span><Toggle label="일부 소스 실패" checked={failed} onChange={setFailed} /></div>
+    {failed && <p role="status">일본어 자막 조회에 실패했어요. <button className="text-btn" onClick={() => setFailed(false)}>다시 시도</button></p>}
+    <p className="preview-status" role="status">{filtered.length}개</p>
+    {filtered.length ? <ul className="preview-results">{filtered.map(entry => <li key={entry.language}>{entry.name}</li>)}</ul>
+      : !failed && <EmptyState title="검색 결과가 없어요." />}
+    <div className="preview-row"><Button onClick={() => { setLanguage('all'); setQuery(''); }}>조건 초기화</Button></div>
+  </div>;
 }
 
 export function SegmentedPreview() {
@@ -123,10 +147,16 @@ export function SegmentedPreview() {
 }
 
 export function PlayerFeedbackPreview() {
-  return <div className="preview-player-frame" aria-label="플레이어 배속 배지 위치">
+  const [mode, setMode] = useState<'connection' | 'subtitles'>('connection');
+  const [opened, setOpened] = useState(false);
+  return <div className="preview-stack"><SegmentedControl label="플레이어 안내" value={mode} onChange={value => { setMode(value); setOpened(false); }}
+    options={[{ value: 'connection', label: '연결 복구' }, { value: 'subtitles', label: '자막 선택' }]} />
+    <div className="preview-player-frame" aria-label="플레이어 배속 배지 위치">
     <span>영상 영역</span>
     <div className="player-boost" role="status"><FastForward size={18} />2배속</div>
-  </div>;
+    <div className="preview-notice">{opened ? <span role="status">자막 선택 열림</span> : <PlayerNotice notice={mode === 'connection' ? '재생 연결을 복구하고 있습니다.' :
+      { text: '이전에 사용한 자막이 없어졌어요.', action: { label: '변경', run: () => setOpened(true) } }} onDismiss={() => {}} />}</div>
+  </div></div>;
 }
 
 export function PlayerShortcutsPreview() {
@@ -151,7 +181,7 @@ export function PlaybackExperimentsPreview() {
 }
 
 export function SubtitleCompatibilityPreview() {
-  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, experimentalSegmentedSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
+  const [settings, setSettings] = useState<ProfileSettings>({ groupHistory: true, showResumeScene: true, autoplayNext: true, autoplayDelay: 5, defaultSubtitleLang: 'ko', subtitleSize: 'large', subtitleScale: 150, subtitleShadow: 3, preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: false, experimentalSubtitleSync: false, experimentalSegmentedSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true });
   return <SubtitleStyleControls format="ass" settings={settings} save={patch => setSettings(previous => ({ ...previous, ...patch }))} />;
 }
 

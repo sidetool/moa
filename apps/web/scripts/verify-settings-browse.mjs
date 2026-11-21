@@ -12,6 +12,73 @@ await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE });
 const errors = [];
 const plugin = { apiVersion: 1, id: 'drop-test', name: 'Drop test', version: '1.0.0', description: 'Drop preview', placements: ['player'], permissions: [], connect: [], script: '' };
+
+async function checkLibraryRecovery(page, base) {
+  const root = '/mounted/videos', path = root + '/shows';
+  const added = [], folders = [];
+  let browseAttempts = 0, scans = 0;
+  await page.route('**/api/library/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith('/browse')) {
+      const selected = url.searchParams.get('path') ?? root;
+      if (selected === path && ++browseAttempts === 1)
+        return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      return route.fulfill({ json: { path: selected, dirs: selected === root ? [path] : [] } });
+    }
+    if (url.pathname.endsWith('/folders')) {
+      if (route.request().method() === 'GET') return route.fulfill({ json: folders });
+      const body = route.request().postDataJSON();
+      added.push(body);
+      if (added.length === 1) return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+      folders.push({ ...body, id: 'shows', itemCount: 0 });
+      return route.fulfill({ status: 201, json: folders[0] });
+    }
+    if (url.pathname.endsWith('/scan') && ++scans === 1)
+      return route.fulfill({ status: 503, json: { error: 'unavailable' } });
+    return route.fulfill({ json: { running: false, done: 0, total: 0 } });
+  });
+  await page.goto(base + 'settings#library');
+  const open = page.getByRole('button', { name: '폴더 추가', exact: true }).first();
+  await open.click();
+  const dialog = page.getByRole('dialog', { name: '폴더 추가' });
+  const close = dialog.getByRole('button', { name: '닫기' });
+  const submit = dialog.getByRole('button', { name: '이 폴더 추가' });
+  await dialog.getByRole('button', { name: 'shows' }).waitFor();
+  await close.press('Shift+Tab');
+  assert.equal(await submit.evaluate(el => el === document.activeElement), true);
+  await submit.press('Tab');
+  assert.equal(await close.evaluate(el => el === document.activeElement), true);
+  await close.press('Escape');
+  await dialog.waitFor({ state: 'detached' });
+  assert.equal(await open.evaluate(el => el === document.activeElement), true);
+  await page.locator('.empty').getByRole('button', { name: '폴더 추가' }).press('Enter');
+  await dialog.getByRole('button', { name: 'shows' }).press('Enter');
+  await dialog.getByText('폴더를 열지 못했어요.').waitFor();
+  assert.equal(await submit.isDisabled(), true);
+  const retry = dialog.getByRole('button', { name: '다시 시도' });
+  assert.equal(await retry.evaluate(el => el === document.activeElement), true);
+  await retry.press('Enter');
+  await dialog.getByText('하위 폴더가 없습니다').waitFor();
+  assert.equal(await dialog.getByRole('navigation', { name: '현재 위치' }).getByRole('button', { name: 'shows' }).evaluate(el => el === document.activeElement), true);
+  await dialog.getByRole('radio', { name: '영화' }).click();
+  const name = dialog.getByRole('textbox');
+  await name.fill('보관한 영화');
+  await submit.click();
+  await dialog.getByText('폴더를 추가하지 못했어요.', { exact: false }).waitFor();
+  assert.equal(await name.inputValue(), '보관한 영화');
+  assert.equal(await submit.evaluate(el => el === document.activeElement), true);
+  await submit.press('Enter');
+  await dialog.waitFor({ state: 'detached' });
+  await page.getByText('스캔을 시작하지 못했어요.', { exact: false }).waitFor();
+  assert.equal(await open.evaluate(el => el === document.activeElement), true);
+  await page.getByRole('button', { name: '다시 스캔' }).click();
+  await page.getByText('스캔을 시작하지 못했어요.', { exact: false }).waitFor({ state: 'detached' });
+  await page.locator('.folder-body b').filter({ hasText: '보관한 영화' }).waitFor();
+  assert.deepEqual(added, Array(2).fill({ path, type: 'movie', label: '보관한 영화' }));
+  assert.equal(scans, 2);
+  assert.equal(browseAttempts, 2);
+  await page.unroute('**/api/library/**');
+}
 async function slide(group, target) {
   await group.scrollIntoViewIfNeeded();
   await group.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => animation.finish()));
@@ -124,6 +191,7 @@ try {
       return route.fulfill({ json: [] });
     });
     const base = server.resolvedUrls.local[0];
+    await checkLibraryRecovery(page, base);
     await page.goto(`${base}settings`);
     const title = page.locator('.settings-panel-head h2');
     const menu = page.getByRole('navigation', { name: '설정 메뉴', exact: true });

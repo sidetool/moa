@@ -208,7 +208,7 @@ export function TitlePage() {
   const media = useMedia(id);
   const savedEdition = new URLSearchParams(useLocation().search).get("savedEdition");
   const savedGroup = useGroupWatchlist(id, savedEdition);
-  const toggle = useWatchlistToggle();
+  const toggle = useWatchlistToggle(id, savedGroup.data?.grouped ? savedEdition! : undefined);
   const [trailer, setTrailer] = useState(false);
   const closeTrailer = useCallback(() => setTrailer(false), []);
   const admin = useMe().data?.role === "admin";
@@ -226,7 +226,9 @@ export function TitlePage() {
   }
 
   const m = media.data;
-  const inWatchlist = savedGroup.data?.grouped ? savedGroup.data.inWatchlist : m.inWatchlist;
+  const confirmed = savedGroup.data?.grouped ? savedGroup.data.inWatchlist : m.inWatchlist;
+  const inWatchlist = toggle.isPending ? toggle.variables : confirmed;
+  const failedChange = toggle.isError && toggle.variables !== confirmed;
   const retryGroupRead = Boolean(savedEdition && savedGroup.isError && !savedGroup.data);
   const isMovie = m.type === "movie";
   const trailers = trailerKeys(m);
@@ -279,13 +281,18 @@ export function TitlePage() {
               variant="secondary" size="l"
               icon={inWatchlist ? <Check size={22} /> : <Plus size={22} />}
               aria-pressed={Boolean(inWatchlist)}
-              disabled={toggle.isPending || Boolean(savedEdition && !savedGroup.data && !retryGroupRead)}
-              onClick={() => retryGroupRead ? void savedGroup.refetch() : toggle.mutate({ id: m.id, add: !inWatchlist, savedEdition: savedGroup.data?.grouped ? savedEdition! : undefined })}
-            >{retryGroupRead ? "내 목록 상태 다시 확인" : inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
+              disabled={Boolean(savedEdition && !savedGroup.data && !retryGroupRead)}
+              aria-disabled={toggle.isPending || undefined}
+              onClick={() => {
+                if (toggle.isPending) return;
+                if (retryGroupRead) void savedGroup.refetch();
+                else toggle.mutate(failedChange ? toggle.variables : !inWatchlist);
+              }}
+            >{retryGroupRead ? "내 목록 상태 다시 확인" : failedChange ? "내 목록 변경 다시 시도" : inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
-          {toggle.isError && toggle.variables.savedEdition && toggle.variables.id === id && <p role="alert">내 목록을 변경하지 못했어요. 다시 시도해 주세요.</p>}
+          {failedChange && <p role="alert">내 목록{toggle.variables ? "에 추가하지" : "에서 빼지"} 못했어요.</p>}
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
           {m.overview && <TitleOverview key={m.id} text={m.overview} />}

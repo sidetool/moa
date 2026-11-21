@@ -60,6 +60,7 @@ jobs:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
         run: |
           node apps/web/scripts/verify-settings-browse.mjs
+          node apps/web/scripts/verify-settings-watchlist-saves.mjs
           node apps/web/scripts/verify-segmented-subtitles.mjs
           node apps/web/scripts/verify-anime4k.mjs
       - name: Search, viewing history and title navigation

@@ -320,6 +320,7 @@ try {
   }
   for (const [width, holdSpeed] of [[1280, 3], [390, 1.25]]) {
     const f = await fixture({ interactive: true, width, holdSpeed }), page = f.page;
+    await page.evaluate(() => document.fonts.ready);
     await page.waitForFunction(() => !document.querySelector('.player-video').paused);
     await page.locator('.player-video').evaluate(video => { video.playbackRate = 1.5; });
     await page.mouse.move(120, 180); await page.mouse.down();
