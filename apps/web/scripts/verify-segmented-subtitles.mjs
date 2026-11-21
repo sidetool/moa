@@ -52,10 +52,12 @@ try {
   const base = server.resolvedUrls.local[0];
   browser = await chromium.launch({ executablePath: process.env.MOA_BROWSER_EXECUTABLE, args: ['--autoplay-policy=no-user-gesture-required'] });
   const errors = [];
-  async function scenario(format, { interrupt = false, segmented = true, uniform = false } = {}) {
-    const authored = uniform ? reference.map(time => time - 3.25) : candidate;
+  async function scenario(format, { interrupt = false, segmented = true, uniform = false, enabled = true, referenceUrl = '/fixture/reference.vtt', mismatch = false } = {}) {
+    const authored = mismatch ? reference.map((_, i) => 12 + 5.6 * i)
+      : uniform ? reference.map(time => time - 3.25) : candidate;
     const context = await browser.newContext({ viewport: { width: 640, height: 360 } });
-    await context.addInitScript(() => {
+    await context.addInitScript(startManual => {
+      if (startManual) localStorage.setItem('moa.subtitleEpisodeOffset:["synthetic","e1"]', '0');
       localStorage.setItem('moa.profile', 'synthetic');
       localStorage.setItem('moa.compatibility', '1');
       const create = URL.createObjectURL.bind(URL);
@@ -73,11 +75,11 @@ try {
         if (/^text\/(plain|vtt)/.test(blob.type)) window.copies.push(url);
         return url;
       };
-    });
+    }, Boolean(interrupt || mismatch));
     let release;
     const gate = new Promise(resolve => { release = resolve; });
     const target = { id: 'ko', label: '한국어', lang: 'ko', format, source: 'online', url: '/fixture/candidate.' + format };
-    const original = { id: 'en', label: 'English', lang: 'en', format: 'vtt', source: 'extension', url: '/fixture/reference.vtt' };
+    const original = { id: 'en', label: 'English', lang: 'en', format: 'vtt', source: 'extension', url: referenceUrl };
     await context.route(url => url.pathname.startsWith('/fixture/'), async route => {
       const path = new URL(route.request().url()).pathname;
       if (path.endsWith('video.mp4')) {
@@ -99,9 +101,9 @@ try {
       if (path === '/api/playback') {
         const { episodeId } = route.request().postDataJSON();
         return json({ sessionId: `s-${episodeId}`, episodeId, mediaId: 'm', mediaTitle: 'Fixture', mediaType: 'anime', mode: 'direct', mime: 'video/mp4',
-          url: '/fixture/video.mp4', startPosition: 0, duration: reference.at(-1) + 10, subtitles: episodeId === 'e1' ? [target, original] : [original], audioTracks: [] });
+          url: '/fixture/video.mp4', startPosition: 0, duration: reference.at(-1) + 10, subtitles: episodeId === 'e1' ? [target, ...(referenceUrl ? [original] : [])] : [original], audioTracks: [] });
       }
-      if (path === '/api/settings') return json({ defaultSubtitleLang: 'ko', autoFetchSubtitles: false, autoplayNext: false, translationMode: 'manual', experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: segmented, subtitlePreserveAss: true });
+      if (path === '/api/settings') return json({ defaultSubtitleLang: 'ko', autoFetchSubtitles: false, autoplayNext: false, translationMode: 'manual', experimentalSubtitleSync: enabled, experimentalSegmentedSubtitleSync: segmented, subtitlePreserveAss: true });
       if (path === '/api/media/m') return json({ id: 'm', title: 'Fixture', type: 'anime', provider: { id: 'test', kind: 'local', name: 'local' }, seasons: [] });
       if (path.endsWith('/markers')) return json({ status: 'unavailable' });
       if (path.endsWith('/preference')) return json({});
@@ -119,15 +121,6 @@ try {
     try {
       await page.goto(new URL('tests/fixtures/player.html', base).href);
       await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2);
-      if (interrupt) {
-        await referenceRequested;
-        await page.evaluate(() => window.testNavigate('/watch/e2'));
-        await page.waitForFunction(() => document.querySelector('track')?.label === 'English');
-        release();
-        await page.waitForFunction(() => document.querySelector('track')?.readyState === 2);
-        assert.deepEqual(await page.evaluate(() => window.copies), []);
-        return;
-      }
       await page.evaluate(() => document.querySelector('video').pause());
       async function seek(t) {
         await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t);
@@ -135,6 +128,58 @@ try {
           const video = document.querySelector('video');
           return !video.seeking && Math.abs(video.currentTime - t) < .01;
         }, t);
+      }
+      const offsetKey = 'moa.subtitleEpisodeOffset:["synthetic","e1"]';
+      const value = page.locator('.sync-value');
+      const restore = page.getByRole('button', { name: '자동 싱크로 복원', exact: true });
+      async function openSync() {
+        await page.getByRole('button', { name: '자막 및 음성', exact: true }).dispatchEvent('click');
+        await page.getByRole('button', { name: /자막 설정/ }).click();
+      }
+      if (interrupt || mismatch) {
+        await openSync();
+        await restore.click();
+        if (mismatch) {
+          await page.waitForFunction(() => window.syncResult?.status === 'mismatch');
+          assert.equal(await value.textContent(), '0.0초');
+          assert.equal(await page.locator('track').getAttribute('label'), '한국어');
+          assert.equal(await restore.count(), 0);
+          return;
+        }
+        await referenceRequested;
+        if (interrupt === 'episode') {
+          await page.evaluate(() => window.testNavigate('/watch/e2'));
+          await page.waitForFunction(() => document.querySelector('track')?.label === 'English');
+        } else if (interrupt === 'track') {
+          await page.getByRole('button', { name: '자막 설정', exact: true }).click();
+          await page.getByRole('button', { name: 'English', exact: true }).click();
+        } else {
+          await page.getByRole('button', { name: '+0.5', exact: true }).click();
+        }
+        release();
+        await page.waitForFunction(() => document.querySelector('track')?.readyState === 2);
+        assert.deepEqual(await page.evaluate(() => window.copies), []);
+        if (interrupt === 'nudge') {
+          assert.equal(await value.textContent(), '+0.5초');
+          assert.equal(await page.evaluate(key => localStorage.getItem(key), offsetKey), '0.5');
+        } else {
+          assert.equal(await page.locator('track').getAttribute('label'), 'English');
+          assert.equal(await page.evaluate(key => localStorage.getItem(key), offsetKey), null);
+        }
+        return;
+      }
+      if (!enabled || referenceUrl !== '/fixture/reference.vtt') {
+        await page.waitForFunction(() => document.querySelector('track')?.readyState === 2);
+        await openSync();
+        const clear = page.getByRole('button', { name: '수동 보정 해제', exact: true });
+        assert.equal(await clear.count(), 0);
+        await page.getByRole('button', { name: '+0.5', exact: true }).click();
+        assert.equal(await restore.count(), 0);
+        await clear.click();
+        assert.equal(await value.textContent(), '0.0초');
+        assert.equal(await page.evaluate(key => localStorage.getItem(key), offsetKey), null);
+        assert.equal(await page.evaluate(() => window.syncResult), undefined);
+        return;
       }
       if (!segmented || uniform) {
         await page.waitForFunction(() => window.syncResult);
@@ -144,6 +189,50 @@ try {
         const expectedFirst = authored[0] + result.offset;
         await page.waitForFunction(first => Math.abs(document.querySelector('track')?.track.cues?.[0]?.startTime - first) < .001, expectedFirst);
         assert.deepEqual(await page.evaluate(() => window.copies), []);
+        if (uniform) {
+          await openSync();
+          assert.equal(await restore.count(), 0);
+          await value.click();
+          assert.equal(await page.evaluate(key => localStorage.getItem(key), offsetKey), '0');
+          await page.reload();
+          await page.waitForFunction(() => document.querySelector('track')?.readyState === 2);
+          await openSync();
+          assert.equal(await value.textContent(), '0.0초');
+          await restore.waitFor();
+          assert.equal(await page.evaluate(() => window.syncResult), undefined);
+
+          // A failed removal applies locally and a retry removes only this episode's manual value.
+          await page.evaluate(key => {
+            const remove = Storage.prototype.removeItem;
+            Storage.prototype.removeItem = function(name) {
+              if (key === name) { Storage.prototype.removeItem = remove; throw new Error('Storage unavailable'); }
+              return remove.call(this, name);
+            };
+            localStorage.setItem('moa.subtitleEpisodeOffset:["synthetic","e2"]', '2');
+            localStorage.setItem('moa.subtitleEpisodeOffset:["other","e1"]', '3');
+          }, offsetKey);
+          await restore.focus();
+          await page.keyboard.press('Enter');
+          assert.ok(await value.evaluate(node => node === document.activeElement));
+          await page.getByRole('button', { name: '다시 저장' }).click();
+          assert.equal(await page.evaluate(key => localStorage.getItem(key), offsetKey), null);
+          assert.equal(await page.evaluate(() => localStorage.getItem('moa.subtitleEpisodeOffset:["synthetic","e2"]')), '2');
+          assert.equal(await page.evaluate(() => localStorage.getItem('moa.subtitleEpisodeOffset:["other","e1"]')), '3');
+          await page.waitForFunction(() => document.querySelector('.sync-value')?.textContent === '+3.3초');
+          await page.waitForFunction(first => Math.abs(document.querySelector('track')?.track.cues?.[0]?.startTime - first) < .001, expectedFirst);
+
+          // Existing tabs observe explicit zero and a later clear without persisting their old state.
+          const peer = await context.newPage();
+          await peer.route('**/storage-peer', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+          await peer.goto(new URL('/storage-peer', base).href);
+          await peer.evaluate(key => localStorage.setItem(key, '0'), offsetKey);
+          await restore.waitFor();
+          assert.equal(await value.textContent(), '0.0초');
+          await peer.evaluate(key => localStorage.removeItem(key), offsetKey);
+          await restore.waitFor({ state: 'detached' });
+          await page.waitForFunction(() => document.querySelector('.sync-value')?.textContent === '+3.3초');
+          await peer.close();
+        }
         return;
       }
       if (format === 'ass') {
@@ -203,9 +292,8 @@ try {
       }
       // Reset from a corrected part of the edition, then persist and seek with both manual signs.
       await seek(reference[20] + .7);
-      await page.getByRole('button', { name: '자막 및 음성', exact: true }).dispatchEvent('click');
-      await page.getByRole('button', { name: /자막 설정/ }).click();
-      const value = page.locator('.sync-value');
+      await openSync();
+      assert.equal(await restore.count(), 0);
       assert.equal(await value.textContent(), '+18.0초');
       const oldUrl = await page.evaluate(() => window.copies.at(-1));
       await value.click();
@@ -221,15 +309,28 @@ try {
         const actual = await page.evaluate(() => [...document.querySelector('track').track.cues].map(c => c.startTime));
         assert.ok(actual.every((time, i) => Math.abs(time - candidate[i] - .5) < .0011));
       }
+      await restore.click();
+      assert.equal(await page.evaluate(key => localStorage.getItem(key), offsetKey), null);
+      await page.waitForFunction(() => window.copies.length > 1);
+      await seek(reference[20] + .7);
+      await page.waitForFunction(() => document.querySelector('.sync-value')?.textContent === '+18.0초');
+      if (format === 'vtt') await page.waitForFunction(() => document.querySelector('track')?.track.activeCues?.[0]?.text === 'Line 20');
+      await seek(reference[5] + .7);
+      await page.waitForFunction(() => document.querySelector('.sync-value')?.textContent === '0.0초');
     } catch (error) { console.error(messages.slice(-25), errors); throw error; } finally { release(); await context.close(); }
   }
   await scenario('vtt');
   await scenario('ass');
-  await scenario('vtt', { interrupt: true });
+  for (const interrupt of ['episode', 'track', 'nudge']) await scenario('vtt', { interrupt });
+  await scenario('vtt', { mismatch: true });
   await scenario('vtt', { segmented: false });
   await scenario('vtt', { uniform: true });
+  await scenario('vtt', { enabled: false });
+  for (const referenceUrl of [null, 'https://captions.example.invalid/en.vtt', 'http://[invalid']) {
+    await scenario('vtt', { referenceUrl });
+  }
   assert.deepEqual(errors, []);
-  console.log('Segmented subtitle replay passed for VTT and JASSUB, manual override and cancelled source switch.');
+  console.log('Subtitle timing passed for VTT and JASSUB, manual zero, automatic restore, storage retry and cancelled comparisons.');
 } finally {
   await browser?.close();
   await server?.close();

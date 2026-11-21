@@ -200,6 +200,7 @@ export interface HomeResponse {
 }
 // GET /api/home?type=movie|series|anime&providers=&continueScope=tab|all&watchlistScope=tab|all -> HomeResponse
 // Scope defaults to tab; main Home requests all for personal rows. Type/profile/kids filters still apply.
+// PUT /api/home/continue/:mediaId/hidden?groupId= -> { mediaIds: string[] } for the current profile
 // GET /api/media?type=&genre=&provider=&sort=recent|title|year&page= -> Page<MediaCard>
 // GET /api/genres?type= -> string[]
 
@@ -214,7 +215,7 @@ export interface SearchGroup { provider: ProviderRef; items: (MediaCard & { genr
 // GET    /api/history?page=&groupHistory= -> Page<HistoryEntry> (omit groupHistory to use the profile setting)
 // DELETE /api/history/media/:mediaId -> 204 (current profile, whole title)
 // DELETE /api/history/:episodeId       -> 204
-// POST   /api/progress                 { episodeId, position, duration } -> EpisodeProgress
+// POST   /api/progress                 { episodeId, position, duration, continueVisibility? } -> EpisodeProgress
 //   Marks completed when position >= 90% of duration or < 120s remain.
 
 export interface HistoryEntry { media: MediaCard; episode: Episode; watchedAt: string; groupedCount?: number }
@@ -349,6 +350,8 @@ export function preferredResolutionIndex(heights: readonly (number | undefined)[
 }
 
 export interface PlaybackSession {
+  /** Echo on progress saves from a session opened after this edition was hidden from Continue. */
+  continueVisibility?: { token: string; startPosition: number };
   saved?: boolean;
   /** APK process must stay alive; client sends heartbeats while paused and can recreate an expired session once. */
   runtimeDependent?: boolean;

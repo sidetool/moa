@@ -153,11 +153,14 @@ function detail(id: string): MediaDetail | null {
   };
 }
 
-function home(type?: string): HomeResponse {
+const hiddenContinue = new Map<string, string>();
+const continueKey = (profile: string | null, id: string) => JSON.stringify([profile, id]);
+
+function home(profile: string | null, type?: string): HomeResponse {
   const pool = cards.filter(card => !type || card.type === type).map(withProgress);
   const watched = (card: MediaCard) => Math.max(0, ...episodesOf(card.id).map(e => e.progress ? Date.parse(e.progress.updatedAt) : 0));
   const rows: Row[] = [
-    { id: "continue", title: "이어보기", kind: "continue", layout: "landscape", items: pool.filter(card => card.resume).sort((a, b) => watched(b) - watched(a)) },
+    { id: "continue", title: "이어보기", kind: "continue", layout: "landscape", items: pool.filter(card => card.resume && !hiddenContinue.has(continueKey(profile, card.id))).sort((a, b) => watched(b) - watched(a)) },
     { id: "watchlist", title: "볼 목록", kind: "watchlist", layout: "poster", items: pool.filter(card => watchlist.has(card.id)), more: { path: "/my-list" } },
     { id: "recent", title: "최근 추가된 작품", kind: "recent", layout: "poster", items: pool },
     { id: "anime", title: "애니메이션", kind: "media", layout: "poster", items: pool.filter(card => card.type === "anime"), more: { path: "/anime" } },
@@ -495,7 +498,15 @@ export function installMockApi() {
     }
     const selectedProfile = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get('X-Moa-Profile');
     if (selectedProfile && profilePins.has(selectedProfile) && unlockedProfile !== selectedProfile) return json({ error: 'profile-locked' }, 401);
-    if (path === "/home") return json(home(url.searchParams.get("type") ?? undefined));
+    if (path === "/home") return json(home(selectedProfile, url.searchParams.get("type") ?? undefined));
+    const hideContinue = /^\/home\/continue\/([^/]+)\/hidden$/.exec(path);
+    if (hideContinue && method === "PUT") {
+      const id = decodeURIComponent(hideContinue[1]);
+      if (!byId.has(id)) return json({ error: 'media-not-found' }, 404);
+      const key = continueKey(selectedProfile, id);
+      if (!hiddenContinue.has(key)) hiddenContinue.set(key, crypto.randomUUID());
+      return json({ mediaIds: [id] });
+    }
     const trailerCheck = /^\/media\/([^/]+)\/trailers$/.exec(path);
     if (trailerCheck) {
       (window as { __mockTrailerChecks?: number }).__mockTrailerChecks = ((window as { __mockTrailerChecks?: number }).__mockTrailerChecks ?? 0) + 1;
@@ -562,10 +573,19 @@ export function installMockApi() {
     if (path.startsWith("/history/") && method === "DELETE") { progressLog.delete(decodeURIComponent(path.slice(9))); return json(null, 204); }
     if (path === "/progress") {
       const saved = { position: body.position, duration: body.duration, completed: body.position >= body.duration * .9 || body.duration - body.position < 120, updatedAt: new Date().toISOString() };
+      const key = continueKey(selectedProfile, body.episodeId.replace(/-(m|e\d+)$/, ""));
+      const visibility = body.continueVisibility;
+      if (visibility && saved.position >= 1 && Math.abs(saved.position - visibility.startPosition) >= 1 && hiddenContinue.get(key) === visibility.token) hiddenContinue.delete(key);
       progressLog.set(body.episodeId, saved);
       return json(saved);
     }
-    if (path === "/playback" && method === "POST") { const session = playback(body.episodeId), saved = body.location !== "source" && savedEpisode(body.episodeId); return json({ ...session, ...(saved ? { saved: true, streams: undefined, streamId: undefined } : {}), subtitles: [...session.subtitles, ...(translatedTracks.get(body.episodeId) ?? [])] }); }
+    if (path === "/playback" && method === "POST") {
+      const session = playback(body.episodeId), saved = body.location !== "source" && savedEpisode(body.episodeId);
+      const token = hiddenContinue.get(continueKey(selectedProfile, session.mediaId));
+      return json({ ...session, ...(token ? { continueVisibility: { token, startPosition: session.startPosition } } : {}),
+        ...(saved ? { saved: true, streams: undefined, streamId: undefined } : {}),
+        subtitles: [...session.subtitles, ...(translatedTracks.get(body.episodeId) ?? [])] });
+    }
     const sessionFile = /^\/playback\/([^/]+)\/subtitles\/s0\.vtt$/.exec(path);
     if (sessionFile) {
       if (retiredSessions.has(sessionFile[1])) { (window as unknown as { __moaStaleReads?: number }).__moaStaleReads = ((window as unknown as { __moaStaleReads?: number }).__moaStaleReads ?? 0) + 1; return json({ error: "session-expired" }, 410); }

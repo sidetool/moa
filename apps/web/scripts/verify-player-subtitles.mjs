@@ -30,15 +30,22 @@ async function fixture(options = {}) {
   const width = options.width ?? 1280;
   const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: width < 600 });
   await context.addInitScript(() => { localStorage.setItem('moa.profile', 'subtitle-test'); localStorage.setItem('moa.remoteMode', 'off'); });
+  if (options.savedOffset !== undefined) await context.addInitScript(seconds => {
+    localStorage.setItem('moa.subtitleEpisodeOffset:["subtitle-test","e1"]', String(seconds));
+  }, options.savedOffset);
   if (options.interactive) await context.addInitScript(() => { window.fullscreenRequests = 0; Element.prototype.requestFullscreen = function () { window.fullscreenRequests++; return Promise.resolve(); }; });
-  const calls = { searches: [], applies: [], preferences: [], translations: 0 };
+  const calls = { searches: [], applies: [], preferences: [], translations: 0, vtt: [] };
   let device = { subtitleSize: 'medium', subtitleScale: 100, subtitleHeight: options.ass ? 30 : 0, subtitleBackground: 'original', subtitleShadow: null, subtitleOutline: null, subtitlePadding: 6, holdSpeed: options.holdSpeed ?? 2 };
-  let releaseSearch;
+  let releaseSearch, alternateAudio = false;
   const searchGate = options.searchGate ? new Promise(resolve => { releaseSearch = resolve; }) : Promise.resolve();
   await context.route('**/fixture/**', route => {
     if (route.request().url().endsWith('/master.m3u8')) return route.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' + options.qualities.map(height => `#EXT-X-STREAM-INF:BANDWIDTH=${height * 1000},RESOLUTION=${Math.round(height * 16 / 9)}x${height},CODECS="avc1.42e01e"\n${height}.m3u8\n`).join('') });
     if (route.request().url().endsWith('.m3u8')) return new Promise(() => {});
-    if (route.request().url().endsWith('.vtt')) return route.fulfill({ contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:00.000 --> 00:10:00.000\n자막 검증\n' });
+    if (route.request().url().endsWith('.vtt')) {
+      calls.vtt.push(new URL(route.request().url()).pathname);
+      if (options.failFirstVtt && calls.vtt.length === 1) return route.fulfill({ status: 503 });
+      return route.fulfill({ contentType: 'text/vtt', body: options.vtt ?? 'WEBVTT\n\n00:00:00.000 --> 00:10:00.000\n자막 검증\n' });
+    }
     if (route.request().url().endsWith('.ass')) return route.fulfill({ contentType: 'text/plain', body: ass });
     const match = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/), start = Number(match?.[1] || 0), end = Math.min(bytes.length - 1, match?.[2] ? Number(match[2]) : bytes.length - 1);
     return route.fulfill({ status: match ? 206 : 200, contentType: 'video/mp4', body: bytes.subarray(start, end + 1), headers: { 'accept-ranges': 'bytes', ...(match ? { 'content-range': `bytes ${start}-${end}/${bytes.length}` } : {}) } });
@@ -52,13 +59,17 @@ async function fixture(options = {}) {
     if (path === '/api/plugin-runtime') return json([]);
     if (path === '/api/translation/config') return json({ enabled: !options.ass && !options.interactive, configured: true });
     if (path === '/api/playback' && req.method() === 'POST') {
-      const { episodeId } = req.postDataJSON();
-      return json({ sessionId: `session-${episodeId}`, episodeId, mediaId: 'm', mediaTitle: '자막 검증', episodeLabel: '1화', episodeTitle: '회차 이름도 함께 표시합니다', mediaType: 'anime', mode: 'direct', mime: options.qualities ? 'application/vnd.apple.mpegurl' : 'video/mp4', url: options.qualities ? '/fixture/master.m3u8' : '/fixture/video.mp4', duration: 600, startPosition: 1, streams: [{ id: '0', label: '720p' }], streamId: '0', subtitles: options.ass ? [{ ...own, id: 'ass', format: 'ass', url: '/fixture/subtitle.ass' }] : [own], audioTracks: [], next: null });
+      const { episodeId, audioTrackId } = req.postDataJSON();
+      alternateAudio = audioTrackId === 'alternate';
+      const subtitles = alternateAudio ? options.audioReplacements : options.tracks ?? (options.ass ? [{ ...own, id: 'ass', format: 'ass', url: '/fixture/subtitle.ass' }] : [own]);
+      const audioTracks = options.audioReplacements ? [{ id: 'original', label: '기본 음성' }, { id: 'alternate', label: '대체 음성' }] : [];
+      return json({ sessionId: `session-${episodeId}-${audioTrackId || 'original'}`, episodeId, mediaId: 'm', mediaTitle: '자막 검증', episodeLabel: '1화', episodeTitle: '회차 이름도 함께 표시합니다', mediaType: 'anime', mode: 'direct', mime: options.qualities ? 'application/vnd.apple.mpegurl' : 'video/mp4', url: options.qualities ? '/fixture/master.m3u8' : '/fixture/video.mp4', duration: 600, startPosition: 1, streams: [{ id: '0', label: '720p' }], streamId: '0', subtitles, audioTracks, next: null });
     }
     if (path === '/api/media/m') return json({ id: 'm', type: 'anime', title: '자막 검증', provider: { id: 'fixture', name: '테스트 소스', kind: 'extension' }, seasons: [] });
     if (path.endsWith('/markers')) return json({ status: 'unavailable' });
     if (path.endsWith('/preference')) {
       if (req.method() === 'PUT') { calls.preferences.push(req.postDataJSON()); return json({}); }
+      if (alternateAudio) await new Promise(resolve => setTimeout(resolve, 400));
       return json({ ...(options.choice !== undefined ? { choice: options.choice } : {}) });
     }
     if (path.endsWith('/subtitles/online')) {
@@ -382,6 +393,49 @@ try {
     assert.ok(f.calls.searches[1].includes('/e2/'));
     await f.close(); results.push('Fresh episode independently searches');
   }
+  }
+  {
+    const f = await fixture({ interactive: true, savedOffset: -1.5, vtt: 'WEBVTT\n\n00:00:10.135 --> 00:00:12.000\n첫 자막\n' });
+    await f.page.waitForFunction(() => document.querySelector('video track')?.readyState === 2);
+    const times = await f.page.locator('video track').evaluate(el => [el.track.cues[0].startTime, el.track.cues[0].endTime]);
+    assert.deepEqual(times, [8.635, 10.5]);
+    await f.close(); results.push('Saved negative offset applies when the first native VTT finishes loading');
+  }
+  {
+    const reusedId = { ...own, label: '일본어', lang: 'ja', url: '/fixture/reused-id.vtt' };
+    const replacement = { ...own, id: 'new-en', url: '/fixture/new-session.vtt' };
+    const f = await fixture({ interactive: true, audioReplacements: [reusedId, replacement], choice: { ...own, episodeId: 'e1' } });
+    await f.page.waitForFunction(() => document.querySelector('video track')?.readyState === 2);
+    await openSubs(f.page);
+    await f.page.getByRole('button', { name: '대체 음성', exact: true }).click();
+    await f.page.waitForFunction(url => {
+      const track = document.querySelector('video track');
+      return track?.src.endsWith(url) && track.readyState === 2;
+    }, replacement.url);
+    assert.deepEqual(f.calls.vtt, [own.url, replacement.url]);
+    await f.close(); results.push('Switching audio restores the remembered language when the new session reuses its old ID for a different track');
+  }
+  const alternate = { ...own, id: 'site-ja', lang: 'ja', label: '일본어', url: '/fixture/alternate.vtt' };
+  for (const choice of [own, alternate]) {
+    const f = await fixture({ interactive: true, tracks: [own, alternate], failFirstVtt: true }), page = f.page;
+    const notice = page.getByRole('status').filter({ hasText: '자막을 불러오지 못했어요.' });
+    await notice.getByRole('button', { name: '변경' }).click();
+    const menu = page.getByRole('dialog', { name: '자막 및 음성' });
+    assert.match(await menu.getByRole('button', { name: own.label, exact: true }).getAttribute('class'), /is-active/);
+    await menu.getByRole('button', { name: choice.label, exact: true }).click();
+    await page.waitForFunction(url => {
+      const video = document.querySelector('.player-video'), el = video?.querySelector('track');
+      return !video?.paused && el?.src.endsWith(url) && el.readyState === 2 && el.track.cues?.length === 1;
+    }, choice.url);
+    const loaded = await page.locator('video track').elementHandle();
+    await menu.getByRole('button', { name: choice.label, exact: true }).click();
+    assert.equal(await loaded.evaluate(el => el === document.querySelector('video track')), true);
+    await menu.getByRole('button', { name: '끄기', exact: true }).click();
+    await page.locator('video track').waitFor({ state: 'detached' });
+    await loaded.evaluate(el => el.dispatchEvent(new Event('error')));
+    assert.deepEqual(f.calls.vtt, [own.url, choice.url]);
+    assert.equal(await notice.count(), 0);
+    await f.close(); results.push(`Default VTT failure recovers with ${choice.label} during playback`);
   }
   for (const width of [1280, 390, 320]) {
     const f = await fixture({ ass: true, width });

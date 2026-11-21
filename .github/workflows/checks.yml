@@ -31,7 +31,7 @@ jobs:
           node --experimental-vm-modules apps/web/scripts/verify-subtitle-controller.mjs
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
-        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/hide-continue.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
       - name: Resume an interrupted video over local HTTP
         env:
           MOA_TEST_VIDEO: ${{ runner.temp }}/moa-resume.mp4
@@ -61,6 +61,8 @@ jobs:
         run: |
           node apps/web/scripts/verify-settings-browse.mjs
           node apps/web/scripts/verify-settings-watchlist-saves.mjs
+          ffmpeg -v error -f lavfi -i color=size=240x136:rate=2 -t 90 -c:v libx264 -threads 1 -movflags +faststart "$RUNNER_TEMP/moa-subtitles.mp4"
+          MOA_TEST_VIDEO="$RUNNER_TEMP/moa-subtitles.mp4" node apps/web/scripts/verify-player-subtitles.mjs --subtitles-only
           node apps/web/scripts/verify-segmented-subtitles.mjs
           node apps/web/scripts/verify-anime4k.mjs
       - name: Search, viewing history and title navigation
@@ -76,6 +78,7 @@ jobs:
           node apps/web/scripts/verify-search-return.mjs
           node apps/web/scripts/verify-library-genre-search.mjs
           node apps/web/scripts/verify-history-pagination.mjs
+          node apps/web/scripts/verify-hide-continue.mjs
           node apps/web/scripts/verify-title-overview.mjs
           node apps/web/scripts/verify-resume-art.mjs
       - name: Catalog refresh and saved-title updates

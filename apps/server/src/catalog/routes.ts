@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Store } from '../db.js';
 import { idParams, object, pageQuery, params, profile, query, string, typeQuery } from '../http.js';
@@ -13,11 +14,14 @@ import type { TitleGroups } from './title-groups.js';
 export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, groups, tmdb, sources, franchises, youtube, pins }: {
   db: Store; catalog: Catalog; groups: TitleGroups; tmdb: Tmdb; sources: Sources; franchises: Franchises; youtube: YouTubeTrailers; pins: ProfilePins;
 }) {
-  const assertVisible = (id: string, req: FastifyRequest) => {
+  const assertProfileMedia = (id: string, req: FastifyRequest) => {
     const viewer = profile(req);
     pins.assertOwner(viewer,req);
     if (!db.get('SELECT 1 FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
     catalog.kids.assert(id, viewer);
+  };
+  const assertVisible = (id: string, req: FastifyRequest) => {
+    assertProfileMedia(id, req);
     sources.assertDetailAvailable(id);
   };
   app.get('/api/home', { schema: { querystring: object({ type: typeQuery, providers: { type: 'string', maxLength: 4096 }, continueScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, watchlistScope: { type: 'string', enum: ['tab', 'all'], default: 'tab' }, titleGrouping: { type: 'string', enum: ['true', 'false'], default: 'true' } }) } }, async req => { const homeForProfile = () => catalog.home(profile(req), query(req).type, query(req).providers?.split(',').filter(Boolean), query(req).continueScope, query(req).watchlistScope, query(req).titleGrouping === 'false' ? undefined : (recent, candidates) => groups.continueWatching(recent, candidates, profile(req))); let home=homeForProfile();
@@ -28,6 +32,24 @@ export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, group
       if (cold) { pins.assertOwner(profile(req),req); home = homeForProfile(); }
     }
     return {...home, refreshing:visible.some(id=>tmdb.detailRefreshing(id)), rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.saved(profile(req),row.items.map(c=>c.id))} : row)};
+  });
+  app.put('/api/home/continue/:mediaId/hidden', { schema: { params: idParams('mediaId'), querystring: object({ groupId: string }) } }, async req => {
+    const id = params(req).mediaId, viewer = profile(req), groupId = query(req).groupId;
+    assertProfileMedia(id, req);
+    let mediaIds = [id];
+    db.transaction(() => {
+      if (groupId) {
+        const mapping = groups.mapping(viewer, true);
+        if (mapping.get(id) !== groupId) throw new ApiFailure(409, 'continue-group-changed');
+        mediaIds = [...mapping].filter(([, group]) => group === groupId).map(([member]) => member);
+      }
+      const ids = JSON.stringify(mediaIds);
+      const hidden = db.get('SELECT COUNT(*) AS count FROM hidden_continue WHERE profile_id=? AND media_id IN (SELECT value FROM json_each(?))', viewer, ids);
+      if (hidden?.count !== mediaIds.length) {
+        db.run('INSERT OR REPLACE INTO hidden_continue(profile_id,media_id,token) SELECT ?,value,? FROM json_each(?)', viewer, randomUUID(), ids);
+      }
+    });
+    return { mediaIds };
   });
   app.get('/api/media', { schema: { querystring: object({ type: typeQuery, genre: string, provider: string, sort: { type: 'string', enum: ['recent', 'title', 'year'], default: 'recent' }, page: pageQuery }) } }, async req => {
     const q = query(req); let cards = catalog.cards(profile(req), q.type);

@@ -1,4 +1,4 @@
-import type { Profile } from '@moa/shared';
+import type { PlaybackSession, Profile } from '@moa/shared';
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { Catalog } from '../catalog/service.js';
@@ -129,13 +129,21 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
   app.delete('/api/history/:episodeId', { schema: { params: idParams('episodeId') } }, async (req, reply) => {
     db.run('DELETE FROM progress WHERE profile_id=? AND episode_id=?', profile(req), params(req).episodeId); return reply.code(204).send();
   });
-  app.post('/api/progress', { schema: { body: object({ episodeId: string, position: { type: 'number', minimum: 0 }, duration: { type: 'number', exclusiveMinimum: 0 } }, ['episodeId', 'position', 'duration']) } }, async req => {
-    const body = req.body as { episodeId: string; position: number; duration: number };
-    if (!db.get('SELECT id FROM episodes WHERE id=?', body.episodeId)) throw new ApiFailure(404, 'episode-not-found');
+  app.post('/api/progress', { schema: { body: object({ episodeId: string, position: { type: 'number', minimum: 0 }, duration: { type: 'number', exclusiveMinimum: 0 },
+    continueVisibility: object({ token: string, startPosition: { type: 'number', minimum: 0 } }, ['token','startPosition']) }, ['episodeId', 'position', 'duration']) } }, async req => {
+    const body = req.body as { episodeId: string; position: number; duration: number } & Pick<PlaybackSession, 'continueVisibility'>;
+    const episode = db.get('SELECT media_id FROM episodes WHERE id=?', body.episodeId);
+    if (!episode) throw new ApiFailure(404, 'episode-not-found');
     const remote = sources.remoteEpisode(body.episodeId, true);
     if (remote && sources.row(remote.source_id).live) throw new ApiFailure(400, 'live-progress-unavailable');
     const position = Math.min(body.position, body.duration);
-    db.run('INSERT OR REPLACE INTO progress VALUES(?,?,?,?,?,?)', profile(req), body.episodeId, position, body.duration, Number(completion(position, body.duration)), now());
+    db.transaction(() => {
+      db.run('INSERT OR REPLACE INTO progress VALUES(?,?,?,?,?,?)', profile(req), body.episodeId, position, body.duration, Number(completion(position, body.duration)), now());
+      const visibility = body.continueVisibility;
+      if (visibility && position >= 1 && Math.abs(position - visibility.startPosition) >= 1) {
+        db.run('DELETE FROM hidden_continue WHERE profile_id=? AND media_id=? AND token=?', profile(req), episode.media_id, visibility.token);
+      }
+    });
     return episodeProgress(db.get('SELECT * FROM progress WHERE profile_id=? AND episode_id=?', profile(req), body.episodeId)!);
   });
   return watchlistRefresh;

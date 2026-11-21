@@ -99,7 +99,11 @@
 }
 .card-play svg { width: 52px; height: 52px; padding: 14px 13px 14px 16px; border-radius: 50%; background: rgba(0, 0, 0, .55); border: 2px solid rgba(255, 255, 255, .9); color: #fff; }
 .landscape-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-top: 8px; }
+.continue-actions-dialog h2 { overflow-wrap: anywhere; }
+.continue-actions { display: grid; gap: var(--space-2); }
+.continue-actions .btn { justify-content: flex-start; }
 .landscape-meta > div { min-width: 0; }
+.landscape-meta > button { flex: none; }
 .landscape-meta .card-title { margin-top: 0; color: var(--text); }
 
 @media (hover: hover) {

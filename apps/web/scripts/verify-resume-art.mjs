@@ -70,6 +70,7 @@ try {
   const settings = { autoplayNext: false, autoFetchSubtitles: false, recommendationsEnabled: false };
   let account = 'local', count = 0, mediaRequests = 0, revision = 0, kind = 'resume', thumb = episodeThumb;
   let heldSave, heldSettings;
+  let checkVisibility = true;
   const isExitSave = request => request.headers()['x-test-exit-save'] === '1';
   let progress = { position: 28, duration: 210, completed: false, updatedAt: '2026-10-01T00:00:00.000Z' };
   await context.route('**/fixture/video.mp4', route => {
@@ -83,7 +84,10 @@ try {
     if (url === '/api/home') return route.fulfill({ json: { hero: [], rows: [{ id: 'continue', kind: 'continue', title: '이어보기', layout: 'landscape', items: [{ ...card, resume: { episodeId, position: kind === 'resume' ? progress.position : 0, label: '이어보기', kind, updatedAt: progress.updatedAt, thumb }, ...(kind === 'resume' && { progress: { episodeId, ratio: progress.position / progress.duration, label: '1화' } }) }] }] } });
     if (url === '/api/playback' && route.request().method() === 'POST') {
       count++;
-      return route.fulfill({ json: { sessionId: 'session-' + count, episodeId, mediaId, mediaTitle: card.title, mediaType: 'series', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 210, startPosition: progress.position, subtitles: [], audioTracks: [] } });
+      const startPosition = progress.position + (checkVisibility && route.request().postDataJSON().audioTrackId ? 4 : 0);
+      return route.fulfill({ json: { sessionId: 'session-' + count, episodeId, mediaId, mediaTitle: card.title, mediaType: 'series', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 210, startPosition, subtitles: [],
+        ...(checkVisibility && { continueVisibility: { token: 'hide-' + count, startPosition } }),
+        audioTracks: checkVisibility ? [{ id: 'a', label: '기본 음성', default: true }, { id: 'b', label: '다른 음성' }] : [] } });
     }
     if (url === '/api/progress') {
       const { duration, position } = route.request().postDataJSON();
@@ -120,9 +124,28 @@ try {
   await waitForArt(episodeThumb);
   assert.equal(count + mediaRequests, 0);
   // In-page Back during active playback and after a manual pause both preserve a real decoded frame.
+  let lastVisibility;
+  const opened = () => page.waitForResponse(r => new URL(r.url()).pathname === '/api/playback' && r.request().method() === 'POST');
   for (const mode of ['playing', 'paused', 'resumed']) {
+    const opening = opened();
     await page.locator('.landscape-card .card-frame').click();
     await page.waitForFunction(() => { const v = document.querySelector('.player-video'); return v && !v.paused && !v.seeking && v.readyState >= 2 && v.currentTime > 26; });
+    const initialVisibility = (await (await opening).json()).continueVisibility;
+    assert.notEqual(initialVisibility.token, lastVisibility, 'entering playback again receives a new visibility generation');
+    lastVisibility = initialVisibility.token;
+    if (mode === 'playing') {
+      // A stream replacement returns another start/token if the title was hidden again elsewhere.
+      await page.mouse.move(200, 200);
+      await page.getByRole('button', { name: '자막 및 음성', exact: true }).click();
+      const replacement = opened();
+      const retiring = page.waitForResponse(r => isExitSave(r.request()));
+      await page.getByRole('button', { name: '다른 음성' }).click();
+      const switched = await (await replacement).json();
+      await (await retiring).finished();
+      assert.notEqual(switched.continueVisibility.token, initialVisibility.token);
+      assert.notEqual(switched.startPosition, initialVisibility.startPosition);
+      await page.waitForFunction(start => { const v = document.querySelector('.player-video'); return v && !v.paused && !v.seeking && v.currentTime >= start; }, switched.startPosition);
+    }
     let pausedAt;
     if (mode !== 'playing') {
       pausedAt = await page.locator('.player-video').evaluate(video => { video.pause(); return video.currentTime; });
@@ -134,7 +157,9 @@ try {
     }
     const finalSave = page.waitForResponse(response => isExitSave(response.request()));
     await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
-    const confirmed = await (await finalSave).json();
+    const response = await finalSave;
+    assert.deepEqual(response.request().postDataJSON().continueVisibility, initialVisibility, 'the current viewing keeps its original hide generation and start position');
+    const confirmed = await response.json();
     await page.waitForFunction(({ episodeId, confirmed }) => {
       const key = 'moa.resumeScene:' + JSON.stringify([confirmed.updatedAt, 'local', 'viewer', episodeId, confirmed.position]);
       const scene = JSON.parse(localStorage.getItem(key) || '{}').image;
@@ -153,6 +178,7 @@ try {
       assert.ok(Math.abs(last - progress.position) < .1);
     }
   }
+  checkVisibility = false;
   await page.reload();
   await page.waitForFunction(() => document.querySelector('.landscape-card img')?.src.startsWith('data:image/jpeg;'));
   const settingsTab = await context.newPage();
@@ -181,7 +207,7 @@ try {
   await waitForArt(backdrop);
   assert.equal(await page.locator('.landscape-card .card-progress').count(), 0);
   assert.equal(mediaRequests, requests);
-  assert.equal(count, 3);
+  assert.equal(count, 4, 'only three player visits and one audio replacement open sessions');
   // Disable in a second tab after the player captured a frame and left, before its progress response arrives.
   kind = 'resume'; thumb = episodeThumb;
   await page.reload();

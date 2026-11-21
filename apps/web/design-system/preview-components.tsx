@@ -7,6 +7,7 @@ import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutS
 import { PlayerNotice } from '../src/player/playback/PlayerNotice';
 import { SettingSaveError } from '../src/features/settings/useSettingSaveFeedback';
 import { SubtitleSyncSettings } from '../src/features/settings/SubtitleAdvancedSettings';
+import { SubtitleSyncControls } from '../src/player/subtitles/SubtitleSyncControls';
 import { Anime4kStatusNote } from '../src/player/playback/Anime4kStatusNote';
 import { Anime4kSetting, NextEpisodeLeadSetting } from '../src/features/settings/PlaybackAdvancedSettings';
 import { QualityControl, ServerControl } from '../src/player/playback/QualityControl';
@@ -155,8 +156,21 @@ export function PlayerFeedbackPreview() {
     <span>영상 영역</span>
     <div className="player-boost" role="status"><FastForward size={18} />2배속</div>
     <div className="preview-notice">{opened ? <span role="status">자막 선택 열림</span> : <PlayerNotice notice={mode === 'connection' ? '재생 연결을 복구하고 있습니다.' :
-      { text: '이전에 사용한 자막이 없어졌어요.', action: { label: '변경', run: () => setOpened(true) } }} onDismiss={() => {}} />}</div>
+      { text: '자막을 불러오지 못했어요.', action: { label: '변경', run: () => setOpened(true) } }} onDismiss={() => {}} />}</div>
   </div></div>;
+}
+
+export function SubtitleTimingPreview() {
+  const [automatic, setAutomatic] = useState(true);
+  const [manualOffset, setManualOffset] = useState<number | null>(null);
+  const offset = manualOffset ?? (automatic ? .5 : 0);
+  return <div className="preview-stack">
+    <label className="preview-row">자동 맞춤 사용 가능<Toggle label="자동 맞춤 사용 가능" checked={automatic} onChange={setAutomatic} /></label>
+    <div className="preview-player-panel panel-form">
+      <SubtitleSyncControls offset={offset} manual={manualOffset !== null} automatic={automatic}
+        onNudge={delta => setManualOffset(Math.round((offset + delta) * 10) / 10)} onRestore={() => setManualOffset(null)} />
+    </div>
+  </div>;
 }
 
 export function PlayerShortcutsPreview() {

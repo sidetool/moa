@@ -1,4 +1,5 @@
 import { useId, useSyncExternalStore } from "react";
+import { ContinueActions, type HideContinue } from "../features/catalog/ContinueActions";
 import { Info, Play } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import type { MediaCard } from "@moa/shared";
@@ -52,7 +53,7 @@ export function RankCard({ card, rank, eager }: { card: MediaCard; rank: number;
 }
 
 /** 16:9 card for "continue watching": one tap resumes, or starts the next episode after a finished one. */
-export function LandscapeCard({ card, eager, resumeAccountId, showResumeScene = true }: { card: MediaCard; eager?: boolean; resumeAccountId?: string; showResumeScene?: boolean }) {
+export function LandscapeCard({ card, eager, resumeAccountId, showResumeScene = true, onHideContinue }: { card: MediaCard; onHideContinue?: HideContinue; eager?: boolean; resumeAccountId?: string; showResumeScene?: boolean }) {
   const profile = currentProfileId();
   const scene = useSyncExternalStore(subscribeResumeScenes, () => showResumeScene ? readResumeScene(resumeAccountId, profile, card.resume) : undefined);
   const thumb = showResumeScene && card.resume?.kind === "resume" ? card.resume.thumb : undefined;
@@ -73,9 +74,9 @@ export function LandscapeCard({ card, eager, resumeAccountId, showResumeScene = 
           <span className="card-title">{card.title}</span>
           {resume && <span className="card-sub">{resume.label}</span>}
         </div>
-        <button className="icon-btn icon-btn-s" data-remote-secondary aria-label={`${card.title} 상세 정보`} title="상세 정보" onClick={() => navigate(`/title/${encodeURIComponent(card.id)}`)}>
+        {onHideContinue ? <ContinueActions card={card} onHide={onHideContinue} /> : <button className="icon-btn icon-btn-s" data-remote-secondary aria-label={`${card.title} 상세 정보`} title="상세 정보" onClick={() => navigate(`/title/${encodeURIComponent(card.id)}`)}>
           <Info size={18} />
-        </button>
+        </button>}
       </div>
     </div>
   );

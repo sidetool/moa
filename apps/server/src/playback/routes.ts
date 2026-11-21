@@ -37,6 +37,8 @@ export function registerPlaybackRoutes(app: FastifyInstance, { db, catalog, sour
     const body = req.body as { episodeId: string; capabilities: ClientCapabilities; location?:'auto'|'saved'|'source'; audioTrackId?: string; streamId?: string; startPosition?: number };
     const episode = db.get('SELECT media_id FROM episodes WHERE id=?', body.episodeId);
     if (episode) catalog.kids.assert(episode.media_id, profile(req));
+    // Capture before opening a slow source. A hide while this request is in flight wins.
+    const hidden = episode && db.get('SELECT token FROM hidden_continue WHERE profile_id=? AND media_id=?', profile(req), episode.media_id);
     const openSource=()=>sources.remoteEpisode(body.episodeId)
       ? remotePlayback.create(profile(req), body.episodeId, body.startPosition, body.streamId)
       : playback.create(profile(req), body.episodeId, body.capabilities, body.audioTrackId, body.startPosition);
@@ -47,7 +49,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, { db, catalog, sour
     });
     const saved = subtitleLibrary.tracks(body.episodeId, profile(req));
     result.subtitles.push(...saved.filter(track => !result.subtitles.some(existing => existing.id === track.id)));
-    return result;
+    return hidden ? { ...result, continueVisibility: { token: hidden.token, startPosition: result.startPosition } } : result;
   });
   app.post('/api/playback/:sessionId/heartbeat', { schema: { params: idParams('sessionId') } }, async (req, reply) => {
     remotePlayback.heartbeat(params(req).sessionId, profile(req));

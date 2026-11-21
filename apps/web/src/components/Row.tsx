@@ -4,16 +4,17 @@ import { Link } from "react-router-dom";
 import type { Row as RowData } from "@moa/shared";
 import { CardSkeleton, LandscapeCard, PosterCard, RankCard } from "./Cards";
 import { Skeleton } from "./ui";
+import type { HideContinue } from "../features/catalog/ContinueActions";
 import { cx } from "../lib/format";
 
-export function Row({ row, index = 0, rank = false, resumeAccountId, showResumeScene }: { row: RowData; index?: number; rank?: boolean; resumeAccountId?: string; showResumeScene?: boolean }) {
+export function Row({ row, index = 0, rank = false, resumeAccountId, showResumeScene, onHideContinue }: { row: RowData; onHideContinue?: HideContinue; index?: number; rank?: boolean; resumeAccountId?: string; showResumeScene?: boolean }) {
   const Card = row.layout === "landscape" ? LandscapeCard : PosterCard;
   return (
     <RowShell id={row.id} title={row.title} layout={row.layout} className={cx(rank && "row-rank")} count={row.items.length}
       more={row.more && <Link to={row.more.path} className="row-more">모두 보기<ChevronRight size={16} /></Link>}>
       {row.items.map((card, i) => rank
         ? <RankCard key={card.id} card={card} rank={i + 1} eager={index < 2 && i < 6} />
-        : <Card key={card.id} card={card} resumeAccountId={resumeAccountId} showResumeScene={showResumeScene} eager={index < 2 && i < 6} />)}
+        : <Card key={card.id} card={card} onHideContinue={onHideContinue} resumeAccountId={resumeAccountId} showResumeScene={showResumeScene} eager={index < 2 && i < 6} />)}
     </RowShell>
   );
 }

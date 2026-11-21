@@ -84,7 +84,9 @@ export class Catalog {
     const watchlist = this.watchlist(profile).filter(c => (!type || c.type === type) && (watchlistScope === 'all' || allowed(c)));
     // Home resume history belongs to the profile, independently of tab discovery sources.
     const resumeRows = new Map((continueScope === 'all' ? allRows : selectedRows).map(row => [row.id, row]));
-    const recent = this.db.all(`SELECT e.media_id,MAX(p.updated_at) AS updated FROM progress p JOIN episodes e ON e.id=p.episode_id WHERE p.profile_id=? AND (p.position>0 OR p.completed=1) GROUP BY e.media_id ORDER BY updated DESC,e.media_id`, profile)
+    const recent = this.db.all(`SELECT e.media_id,MAX(p.updated_at) AS updated FROM progress p JOIN episodes e ON e.id=p.episode_id WHERE p.profile_id=? AND (p.position>0 OR p.completed=1) AND NOT EXISTS
+      (SELECT 1 FROM hidden_continue h WHERE h.profile_id=p.profile_id AND h.media_id=e.media_id)
+      GROUP BY e.media_id ORDER BY updated DESC,e.media_id`, profile)
       .flatMap(p => {
         const row = resumeRows.get(p.media_id);
         return row ? [card(row)] : [];

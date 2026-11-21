@@ -225,7 +225,7 @@ export class SubtitleController {
     if (typeof MutationObserver !== "undefined") { this.videoObserver = new MutationObserver(this.refreshVtt); this.videoObserver.observe(video, { attributes: true, attributeFilter: ["style", "class"] }); }
   }
 
-  async show(track: SubtitleTrack | null) {
+  async show(track: SubtitleTrack | null, onVttError?: () => void) {
     this.clear();
     const token = this.token;
     if (!track) return;
@@ -236,14 +236,17 @@ export class SubtitleController {
       el.srclang = track.lang ?? "";
       el.src = track.url;
       el.default = true;
-      this.video.append(el);
-      el.track.mode = "showing";
       this.trackEl = el;
       el.track.oncuechange = this.renderVtt;
       this.shifted = 0;
       el.addEventListener("load", () => {
         if (this.trackEl === el) this.applyVttOffset();
       }, { once: true });
+      el.addEventListener("error", () => {
+        if (this.trackEl === el) onVttError?.();
+      }, { once: true });
+      this.video.append(el);
+      el.track.mode = "showing";
       return;
     }
     try {
@@ -427,10 +430,13 @@ export class SubtitleController {
   }
 
   private applyVttOffset() {
-    const cues = this.trackEl?.track.cues;
+    const el = this.trackEl;
+    // The browser can expose an empty or partial cue list before the load event.
+    if (!el || el.readyState !== el.LOADED) return;
+    const cues = el.track.cues;
     if (!cues) return;
     const delta = this.offset - this.shifted;
-    if (delta) {
+    if (delta && cues.length) {
       for (const cue of Array.from(cues)) { cue.startTime += delta; cue.endTime += delta; }
       this.shifted = this.offset;
     }
