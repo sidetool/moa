@@ -29,6 +29,7 @@ export function useHideContinue() {
   const homes = profileHomes(profile);
   return async (card: MediaCard) => {
     if (profile !== currentProfileId()) throw new DOMException('Profile changed', 'AbortError');
+    const versions = new Map(client.getQueryCache().findAll(homes).map(query => [query, query.state.dataUpdateCount]));
     const group = card.groupId ? `?${new URLSearchParams({ groupId: card.groupId, resumeMediaId: card.resumeMediaId ?? card.id })}` : '';
     try {
       const { mediaIds } = await api<{mediaIds: string[]}>(`/home/continue/${encodeURIComponent(card.id)}/hidden${group}`, { method: 'PUT' });
@@ -41,7 +42,8 @@ export function useHideContinue() {
       if (profile !== currentProfileId()) return;
       await client.cancelQueries(homes, { revert: false });
       const hidden = new Set(mediaIds);
-      client.setQueriesData<HomeResponse>(homes, old => old && ({
+      // Playback may have restored an edition and Home may have read it while this PUT was in flight.
+      client.setQueriesData<HomeResponse>({ queryKey: homes.queryKey, predicate: query => versions.get(query) === query.state.dataUpdateCount }, old => old && ({
         ...old,
         rows: old.rows.flatMap(row => {
           if (row.kind !== 'continue') return [row];

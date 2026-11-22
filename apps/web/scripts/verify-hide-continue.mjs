@@ -24,7 +24,8 @@ try {
       localStorage.setItem('moa.remoteMode', remote ? 'on' : 'off');
     }, remote);
     let fail = true;
-    let peer, slowPeer;
+    let peer, slowPeer, delayedHide;
+    let failPeerHome = false;
     const releaseRead = Promise.withResolvers();
     let peerHomeReads = 0, holdPeerHome = false;
     const releaseHome = Promise.withResolvers();
@@ -43,6 +44,7 @@ try {
         const reader = req.frame().page();
         if (reader === peer) {
           peerHomeReads++;
+          if (failPeerHome) return route.fulfill({ status: 503, json: { error: 'test-home-unavailable' } });
           if (holdPeerHome) {
             await releaseHome.promise;
           }
@@ -61,6 +63,10 @@ try {
         hides.push(id);
         if (fail) { fail = false; return route.fulfill({ status: 500, json: { error: 'test-hide-failed' } }); }
         hidden.add(id);
+        if (delayedHide) {
+          delayedHide.committed.resolve();
+          await delayedHide.reply.promise;
+        }
         return json({ mediaIds: [id, 'watched-' + id] });
       }
       if (path === '/api/recommendations') return json({ status: 'disabled' });
@@ -155,11 +161,27 @@ try {
       await notify('viewer'); // Delayed notification must read the restored state.
       await peer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor();
       await slowPeer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor();
+      // A delayed PUT reply must also preserve newer progress in the tab that issued it.
+      delayedHide = { committed: Promise.withResolvers(), reply: Promise.withResolvers() };
+      await peer.getByRole('button', { name: '첫 작품 더 보기' }).click();
+      await peer.getByRole('dialog').getByRole('button', { name: '홈 이어보기에서 숨기기' }).click();
+      await delayedHide.committed.promise;
+      hidden.delete('a');
+      cards[0].resume.position = 133;
+      await notify('viewer');
+      const resumed = peer.locator('.landscape-card a[href="/watch/ep-a?t=133&resume=1"]');
+      await resumed.waitFor();
+      failPeerHome = true;
+      const failedRead = peer.waitForResponse(res => new URL(res.url()).pathname === '/api/home' && res.status() === 503);
+      delayedHide.reply.resolve();
+      await failedRead;
+      await peer.getByRole('dialog').waitFor({ state: 'hidden' });
+      assert.equal(await resumed.count(), 1);
     }
-    assert.deepEqual(hides, ['a', 'a', 'b']);
+    assert.deepEqual(hides, remote ? ['a', 'a', 'b', 'a'] : ['a', 'a', 'b']);
     assert.deepEqual(errors, []);
     await context.close();
-    if (remote) console.log('PASS cross-tab hide, pending reads, inactive tabs, profile isolation and delayed notification');
+    if (remote) console.log('PASS cross-tab hide, pending reads, inactive tabs, profile isolation, delayed notification and delayed hide reply');
     console.log('PASS', remote ? 'remote' : 'touch', 'Continue hide, retry, neighboring focus, empty row and reload');
   }
 } finally { await browser.close(); }
