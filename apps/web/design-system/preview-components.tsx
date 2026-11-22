@@ -5,7 +5,7 @@ import { EpisodeRefreshButton } from '../src/features/title/EpisodeRefresh';
 import { EpisodeDownloadButton, MovieDownloadButton } from '../src/features/title/ServerSave';
 import { PlayerShortcutSettings } from '../src/features/settings/PlayerShortcutSettings';
 import { PlayerNotice } from '../src/player/playback/PlayerNotice';
-import { SettingSaveError } from '../src/features/settings/useSettingSaveFeedback';
+import { useSettingSaveFeedback } from '../src/features/settings/useSettingSaveFeedback';
 import { SubtitleSyncSettings } from '../src/features/settings/SubtitleAdvancedSettings';
 import { SubtitleSyncControls } from '../src/player/subtitles/SubtitleSyncControls';
 import { Anime4kStatusNote } from '../src/player/playback/Anime4kStatusNote';
@@ -104,7 +104,12 @@ export function FormPattern() {
   const id = useId(), input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(''), [error, setError] = useState(false), [saved, setSaved] = useState('');
   const [autoplay, setAutoplay] = useState(true);
-  const [failNext, setFailNext] = useState(false), [saveFailure, setSaveFailure] = useState(false);
+  const [failNext, setFailNext] = useState(false);
+  const { save, feedback } = useSettingSaveFeedback(async patch => {
+    await new Promise(resolve => window.setTimeout(resolve, 150));
+    if (failNext) { setFailNext(false); throw new Error('Preview save failed'); }
+    if (patch.autoplayNext !== undefined) setAutoplay(patch.autoplayNext);
+  });
   return <form className="preview-stack" noValidate onSubmit={event => {
     event.preventDefault();
     const valid = Boolean(name.trim());
@@ -114,10 +119,8 @@ export function FormPattern() {
   }}>
     <div className="preview-field"><label htmlFor={`${id}-name`}>프로필 이름</label><input ref={input} id={`${id}-name`} className="input" value={name} onChange={event => setName(event.target.value)} required aria-invalid={error || undefined} aria-describedby={error ? `${id}-error` : undefined} />{error && <p className="preview-error" id={`${id}-error`}>이름을 입력하세요.</p>}</div>
     <div className="preview-row"><span>다음 설정 저장 실패</span><Toggle label="다음 설정 저장 실패" checked={failNext} onChange={setFailNext} /></div>
-    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="프로필 다음 화 자동 재생" checked={autoplay} onChange={value => {
-      setSaveFailure(failNext); setFailNext(false); if (!failNext) setAutoplay(value);
-    }} /></div>
-    {saveFailure && <SettingSaveError onRetry={() => { setAutoplay(!autoplay); setSaveFailure(false); }} />}
+    <div className="preview-row"><span>다음 화 자동 재생</span><Toggle label="프로필 다음 화 자동 재생" checked={autoplay} onChange={value => void save({ autoplayNext: value })} /></div>
+    {feedback('autoplayNext')}
     <div className="preview-row"><Button type="submit" variant="primary">프로필 저장</Button><Button type="button" onClick={() => { setName(''); setError(false); setSaved(''); input.current?.focus(); }}>초기화</Button></div><p className="preview-status" role="status">{saved || '입력한 내용은 미리보기에만 저장됩니다.'}</p>
   </form>;
 }

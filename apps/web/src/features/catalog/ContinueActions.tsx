@@ -13,7 +13,8 @@ export function ContinueActions({ card, onHide }: { card: MediaCard; onHide: Hid
   const opener = useRef<HTMLButtonElement>(null);
   const saving = useRef(false);
   const dismissed = useRef(false);
-  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<MediaCard | null>(null);
+  const open = selected !== null;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const titleId = useId();
@@ -30,11 +31,11 @@ export function ContinueActions({ card, onHide }: { card: MediaCard; onHide: Hid
 
   const close = () => {
     dismissed.current = true;
-    setOpen(false);
+    setSelected(null);
   };
 
   const hide = async () => {
-    if (saving.current) return;
+    if (!selected || saving.current) return;
     const element = dialog.current!, cardNode = opener.current?.closest('.card');
     const row = cardNode?.closest('.row');
     const next = cardNode?.nextElementSibling?.querySelector<HTMLElement>('.card-frame')
@@ -48,10 +49,10 @@ export function ContinueActions({ card, onHide }: { card: MediaCard; onHide: Hid
     setPending(true);
     setError('');
     try {
-      await onHide(card);
+      await onHide(selected);
       if (dismissed.current) return;
       element.close();
-      setOpen(false);
+      setSelected(null);
       // The query cache can remove the whole row. Keep the remote in the same browsing area.
       requestAnimationFrame(() => {
         if (document.querySelector('dialog[open]')) return;
@@ -71,17 +72,17 @@ export function ContinueActions({ card, onHide }: { card: MediaCard; onHide: Hid
 
   return <>
     <button ref={opener} type="button" className="icon-btn" data-remote-secondary aria-label={`${card.title} 더 보기`} title="더 보기" aria-haspopup="dialog"
-      onClick={() => { dismissed.current = false; setError(''); setOpen(true); }}><MoreHorizontal size={18} /></button>
-    {open && <dialog ref={dialog} className="confirm-dialog continue-actions-dialog" aria-modal="true" aria-labelledby={titleId}
+      onClick={() => { dismissed.current = false; setError(''); setSelected(card); }}><MoreHorizontal size={18} /></button>
+    {selected && <dialog ref={dialog} className="confirm-dialog continue-actions-dialog" aria-modal="true" aria-labelledby={titleId}
       onKeyDown={keepTabInDialog} onCancel={close}
       onClick={event => {
         if (event.target !== event.currentTarget) return;
         const box = event.currentTarget.getBoundingClientRect();
         if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) close();
       }}>
-      <header className="sheet-head"><h2 id={titleId}>{card.title}</h2></header>
+      <header className="sheet-head"><h2 id={titleId}>{selected.title}</h2></header>
       <div className="confirm-dialog-body continue-actions">
-        <Link className="btn btn-secondary btn-m" to={`/title/${encodeURIComponent(card.id)}`} onClick={close}><Info size={18} /><span>상세 정보</span></Link>
+        <Link className="btn btn-secondary btn-m" to={`/title/${encodeURIComponent(selected.id)}`} onClick={close}><Info size={18} /><span>상세 정보</span></Link>
         <Button icon={<EyeOff size={18} />} aria-disabled={pending} aria-busy={pending} onClick={() => void hide()}>홈 이어보기에서 숨기기</Button>
         {error && <p className="settings-error" role="alert">{error}</p>}
       </div>

@@ -255,6 +255,7 @@
 .settings-sk { display: block; height: 220px; margin-bottom: 24px; border-radius: var(--radius-l); }
 .settings-hint { color: var(--text-3); font-size: .86rem; line-height: 1.5; }
 .settings-error { color: var(--danger); font-size: .86rem; line-height: 1.5; }
+.settings-error .text-btn[aria-disabled="true"] { opacity: var(--disabled-opacity); cursor: progress; }
 .list-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 18px; }
 .list-selection label { display: inline-flex; align-items: center; gap: 8px; }
 .list-selection > span { margin-right: auto; color: var(--text-3); font-size: .85rem; }

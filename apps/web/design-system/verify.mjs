@@ -79,7 +79,8 @@ try {
     await autoplay.click();
     assert.equal(await autoplay.getAttribute('aria-checked'), 'true');
     await form.getByRole('button', { name: '다시 시도' }).click();
-    assert.equal(await autoplay.getAttribute('aria-checked'), 'false');
+    await form.getByRole('switch', { name: '프로필 다음 화 자동 재생', checked: false }).waitFor();
+    assert.ok(await autoplay.evaluate(el => el === document.activeElement));
     const filter = page.locator('[data-preview="filter-pattern"]');
     await filter.getByRole('searchbox').fill('English');
     assert.equal(await filter.locator('.preview-results li').count(), 1);

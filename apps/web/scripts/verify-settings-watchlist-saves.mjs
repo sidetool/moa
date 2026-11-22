@@ -29,6 +29,7 @@ try {
     gates.set(key, gate);
     return gate;
   }
+  let deviceWrites = 0;
   let failDevice = false, failWatchlist = false, failRead = false, failSettingsRead = false;
   await page.route(url => url.hostname !== '127.0.0.1', route => route.abort());
   await page.route(url => url.pathname.startsWith('/api/'), async route => {
@@ -52,6 +53,10 @@ try {
     }
     if (path === '/api/settings/device') {
       if (route.request().method() === 'PATCH') {
+        deviceWrites++;
+        const gate = gates.get('device');
+        gates.delete('device');
+        if (gate && !(await gate.promise)) return reject();
         if (failDevice) return reject();
         Object.assign(devices[profile], route.request().postDataJSON().settings);
       }
@@ -80,7 +85,24 @@ try {
   const base = server.resolvedUrls.local[0];
   await page.goto(base + 'settings#playback', { waitUntil: 'domcontentloaded' });
   const toggle = (name, checked) => page.getByRole('switch', { name, exact: true, checked });
-  const retry = () => page.getByRole('alert').getByRole('button', { name: '다시 시도' }).click();
+  const retry = page.getByRole('alert').getByRole('button', { name: '다시 시도' });
+  const focused = locator => locator.evaluate(el => el === document.activeElement);
+  async function retryWithKeyboard(key, success, moveTo) {
+    const gate = hold(key);
+    assert.ok(await focused(retry));
+    await page.keyboard.press('Enter');
+    const pending = page.getByRole('alert').getByRole('button', { name: '다시 시도', disabled: true });
+    await pending.waitFor();
+    assert.ok(await pending.evaluate(el => el === document.activeElement && !el.disabled));
+    await page.keyboard.press('Enter');
+    if (moveTo) await moveTo.focus();
+    gate.resolve(success);
+    if (success) await retry.waitFor({ state: 'hidden' });
+    else {
+      await page.getByRole('alert').getByRole('button', { name: '다시 시도', disabled: false }).waitFor();
+      assert.ok(await focused(retry));
+    }
+  }
   const first = hold('autoplayNext'), second = hold('hardwareTranscoding');
   await toggle('다음 화 자동 재생', true).click();
   await toggle('다음 화 자동 재생', false).waitFor();
@@ -91,8 +113,11 @@ try {
   await toggle('다음 화 자동 재생', true).waitFor();
   assert.equal(await toggle('하드웨어 변환', true).count(), 1);
   second.resolve(true);
-  await retry();
-  await toggle('다음 화 자동 재생', false).waitFor();
+  await retry.focus();
+  await retryWithKeyboard('autoplayNext', false);
+  await retryWithKeyboard('autoplayNext', true);
+  assert.ok(await focused(toggle('다음 화 자동 재생', false)));
+  assert.equal(writes.filter(write => 'autoplayNext' in write.patch).length, 3);
   const deviceGate = page.waitForResponse(response => response.url().endsWith('/settings/device') && response.status() === 503);
   failDevice = true;
   await toggle('화면 채우기', false).click();
@@ -100,8 +125,13 @@ try {
   await page.getByText('이 기기에 적용했지만 서버에 저장하지 못했어요.', { exact: false }).waitFor();
   assert.equal(await toggle('화면 채우기', true).count(), 1);
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('moa.deviceSettings:one')).dirty.videoFill), true);
+  await retry.focus();
+  await retryWithKeyboard('device', false);
   failDevice = false;
-  await retry();
+  const other = toggle('하드웨어 변환', true);
+  await retryWithKeyboard('device', true, other);
+  assert.ok(await focused(other));
+  assert.equal(deviceWrites, 3);
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('moa.deviceSettings:one')).dirty === null);
   assert.equal(devices.one.videoFill, true);
   assert.equal(profileSettings.one.autoplayNext, false);
@@ -137,7 +167,7 @@ try {
   assert.equal(await quality.textContent(), '480p');
   failSettingsRead = false;
   const recovered = page.waitForResponse(r => r.url().endsWith('/api/settings') && r.request().method() === 'PATCH' && r.ok());
-  await retry();
+  await retry.click();
   await recovered;
   assert.equal(profileSettings.one.preferredQuality, '1080');
 
@@ -197,8 +227,12 @@ try {
   await navigate('/shorts');
   await page.getByRole('button', { name: '켜기' }).click();
   enable.resolve(false);
-  await retry();
+  await retry.focus();
+  await retryWithKeyboard('shortsEnabled', false);
+  await retryWithKeyboard('shortsEnabled', true);
   await page.getByRole('feed', { name: '쇼츠' }).waitFor();
+  assert.ok(await focused(page.getByRole('main')));
+  assert.equal(writes.filter(write => 'shortsEnabled' in write.patch).length, 3);
   failWatchlist = true;
   await attemptWithKeyboard(page.getByRole('button', { name: '내 목록에 추가' }));
   await page.getByRole('alert').filter({ hasText: '추가하지 못했어요' }).waitFor();

@@ -13,28 +13,43 @@ const card = (id, title) => ({ id, title, type: 'series', provider, groupId: 'g-
 try {
   for (const remote of [true, false]) {
     const context = await browser.newContext({ viewport: remote ? { width: 1280, height: 800 } : { width: 360, height: 780 }, hasTouch: !remote, isMobile: !remote });
+    context.setDefaultTimeout(8000);
     const errors = [], hides = [];
     const cards = [card('a', '첫 작품'), card('b', '둘째 작품')], hidden = new Set();
     const page = await context.newPage();
     page.setDefaultTimeout(8000);
     page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(remote => {
+    await context.addInitScript(remote => {
       localStorage.setItem('moa.profile', 'viewer');
       localStorage.setItem('moa.remoteMode', remote ? 'on' : 'off');
     }, remote);
     let fail = true;
-    await page.route(url => url.pathname.startsWith('/api/'), async route => {
+    let peer, slowPeer;
+    const releaseRead = Promise.withResolvers();
+    let peerHomeReads = 0, holdPeerHome = false;
+    const releaseHome = Promise.withResolvers();
+    await context.route(url => url.pathname.startsWith('/api/'), async route => {
       const req = route.request(), url = new URL(req.url()), path = url.pathname;
       const json = data => route.fulfill({ json: data });
       if (path === '/api/profiles') return json([{ id: 'viewer', name: '프로필', color: 'violet' }]);
       if (path === '/api/me') return json({ id: 'local', role: 'user' });
       if (path === '/api/settings/device') return json({ settings: {} });
-      if (path === '/api/settings') return json({ recommendationsEnabled: false, navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }] });
+      if (path === '/api/settings') return json({ recommendationsEnabled: false, navigation: [{ id: 'home', name: '홈', sourceIds: [], includeLocal: true }, { id: 'local-tab', name: '로컬 탭', sourceIds: [], includeLocal: true }] });
       if (path === '/api/home') {
         const items = cards.filter(c => !hidden.has(c.id));
         const rows = items.length ? [{ kind: 'continue', id: 'continue', title: '이어보기', layout: 'landscape', items }] : [];
         // The last-card fallback must also work on a Home with no other card to receive focus.
         if (remote) rows.push({ kind: 'watchlist', id: 'watchlist', title: '볼 목록', layout: 'poster', items: [cards[0]] });
+        const reader = req.frame().page();
+        if (reader === peer) {
+          peerHomeReads++;
+          if (holdPeerHome) {
+            await releaseHome.promise;
+          }
+        }
+        if (reader === slowPeer && !hidden.size) {
+          await releaseRead.promise;
+        }
         return json({ hero: [], rows });
       }
       if (path.startsWith('/api/home/continue/') && path.endsWith('/hidden')) {
@@ -42,6 +57,7 @@ try {
         assert.equal(req.method(), 'PUT');
         assert.equal(req.headers()['x-moa-profile'], 'viewer');
         assert.equal(url.searchParams.get('groupId'), 'g-' + id);
+        assert.equal(url.searchParams.get('resumeMediaId'), 'watched-' + id);
         hides.push(id);
         if (fail) { fail = false; return route.fulfill({ status: 500, json: { error: 'test-hide-failed' } }); }
         hidden.add(id);
@@ -58,6 +74,17 @@ try {
     const hide = dialog.getByRole('button', { name: '홈 이어보기에서 숨기기' });
     assert.match(await frames.first().getAttribute('href'), /\/watch\/ep-a\?t=120&resume=1$/);
     if (remote) {
+      peer = await context.newPage();
+      await peer.goto(base);
+      await peer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor();
+      // Keep another MOA content tab active, leaving a freshly cached main Home behind.
+      await peer.locator('a[href="/tabs/local-tab"]:visible').first().click();
+      await peer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor();
+      slowPeer = await context.newPage();
+      await Promise.all([
+        slowPeer.waitForRequest(req => new URL(req.url()).pathname === '/api/home'),
+        slowPeer.goto(base),
+      ]);
       await frames.first().focus();
       await page.keyboard.press('ArrowDown');
       assert.equal(await more('첫 작품').evaluate(el => el === document.activeElement), true);
@@ -83,6 +110,23 @@ try {
     else await hide.tap();
     await more('첫 작품').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => document.activeElement?.getAttribute('href')?.startsWith('/watch/ep-b'));
+    if (remote) {
+      // A notification must supersede even an initial, unfinished Home GET.
+      await slowPeer.getByRole('button', { name: '둘째 작품 더 보기' }).waitFor();
+      releaseRead.resolve();
+      await peer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor({ state: 'hidden' });
+      assert.equal(await slowPeer.getByRole('button', { name: '첫 작품 더 보기' }).count(), 0);
+      // Revisiting the inactive content tab must not redisplay its previously cached card.
+      holdPeerHome = true;
+      await Promise.all([
+        peer.waitForRequest(req => new URL(req.url()).pathname === '/api/home'),
+        peer.locator('a[href="/"]:visible').first().click(),
+      ]);
+      assert.equal(await peer.getByRole('button', { name: '첫 작품 더 보기' }).count(), 0);
+      holdPeerHome = false;
+      releaseHome.resolve();
+      await peer.getByRole('button', { name: '둘째 작품 더 보기' }).waitFor();
+    }
     await more('둘째 작품').click();
     await hide.click();
     await page.locator('.row[aria-labelledby="row-continue"]').waitFor({ state: 'hidden' });
@@ -90,9 +134,32 @@ try {
     await page.reload();
     await page.getByRole('heading', { name: remote ? '볼 목록' : '로컬 라이브러리가 비어 있어요' }).waitFor();
     assert.equal(await frames.count(), 0);
+    if (remote) {
+      await peer.getByRole('button', { name: '둘째 작품 더 보기' }).waitFor({ state: 'hidden' });
+      hidden.delete('a'); // Playback has restored this edition on the server.
+      const notify = profile => page.evaluate(id => {
+        localStorage.setItem('moa.continueChanged:' + id, '1');
+        localStorage.removeItem('moa.continueChanged:' + id);
+      }, profile);
+      const readsBefore = peerHomeReads;
+      await peer.evaluate(() => {
+        window.addEventListener('storage', function received(event) {
+          if (event.key !== 'moa.continueChanged:other' || event.newValue) return;
+          window.removeEventListener('storage', received);
+          window.otherProfileSignalReceived = true;
+        });
+      });
+      await notify('other');
+      await peer.waitForFunction(() => window.otherProfileSignalReceived);
+      assert.equal(peerHomeReads, readsBefore);
+      await notify('viewer'); // Delayed notification must read the restored state.
+      await peer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor();
+      await slowPeer.getByRole('button', { name: '첫 작품 더 보기' }).waitFor();
+    }
     assert.deepEqual(hides, ['a', 'a', 'b']);
     assert.deepEqual(errors, []);
     await context.close();
+    if (remote) console.log('PASS cross-tab hide, pending reads, inactive tabs, profile isolation and delayed notification');
     console.log('PASS', remote ? 'remote' : 'touch', 'Continue hide, retry, neighboring focus, empty row and reload');
   }
 } finally { await browser.close(); }

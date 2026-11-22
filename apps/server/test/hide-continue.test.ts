@@ -21,7 +21,10 @@ test('Continue visibility survives reload, follows the selected editions, and on
     };
     const continued = async (query = 'continueScope=all', viewer = who) =>
       ((await get('/api/home?' + query, viewer) as HomeResponse).rows.find(row => row.kind === 'continue')?.items ?? []);
-    const hide = (id: string, group?: string) => env.app.inject({ method: 'PUT', url: '/api/home/continue/' + id + '/hidden' + (group ? '?groupId=' + encodeURIComponent(group) : ''), headers });
+    const hide = (id: string, groupId?: string, resumeMediaId?: string) => env.app.inject({
+      method: 'PUT', url: '/api/home/continue/' + id + '/hidden', headers,
+      query: { ...(groupId && { groupId }), ...(resumeMediaId && { resumeMediaId }) },
+    });
     const save = async (episodeId: string, position: number, session?: PlaybackSession) => {
       const response = await env.app.inject({ method: 'POST', url: '/api/progress', headers,
         payload: { episodeId, position, duration: 1200, continueVisibility: session?.continueVisibility } });
@@ -51,6 +54,7 @@ test('Continue visibility survives reload, follows the selected editions, and on
     assert.equal(saved.statusCode, 204);
     const before = await continued('providers=local'), grouped = before.find(card => card.resume?.kind === 'next')!;
     assert.ok(grouped.groupId);
+    assert.equal(grouped.id, 'a');
     assert.equal(grouped.resumeMediaId, 'b');
     const old = await play('b1');
     assert.equal(old.continueVisibility, undefined);
@@ -58,16 +62,28 @@ test('Continue visibility survives reload, follows the selected editions, and on
     assert.equal(detail.playTarget.episodeId, 'b2');
 
     // An old rendered group must never change a newly separated edition.
-    assert.equal((await hide(grouped.id, 'stale-group')).statusCode, 409);
+    const changeGroup = (action: string) => env.app.inject({
+      method: 'PATCH', url: '/api/media/b/group', headers, payload: { action },
+    });
+    assert.equal((await changeGroup('separate')).statusCode, 200);
+    assert.equal((await get('/api/media/a/group')).id, grouped.groupId);
+    for (const resumeId of [grouped.resumeMediaId, undefined]) {
+      const stale = await hide(grouped.id, grouped.groupId, resumeId);
+      assert.equal(stale.statusCode, 409);
+      assert.equal(stale.json().error, 'continue-group-changed');
+    }
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM hidden_continue')?.n, 0);
+    assert.equal((await changeGroup('reset')).statusCode, 200);
+    assert.equal((await hide(grouped.id, 'stale-group', grouped.resumeMediaId)).statusCode, 409);
     assert.equal((await hide('missing')).statusCode, 404);
     assert.deepEqual(await continued('providers=local'), before);
     assert.deepEqual((await hide('a')).json().mediaIds, ['a']);
     assert.deepEqual((await continued('providers=local&titleGrouping=false')).map(card => card.id), ['b', 's2']);
     assert.equal((await continued('providers=local'))[0].resumeMediaId, 'b');
-    const result = await hide(grouped.id, grouped.groupId);
+    const result = await hide(grouped.id, grouped.groupId, grouped.resumeMediaId);
     assert.equal(result.statusCode, 200, result.body);
     assert.deepEqual(result.json().mediaIds.sort(), ['a', 'b']);
-    assert.deepEqual((await hide(grouped.id, grouped.groupId)).json().mediaIds.sort(), ['a', 'b']);
+    assert.deepEqual((await hide(grouped.id, grouped.groupId, grouped.resumeMediaId)).json().mediaIds.sort(), ['a', 'b']);
     for (const query of ['providers=local', 'providers=local&titleGrouping=false', 'continueScope=all&providers=unselected']) {
       assert.deepEqual((await continued(query)).map(card => card.id), ['s2']);
     }

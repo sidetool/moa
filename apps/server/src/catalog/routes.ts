@@ -33,14 +33,17 @@ export function registerCatalogRoutes(app: FastifyInstance, { db, catalog, group
     }
     return {...home, refreshing:visible.some(id=>tmdb.detailRefreshing(id)), rows:home.rows.map(row=>row.kind === 'watchlist' && query(req).titleGrouping !== 'false' ? {...row,items:groups.saved(profile(req),row.items.map(c=>c.id))} : row)};
   });
-  app.put('/api/home/continue/:mediaId/hidden', { schema: { params: idParams('mediaId'), querystring: object({ groupId: string }) } }, async req => {
-    const id = params(req).mediaId, viewer = profile(req), groupId = query(req).groupId;
+  app.put('/api/home/continue/:mediaId/hidden', { schema: { params: idParams('mediaId'), querystring: object({ groupId: string, resumeMediaId: string }) } }, async req => {
+    const id = params(req).mediaId, viewer = profile(req);
+    const { groupId, resumeMediaId } = query(req);
     assertProfileMedia(id, req);
     let mediaIds = [id];
     db.transaction(() => {
       if (groupId) {
         const mapping = groups.mapping(viewer, true);
-        if (mapping.get(id) !== groupId) throw new ApiFailure(409, 'continue-group-changed');
+        // Older grouped requests omit the watched edition and cannot identify a split card.
+        if (!resumeMediaId || mapping.get(id) !== groupId || mapping.get(resumeMediaId) !== groupId)
+          throw new ApiFailure(409, 'continue-group-changed');
         mediaIds = [...mapping].filter(([, group]) => group === groupId).map(([member]) => member);
       }
       const ids = JSON.stringify(mediaIds);

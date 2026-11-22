@@ -28,7 +28,12 @@ export const useProfiles = () => useQuery({ queryKey: keys.profiles, queryFn: ()
 
 export const useHome = (type?: MediaType, providers?: string[], personalScope: "tab" | "all" = "tab") => {
   const titleGrouping = useTitleGrouping();
-  return useQuery({ ...catalogReadOptions, queryKey: [...keys.home(type), currentProfileId(), providers, personalScope, titleGrouping], queryFn: ({ signal }) => api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal }) });
+  const profile = currentProfileId();
+  return useQuery({ ...catalogReadOptions, queryKey: [...keys.home(type), profile, providers, personalScope, titleGrouping],
+    refetchOnWindowFocus: true, queryFn: ({ signal }) => {
+      if (currentProfileId() !== profile) throw new DOMException('Profile changed', 'AbortError');
+      return api<HomeResponse>(`/home?${new URLSearchParams({ continueScope: personalScope, watchlistScope: personalScope, titleGrouping: String(titleGrouping), ...(type ? { type } : {}), ...(providers ? { providers: providers.join(",") } : {}) })}`, { signal });
+    } });
 };
 
 export const useMedia = (id: string) => {
