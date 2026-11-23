@@ -55,6 +55,14 @@ jobs:
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
         run: node apps/web/tests/automatic-source.browser.mjs
+      - name: Seek previews and player controls
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+          MOA_TEST_VIDEO: ${{ runner.temp }}/moa-seek.mp4
+          MOA_API: http://127.0.0.1:1
+        run: |
+          ffmpeg -v error -f lavfi -i testsrc2=size=160x90:rate=8 -t 610 -c:v libx264 -threads 1 -preset ultrafast -crf 28 -g 16 -sc_threshold 0 -pix_fmt yuv420p -movflags +faststart "$MOA_TEST_VIDEO"
+          node apps/web/scripts/verify-player-preview.mjs --seek-only
       - name: Experimental playback filters
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
