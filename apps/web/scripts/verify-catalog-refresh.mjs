@@ -11,7 +11,7 @@ const failures = [];
 
 function installFixture() {
   if (!localStorage.getItem('moa.profile')) localStorage.setItem('moa.profile', 'p1');
-  const state = window.catalogFixture = { titleReads: 0, sourceReads: 0, listReads: [], statusReads: 0, settingsReads: 0, refreshes: [], saves: [], observed: 1 };
+  const state = window.catalogFixture = { titleReads: 0, sourceReads: 0, listReads: [], statusReads: 0, settingsReads: 0, refreshes: [], saves: [], observed: 1, failedGroupDeletes: 0 };
   const wait = key => new Promise(resolve => { state[key] = resolve; });
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
   function withSeasons(detail) {
@@ -89,7 +89,7 @@ function installFixture() {
           }
           if (method === 'DELETE') {
             if (localStorage.getItem('verify.failGroupWrite')) {
-              state.groupWriteFailed = true;
+              state.failedGroupDeletes++;
               return json({ error: 'fixture-unavailable' }, 503);
             }
             localStorage.setItem('verify.groupRemoved', '1');
@@ -412,7 +412,8 @@ try {
     const path = '/title/demo-1?savedEdition=saved-edition';
     assert.equal(await card.getAttribute('href'), path);
     await card.click();
-    const saved = page.getByRole('button', { name: '내 목록에 있음', exact: true });
+    const actions = page.locator('.hero-actions');
+    const saved = actions.getByRole('button', { name: '내 목록에 있음', exact: true, pressed: true, disabled: false });
     await saved.waitFor();
     assert.equal(await saved.getAttribute('aria-pressed'), 'true');
     const direct = await page.context().newPage();
@@ -421,13 +422,15 @@ try {
     await direct.close();
     await fixture(page, () => localStorage.setItem('verify.failGroupWrite', '1'));
     await saved.click();
-    await page.waitForFunction(() => window.catalogFixture.groupWriteFailed && document.querySelector('.hero-actions [aria-pressed]')?.disabled === false);
-    assert.equal(await saved.getAttribute('aria-pressed'), 'true');
+    await page.getByRole('alert').filter({ hasText: '내 목록에서 빼지 못했어요' }).waitFor();
+    await saved.waitFor();
+    assert.equal(await fixture(page, () => window.catalogFixture.failedGroupDeletes), 3);
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), null);
     await fixture(page, () => localStorage.removeItem('verify.failGroupWrite'));
     await saved.click();
-    const removed = page.getByRole('button', { name: '내 목록', exact: true });
+    const removed = actions.getByRole('button', { name: '내 목록', exact: true, pressed: false, disabled: false });
     await removed.waitFor();
-    assert.equal(await removed.getAttribute('aria-pressed'), 'false');
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), '1');
     await page.reload();
     await removed.waitFor();
     await removed.click();
