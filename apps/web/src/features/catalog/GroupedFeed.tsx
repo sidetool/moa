@@ -288,7 +288,7 @@ export function GroupedSearch({ sources, query, local, pending, failures }: {
         </Link>;
       })}
     </div>}
-    {notice.length > 0 && <p className="search-error" role="status">
+    {notice.length > 0 && <p className="search-error search-retry" role="status">
       {notice.map(request => request.label).join(', ')} 조회에 실패했어요.{' '}
       <button className="text-btn" aria-disabled={!!retrying} onClick={event => void retryFailed(event.currentTarget)}>{retrying ? '다시 시도 중…' : '다시 시도'}</button>
     </p>}

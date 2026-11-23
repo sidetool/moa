@@ -49,6 +49,8 @@
 .title-name.has-logo img { width: auto; max-width: min(480px, 88%); max-height: clamp(96px, 18vh, 180px); object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 24px rgba(0, 0, 0, .45)); }
 .title-original { margin-top: 8px; color: var(--text-3); font-size: .92rem; font-weight: 600; }
 .title-tagline { margin-top: 18px; color: var(--text-2); font-size: .95rem; font-weight: 600; }
+.title-action-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text-2); font-size: .86rem; line-height: 1.5; }
+.title-action-note svg { flex: none; color: var(--danger); }
 .title-cast { margin-top: 10px; font-size: .88rem; color: var(--text-3); }
 .title-cast span { margin-right: 8px; color: var(--text-2); font-weight: 600; }
 .title-body { padding: 8px var(--gutter) 40px; max-width: 1040px; }
@@ -142,6 +144,11 @@
 .search-group h2 { display: flex; align-items: baseline; gap: 8px; font-size: 1.15rem; margin-bottom: 14px; }
 .search-group h2 small { color: var(--text-3); font-size: .85rem; font-weight: 600; }
 .search-error { color: var(--text-3); font-size: .9rem; }
+.search-retry { margin: 0 0 20px; }
+/* Inline retry in a failure line: reads as an action, and the padding widens the tap area without moving the text. */
+.search-error .text-btn, .settings-error .text-btn { margin: -6px 0 -6px 4px; padding: 6px 2px; color: var(--text-2); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+.search-error .text-btn:hover, .settings-error .text-btn:hover { color: var(--text); }
+.search-error .text-btn[aria-disabled="true"] { opacity: var(--disabled-opacity); cursor: progress; text-decoration: none; }
 
 /* ---------- History ---------- */
 .history-grouping { display: inline-flex; align-items: center; gap: 10px; color: var(--text-2); font-size: .9rem; cursor: pointer; }
@@ -180,6 +187,7 @@
 .dir span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dir:hover { background: rgba(255, 255, 255, .06); color: #fff; }
 .dir-empty { padding: 24px 12px; color: var(--text-3); font-size: .9rem; }
+.dir-empty:has(> .settings-error) { display: grid; justify-items: start; gap: 12px; }
 .dir-sk { height: 44px; margin: 4px 0; }
 .folder-picker { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; color: inherit; }
 .folder-picker::backdrop { background: transparent; }
@@ -209,6 +217,9 @@
 .settings-back:hover { background: var(--surface-1); color: var(--text); }
 .settings-group > .settings-hint, .settings-card + .settings-hint { margin: 10px 4px 0; }
 .settings-card > .settings-error, .settings-card > .settings-hint { margin: 0; padding: 16px 18px; }
+/* A save error belongs to the row above it; the next row keeps its divider. */
+.settings-card > .setting + .settings-error { margin-top: -6px; padding-top: 0; }
+.settings-card > .settings-error + .setting { border-top: 1px solid var(--hairline); }
 /* Text fields take the full row under their label instead of squeezing beside it. */
 .setting.setting-field { flex-direction: column; align-items: stretch; gap: 12px; }
 .setting.setting-field > .translation-model { flex: none; width: 100%; }
@@ -255,7 +266,7 @@
 .settings-sk { display: block; height: 220px; margin-bottom: 24px; border-radius: var(--radius-l); }
 .settings-hint { color: var(--text-3); font-size: .86rem; line-height: 1.5; }
 .settings-error { color: var(--danger); font-size: .86rem; line-height: 1.5; }
-.settings-error .text-btn[aria-disabled="true"] { opacity: var(--disabled-opacity); cursor: progress; }
+.settings-error .text-btn[aria-disabled="true"] { opacity: var(--disabled-opacity); cursor: progress; text-decoration: none; }
 .list-selection { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px 18px; }
 .list-selection label { display: inline-flex; align-items: center; gap: 8px; }
 .list-selection > span { margin-right: auto; color: var(--text-3); font-size: .85rem; }
@@ -400,6 +411,7 @@
   .page-head-actions { width: 100%; }
   .page-head-actions .btn { flex: 1; }
   .setting { padding: 14px; }
+  .settings-card > .settings-error { padding-inline: 14px; }
   .tab-item { padding-left: 10px; }
   .tab-item-actions .icon-btn { width: 36px; height: 36px; }
   .tab-editor-body { padding: 8px 18px 18px; }

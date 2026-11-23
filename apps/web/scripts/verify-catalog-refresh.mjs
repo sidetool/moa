@@ -78,6 +78,9 @@ function installFixture() {
           return json(localStorage.getItem('verify.groupRemoved') ? [] : [{ ...card, id: 'saved-edition', inWatchlist: true,
             groupId: 'manual:fixture', groupMemberIds: ['saved-edition'], watchlistMediaId: 'saved-edition', resumeMediaId: 'demo-1' }]);
         }
+        // Writes that bypass the saved group; counted across reloads.
+        if (localStorage.getItem('verify.savedGroup') && url.pathname === '/api/watchlist/demo-1' && method !== 'GET')
+          localStorage.setItem('verify.ungroupedWrites', String(Number(localStorage.getItem('verify.ungroupedWrites') ?? 0) + 1));
         if (localStorage.getItem('verify.savedGroup') && url.pathname === '/api/watchlist/demo-1/group' && url.searchParams.get('savedEdition') === 'saved-edition') {
           if (method === 'GET') {
             if (localStorage.getItem('verify.failGroupRead')) return json({ error: 'fixture-unavailable' }, 503);
@@ -431,11 +434,23 @@ try {
     await saved.waitFor();
     await fixture(page, () => localStorage.setItem('verify.failGroupRead', '1'));
     await page.reload();
-    const retry = page.getByRole('button', { name: '내 목록 상태 다시 확인', exact: true });
-    await retry.waitFor();
+    // An unreadable group keeps the same "내 목록" button without a pressed state and a short note;
+    // pressing it only checks again and never writes to the ungrouped edition.
+    const ungrouped = () => fixture(page, () => localStorage.getItem('verify.ungroupedWrites'));
+    const ungroupedBefore = await ungrouped();
+    await page.getByRole('alert').filter({ hasText: '내 목록 상태를 확인하지 못했어요' }).waitFor({ timeout: 10_000 });
+    const unknown = page.locator('.hero-actions').getByRole('button', { name: '내 목록', exact: true });
+    assert.equal(await unknown.getAttribute('aria-pressed'), null);
+    await unknown.click();
+    // Let the re-check and its quiet retries finish before the fixture recovers.
+    await page.locator('.hero-actions button[aria-disabled="true"]').waitFor();
+    await page.waitForFunction(() => !document.querySelector('.hero-actions button[aria-disabled="true"]') && document.querySelector('.title-action-note'), null, { timeout: 10_000 });
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), null);
+    assert.equal(await ungrouped(), ungroupedBefore, 'no write to another edition while the group is unknown');
     await fixture(page, () => localStorage.removeItem('verify.failGroupRead'));
-    await retry.click();
+    await unknown.click();
     await saved.waitFor();
+    assert.equal(await ungrouped(), ungroupedBefore);
     await fixture(page, () => localStorage.setItem('verify.groupSeparated', '1'));
     await page.reload();
     await removed.waitFor();

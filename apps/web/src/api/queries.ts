@@ -3,6 +3,7 @@ import { catalogReadOptions } from './catalog-refresh';
 import { deviceSettingsPatch, loadDevicePrefs, saveDevicePrefs, useDevicePrefs, useTitleGrouping, type DevicePrefs } from "../lib/device-prefs";
 import { useInfiniteQuery, useMutation, useMutationState, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { Account, HomeResponse, LibraryFolder, MediaCard, MediaDetail, MediaType, Page, Profile, ScanStatus, SearchGroup, Settings, HistoryEntry } from "@moa/shared";
+import { useState } from "react";
 import { api, ApiError, currentProfileId } from "../lib/api";
 
 export const keys = {
@@ -171,15 +172,56 @@ export function useSaveSettings() {
   };
 }
 
+export type WatchlistFailure = { add: boolean; groupChanged: boolean };
+export const watchlistFailureText = (failure: WatchlistFailure) => failure.groupChanged
+  ? "작품 묶음이 바뀌어 내 목록을 바꾸지 못했어요."
+  : `내 목록${failure.add ? "에 추가하지" : "에서 빼지"} 못했어요.`;
+
+/** A watchlist button keeps its add/remove role. Transient errors retry quietly; a final failure is
+ *  reported beside the button, which falls back to the confirmed state. The report belongs to the view
+ *  it was made in (profile, title and the page's saved edition), not to the write target: a 409 that
+ *  splits the group moves the toggle to another key, yet the same page keeps its report. */
+export function useWatchlistChange(id: string, confirmed: boolean, savedEdition?: string, view: string | null = null) {
+  const toggle = useWatchlistToggle(id, savedEdition);
+  const scope = JSON.stringify([currentProfileId(), id, view]);
+  const [failure, setFailure] = useState<(WatchlistFailure & { scope: string }) | null>(null);
+  const pending = toggle.isPending;
+  // Another view drops the report. So does the first read showing the requested state after all,
+  // so that a later change from elsewhere cannot bring the old note back.
+  if (failure && (failure.scope !== scope || (!pending && failure.add === confirmed))) setFailure(null);
+  const change = (add: boolean) => {
+    if (pending) return;
+    setFailure(null);
+    toggle.mutate(add, { onError: error => setFailure({ add, groupChanged: error instanceof ApiError && error.code === "watchlist-group-changed", scope }) });
+  };
+  const current = !pending && failure && failure.scope === scope && failure.add !== confirmed ? failure : null;
+  return {
+    saved: pending ? toggle.variables : confirmed,
+    pending,
+    change,
+    failure: current && { add: current.add, groupChanged: current.groupChanged }
+  };
+}
+
 interface GroupWatchlistState { grouped: boolean; inWatchlist: boolean }
 const groupWatchlistKey = (id: string, savedEdition: string | null) => [...keys.watchlist, currentProfileId(), "group", id, savedEdition] as const;
 const groupWatchlistPath = (id: string, savedEdition: string) =>
   `/watchlist/${encodeURIComponent(id)}/group?savedEdition=${encodeURIComponent(savedEdition)}`;
 
 export function useGroupWatchlist(id: string, savedEdition: string | null) {
-  return useQuery({ queryKey: groupWatchlistKey(id, savedEdition), enabled: Boolean(savedEdition), retry: false,
+  // Reading the saved group recovers from the same transient failures as writing to it.
+  return useQuery({ queryKey: groupWatchlistKey(id, savedEdition), enabled: Boolean(savedEdition),
+    retry: (failures, error) => failures < WATCHLIST_RETRY_DELAYS.length && transientWatchlistError(error),
+    retryDelay: failures => WATCHLIST_RETRY_DELAYS[failures] ?? 1500,
     queryFn: ({ signal }) => api<GroupWatchlistState>(groupWatchlistPath(id, savedEdition!), { signal }) });
 }
+
+// Lost connections and server hiccups are worth a couple of quiet attempts. Watchlist writes are
+// idempotent, so repeating one cannot double-apply. A changed group (409) or other refusal is final.
+const WATCHLIST_RETRY_DELAYS = [600, 1500];
+const transientWatchlistError = (error: unknown) =>
+  error instanceof ApiError ? error.status === 408 || error.status === 429 || error.status >= 500
+    : error instanceof TypeError;
 
 /** Show the requested state in the acting control while the server confirms the change. */
 export function useWatchlistToggle(id: string, savedEdition?: string) {
@@ -190,6 +232,8 @@ export function useWatchlistToggle(id: string, savedEdition?: string) {
     mutationKey,
     networkMode: 'always',
     scope: { id: JSON.stringify(mutationKey) },
+    retry: (failures, error) => failures < WATCHLIST_RETRY_DELAYS.length && profile === currentProfileId() && transientWatchlistError(error),
+    retryDelay: failures => WATCHLIST_RETRY_DELAYS[failures] ?? 1500,
     mutationFn: (add: boolean) => {
       if (profile !== currentProfileId()) throw new DOMException('Profile changed', 'AbortError');
       return api<void>(savedEdition ? groupWatchlistPath(id, savedEdition) : `/watchlist/${encodeURIComponent(id)}`, { method: add ? "PUT" : "DELETE" });

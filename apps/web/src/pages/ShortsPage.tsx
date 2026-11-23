@@ -1,10 +1,10 @@
-import { Check, ChevronDown, ChevronUp, Clapperboard, Play, Plus, RotateCcw, Search, Volume2, VolumeX } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, CircleAlert, Clapperboard, Play, Plus, RotateCcw, Search, Volume2, VolumeX } from "lucide-react";
 import { useSettingSaveFeedback } from "../features/settings/useSettingSaveFeedback";
 import { Link } from "react-router-dom";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useIsMutating, useQuery } from "@tanstack/react-query";
 import type { MediaCard, Settings, ShortsItem } from "@moa/shared";
-import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistToggle } from "../api/queries";
+import { keys, useMe, useProfiles, useSaveSettings, useSettings, useWatchlistChange, watchlistFailureText } from "../api/queries";
 import { recommendationTarget } from "../api/recommendations";
 import { useShortsNative, markShortSkipped, SHORTS_CATEGORIES, shortsAvailable, shortsFeedKey, uniqueItems, useShortsFeed } from "../api/shorts";
 import { ShortsNativePlayer } from "../features/shorts/ShortsNativePlayer";
@@ -217,8 +217,8 @@ function ShortsReel({ items, feed, replay, fit, onFit, fitError, native, quality
   </div>;
 }
 
-function RailButton({ label, caption, pressed, disabled, pending, onClick, children }: { label: string; caption?: string; pressed?: boolean; disabled?: boolean; pending?: boolean; onClick: () => void; children: React.ReactNode }) {
-  return <button type="button" className="shorts-rail-btn" aria-label={label} title={label} aria-pressed={pressed} disabled={disabled} aria-disabled={pending || undefined} onClick={() => { if (!pending) onClick(); }}>
+function RailButton({ label, caption, pressed, disabled, pending, describedBy, onClick, children }: { label: string; caption?: string; pressed?: boolean; disabled?: boolean; pending?: boolean; describedBy?: string; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" className="shorts-rail-btn" aria-label={label} title={label} aria-pressed={pressed} disabled={disabled} aria-disabled={pending || undefined} aria-describedby={describedBy} onClick={() => { if (!pending) onClick(); }}>
     <span className="shorts-rail-icon">{children}</span>{caption && <small aria-hidden="true">{caption}</small>}
   </button>;
 }
@@ -228,9 +228,10 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
   item: ShortsItem; index: number; total: number; active: boolean; near: boolean; muted: boolean; blocked: boolean; native: boolean; inWatchlist: boolean;
   fitError: React.ReactNode; onPlay: () => void; onStep: (delta: number) => void; onSound: () => void; children: React.ReactNode;
 }) {
-  const toggle = useWatchlistToggle(item.mediaId ?? "");
-  const saved = toggle.isPending ? toggle.variables : inWatchlist;
-  const failedChange = toggle.isError && toggle.variables !== inWatchlist;
+  // Each slide owns the change for its own title, so a late reply after swiping stays on that slide.
+  const watchlist = useWatchlistChange(item.mediaId ?? "", inWatchlist);
+  const saved = watchlist.saved;
+  const noteId = useId();
   const poster = sized(item.poster, 500);
   const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (!active) setExpanded(false); }, [active]);
@@ -249,7 +250,7 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
         {/* Tap the description for the full text; it sits beside the video, so the tap never reaches it. */}
         {item.overview && <button type="button" className={cx("shorts-overview", expanded && "is-open")} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{item.overview}</button>}
         {fitError}
-        {failedChange && <p role="alert" className="shorts-sub">내 목록{toggle.variables ? "에 추가하지" : "에서 빼지"} 못했어요.</p>}
+        {watchlist.failure && <p id={noteId} role={active ? "alert" : undefined} className="shorts-sub shorts-note"><CircleAlert size={14} aria-hidden="true" />{watchlistFailureText(watchlist.failure)}</p>}
         <Link className="shorts-open" to={recommendationTarget(item.href, item.title)}>
           {item.mediaId ? <Play size={14} fill="currentColor" /> : <Search size={14} strokeWidth={2.6} />}{item.mediaId ? "작품 보기" : "MOA에서 찾기"}
         </Link>
@@ -258,8 +259,8 @@ function ShortsSlide({ item, index, total, active, near, muted, blocked, native,
         {blocked && <RailButton label="재생" caption="재생" onClick={onPlay}><Play size={24} fill="currentColor" /></RailButton>}
         {active && (muted || native) && <RailButton label={muted ? "소리 켜기" : "소리 끄기"} caption="소리" onClick={onSound}>{muted ? <VolumeX size={24} /> : <Volume2 size={24} />}</RailButton>}
         {native && active && <span className="shorts-rail-cc" />}
-        {item.mediaId && <RailButton label={failedChange ? "내 목록 변경 다시 시도" : saved ? "내 목록에서 빼기" : "내 목록에 추가"} caption={failedChange ? "다시 시도" : "내 목록"} pressed={saved} pending={toggle.isPending}
-          onClick={() => toggle.mutate(failedChange ? toggle.variables : !saved)}>{saved ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
+        {item.mediaId && <RailButton label={saved ? "내 목록에서 빼기" : "내 목록에 추가"} caption="내 목록" pressed={saved} pending={watchlist.pending}
+          describedBy={watchlist.failure ? noteId : undefined} onClick={() => watchlist.change(!saved)}>{saved ? <Check size={24} /> : <Plus size={26} />}</RailButton>}
         <span className="shorts-rail-steps">
           <RailButton label="이전 작품" disabled={index === 0} onClick={() => onStep(-1)}><ChevronUp size={24} /></RailButton>
           <RailButton label="다음 작품" onClick={() => onStep(1)}><ChevronDown size={24} /></RailButton>

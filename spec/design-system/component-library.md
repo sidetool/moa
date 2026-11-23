@@ -8,7 +8,7 @@
 
 `ButtonLink`는 앱 내부 경로로 이동합니다. `IconButton`에는 이름을 알리는 `label`이 필요합니다. 값 선택에는 `SegmentedControl`을 사용합니다.
 
-내 목록처럼 같은 버튼에서 재시도하는 동작은 요청 중 `aria-disabled`로 포커스를 유지하고 클릭 핸들러에서 중복 제출을 막습니다. 비활성 버튼과 같은 불투명도로 표시합니다.
+내 목록처럼 요청이 끝날 때까지 다시 누를 수 없는 토글은 요청 중 `aria-disabled`로 포커스를 유지하고 클릭 핸들러에서 중복 제출을 막습니다. 비활성 버튼과 같은 불투명도로 표시합니다.
 
 ```tsx
 import { Button, IconButton } from '../../components/ui';

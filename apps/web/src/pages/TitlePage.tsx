@@ -3,11 +3,11 @@ import { TitleOverview } from '../features/title/TitleOverview';
 import { TitleReviews } from '../features/title/TitleReviews';
 import { TitleSources } from '../features/title/TitleSources';
 import { InlinePlugins } from '../features/plugins/WebsitePlugins';
-import { ArrowDownUp, ArrowLeft, Check, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDownUp, ArrowLeft, Check, CircleAlert, Clapperboard, Play, Plus, RotateCcw, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { DownloadBatchResult, DownloadQuality, Episode, MediaDetail } from "@moa/shared";
-import { useGroupWatchlist, useMe, useMedia, useWatchlistToggle } from "../api/queries";
+import { useGroupWatchlist, useMe, useMedia, useWatchlistChange, watchlistFailureText } from "../api/queries";
 import { jobsByEpisode, useDownloadStatus } from "../api/downloads";
 import { useOneTapDownload } from "../features/title/ServerSave";
 import { BatchDownload, BatchDownloadResultLine, DownloadStatusLine, EpisodeDownloadButton, MovieDownloadButton, type DownloadEntry } from "../features/title/ServerSave";
@@ -208,7 +208,9 @@ export function TitlePage() {
   const media = useMedia(id);
   const savedEdition = new URLSearchParams(useLocation().search).get("savedEdition");
   const savedGroup = useGroupWatchlist(id, savedEdition);
-  const toggle = useWatchlistToggle(id, savedGroup.data?.grouped ? savedEdition! : undefined);
+  const confirmed = savedGroup.data?.grouped ? savedGroup.data.inWatchlist : Boolean(media.data?.inWatchlist);
+  const watchlist = useWatchlistChange(id, confirmed, savedGroup.data?.grouped ? savedEdition! : undefined, savedEdition);
+  const watchlistNoteId = useId();
   const [trailer, setTrailer] = useState(false);
   const closeTrailer = useCallback(() => setTrailer(false), []);
   const admin = useMe().data?.role === "admin";
@@ -226,10 +228,14 @@ export function TitlePage() {
   }
 
   const m = media.data;
-  const confirmed = savedGroup.data?.grouped ? savedGroup.data.inWatchlist : m.inWatchlist;
-  const inWatchlist = toggle.isPending ? toggle.variables : confirmed;
-  const failedChange = toggle.isError && toggle.variables !== confirmed;
-  const retryGroupRead = Boolean(savedEdition && savedGroup.isError && !savedGroup.data);
+  // Until the saved group is known the button stays "내 목록" without a pressed state, and it never
+  // writes: another edition would be the wrong target. Transient read errors retry on their own;
+  // after a lasting failure, pressing the same button checks again.
+  const groupUnknown = Boolean(savedEdition && !savedGroup.data);
+  const groupChecking = groupUnknown && savedGroup.isFetching;
+  const groupFailed = groupUnknown && savedGroup.isError && !savedGroup.isFetching;
+  const inWatchlist = !groupUnknown && watchlist.saved;
+  const watchlistNote = groupFailed ? "내 목록 상태를 확인하지 못했어요." : watchlist.failure && watchlistFailureText(watchlist.failure);
   const isMovie = m.type === "movie";
   const trailers = trailerKeys(m);
   const lang = foreignLang(m), season = seasonInfo(m);
@@ -280,19 +286,19 @@ export function TitlePage() {
             <Button
               variant="secondary" size="l"
               icon={inWatchlist ? <Check size={22} /> : <Plus size={22} />}
-              aria-pressed={Boolean(inWatchlist)}
-              disabled={Boolean(savedEdition && !savedGroup.data && !retryGroupRead)}
-              aria-disabled={toggle.isPending || undefined}
+              aria-pressed={groupUnknown ? undefined : Boolean(inWatchlist)}
+              aria-describedby={watchlistNote ? watchlistNoteId : undefined}
+              aria-disabled={watchlist.pending || groupChecking || undefined}
               onClick={() => {
-                if (toggle.isPending) return;
-                if (retryGroupRead) void savedGroup.refetch();
-                else toggle.mutate(failedChange ? toggle.variables : !inWatchlist);
+                if (watchlist.pending || groupChecking) return;
+                if (groupUnknown) void savedGroup.refetch();
+                else watchlist.change(!inWatchlist);
               }}
-            >{retryGroupRead ? "내 목록 상태 다시 확인" : failedChange ? "내 목록 변경 다시 시도" : inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
+            >{inWatchlist ? "내 목록에 있음" : "내 목록"}</Button>
             {isMovie && saves && episodes[0] && <MovieDownloadButton entry={saves.entry(episodes[0].id)} onStart={() => saves.start(episodes[0].id)} />}
             {trailers.length > 0 && <Button variant="secondary" size="l" icon={<Clapperboard size={20} />} onClick={() => setTrailer(true)}>예고편</Button>}
           </div>
-          {failedChange && <p role="alert">내 목록{toggle.variables ? "에 추가하지" : "에서 빼지"} 못했어요.</p>}
+          {watchlistNote && <p id={watchlistNoteId} role="alert" className="title-action-note"><CircleAlert size={15} aria-hidden="true" />{watchlistNote}</p>}
           {isMovie && saves && episodes[0] && <DownloadStatusLine entry={saves.entry(episodes[0].id)} className="hero-download-status" />}
           {m.tagline && <p className="title-tagline">{m.tagline}</p>}
           {m.overview && <TitleOverview key={m.id} text={m.overview} />}
