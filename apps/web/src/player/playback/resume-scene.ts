@@ -43,23 +43,109 @@ export function resumeSceneEnabled(settings?: Pick<Settings, 'showResumeScene'>)
   return Boolean(settings && settings.showResumeScene !== false);
 }
 
-export interface ResumeScene { position: number; image: string }
+export interface VideoStill { position: number; image: string }
+interface ResumeScene extends VideoStill { second: number }
 
-/** Only sample the frame already decoded by the main player. Protected/tainted video can refuse readback. */
-export function captureResumeScene(video: HTMLVideoElement, position: number): ResumeScene | undefined {
-  if ((video as HTMLVideoElement & { webkitCurrentPlaybackTargetIsWireless?: boolean }).webkitCurrentPlaybackTargetIsWireless) return;
-  if (video.readyState < 2 || video.seeking || video.ended || video.mediaKeys || !video.videoWidth || !video.videoHeight) return;
+function localFrame(video: HTMLVideoElement) {
+  return video.readyState >= 2 && !video.seeking && !video.ended && !video.mediaKeys && video.videoWidth > 0 && video.videoHeight > 0
+    && !(video as HTMLVideoElement & { webkitCurrentPlaybackTargetIsWireless?: boolean }).webkitCurrentPlaybackTargetIsWireless;
+}
+
+function drawStill(video: HTMLVideoElement, canvas: HTMLCanvasElement) {
+  const scale = Math.min(320 / video.videoWidth, 180 / video.videoHeight, 1);
+  const width = Math.max(1, Math.round(video.videoWidth * scale)), height = Math.max(1, Math.round(video.videoHeight * scale));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return false;
+  context.drawImage(video, 0, 0, width, height);
+  return true;
+}
+function encodeStill(canvas: HTMLCanvasElement) {
+  const image = canvas.toDataURL('image/jpeg', 0.65);
+  if (image.startsWith('data:image/jpeg;base64,') && image.length <= MAX_IMAGE_LENGTH) return image;
+}
+
+export function captureVideoStill(video: HTMLVideoElement, position: number): VideoStill | undefined {
+  if (!localFrame(video)) return;
   try {
-    const scale = Math.min(320 / video.videoWidth, 180 / video.videoHeight, 1);
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const image = canvas.toDataURL('image/jpeg', 0.65);
-    if (image.startsWith('data:image/jpeg;base64,') && image.length <= MAX_IMAGE_LENGTH) return { position, image };
+    const image = drawStill(video, canvas) && encodeStill(canvas);
+    if (image) return { position, image };
   } catch { /* Device or video policy disallows frame capture. */ }
+}
+
+/** Retain the displayed frame covering the integer Home will actually seek to. Only encode on a save. */
+export function sampleResumeSeconds(video: HTMLVideoElement) {
+  const slots = Array.from({ length: 2 }, () => ({ canvas: document.createElement('canvas'), second: -1, image: '' }));
+  let pending: { second: number; frame: number; dropped: number | undefined } | undefined;
+  let lastTime: number | undefined;
+  let callback: number | undefined;
+  let blocked = false;
+
+  function draw(second: number, confirmed: boolean) {
+    if (blocked || second < 1 || !localFrame(video) || second >= video.duration * .9 || video.duration - second < 120) return false;
+    const slot = slots[second % 2];
+    if (slot.second === second) return false;
+    slot.second = -1;
+    slot.image = '';
+    try {
+      if (!drawStill(video, slot.canvas)) return false;
+      if (confirmed) slot.second = second;
+      return true;
+    } catch { blocked = true; return false; }
+  }
+
+  // Non-integer frame rates can place the boundary between two presentation timestamps.
+  // Sample the likely predecessor, then require consecutive presented frames to confirm its interval.
+  function onFrame(_now: number, { mediaTime, presentedFrames }: VideoFrameCallbackMetadata) {
+    if (localFrame(video)) {
+      if (pending && presentedFrames === pending.frame + 1 && mediaTime > pending.second
+        && video.getVideoPlaybackQuality?.().droppedVideoFrames === pending.dropped) {
+        slots[pending.second % 2].second = pending.second;
+      }
+      pending = undefined;
+      const second = Math.ceil(mediaTime);
+      if (mediaTime === second) draw(second, true);
+      else if (lastTime !== undefined && second - mediaTime <= (mediaTime - lastTime) * 1.25 && draw(second, false)) {
+        pending = { second, frame: presentedFrames, dropped: video.getVideoPlaybackQuality?.().droppedVideoFrames };
+      }
+      lastTime = mediaTime;
+    } else resetInterval();
+    if (!blocked) callback = video.requestVideoFrameCallback(onFrame);
+  }
+  function resetInterval() { lastTime = undefined; pending = undefined; }
+  function atSeek() {
+    resetInterval();
+    // A seek to an integer explicitly decodes that instant, including variable-rate video.
+    if (Number.isInteger(video.currentTime)) draw(video.currentTime, true);
+  }
+  atSeek();
+  video.addEventListener('loadeddata', atSeek);
+  video.addEventListener('seeking', resetInterval);
+  video.addEventListener('seeked', atSeek);
+  if (typeof video.requestVideoFrameCallback === 'function') callback = video.requestVideoFrameCallback(onFrame);
+  return {
+    sceneFor(position: number): ResumeScene | undefined {
+      if (!localFrame(video) || blocked) return;
+      const second = Math.floor(position), slot = slots[second % 2];
+      if (second === position && video.currentTime === position) draw(second, true);
+      if (slot.second !== second) return;
+      try {
+        const image = slot.image || encodeStill(slot.canvas);
+        if (image) {
+          slot.image = image;
+          return { position, second, image };
+        }
+      } catch { blocked = true; } // A protected/tainted surface cannot be read back.
+    },
+    stop() {
+      if (callback !== undefined) video.cancelVideoFrameCallback(callback);
+      video.removeEventListener('loadeddata', atSeek);
+      video.removeEventListener('seeking', resetInterval);
+      video.removeEventListener('seeked', atSeek);
+    }
+  };
 }
 
 // The episode ID is source-specific. Include the server's exact progress revision and position so
@@ -69,7 +155,7 @@ function key(account: string, profile: string, episode: string, updatedAt: strin
 }
 
 export function storeResumeScene(account: string, profile: string, mediaId: string, episode: string, updatedAt: string, position: number, scene: ResumeScene) {
-  if (!updatedAt || scene.position !== position) return;
+  if (!updatedAt || scene.position !== position || scene.second !== Math.floor(position)) return;
   try {
     if (!currentDocument()) return;
     const destination = key(account, profile, episode, updatedAt, position);
@@ -81,7 +167,7 @@ export function storeResumeScene(account: string, profile: string, mediaId: stri
         localStorage.removeItem(name);
       }
     }
-    localStorage.setItem(destination, JSON.stringify({ mediaId, image: scene.image }));
+    localStorage.setItem(destination, JSON.stringify({ mediaId, second: scene.second, image: scene.image }));
     // A logout in another tab can race this write even within one synchronous task.
     if (!currentDocument()) { localStorage.removeItem(destination); return; }
     const stored = Object.keys(localStorage).filter(name => name.startsWith(PREFIX)).sort();
@@ -114,8 +200,8 @@ export function readResumeScene(account?: string, profile?: string | null, targe
     if (!currentDocument()) return;
     const entry = localStorage.getItem(key(account, profile, target.episodeId, target.updatedAt, target.position));
     if (!entry) return;
-    const { image } = JSON.parse(entry);
-    if (typeof image === 'string' && image.startsWith('data:image/jpeg;base64,') && image.length <= MAX_IMAGE_LENGTH) return image;
+    const { image, second } = JSON.parse(entry);
+    if (second === Math.floor(target.position) && typeof image === 'string' && image.startsWith('data:image/jpeg;base64,') && image.length <= MAX_IMAGE_LENGTH) return image;
   } catch { /* Fall back to the episode thumbnail when device storage is unavailable. */ }
 }
 

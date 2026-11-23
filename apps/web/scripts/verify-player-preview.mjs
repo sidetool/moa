@@ -10,11 +10,12 @@ import { verificationPath } from './verification-path.mjs';
 
 const { chromium } = createRequire(import.meta.url)(process.env.MOA_PLAYWRIGHT_PATH || 'playwright-core');
 const source = process.env.MOA_TEST_VIDEO;
+const seekOnly = process.argv.includes('--seek-only');
 assert.ok(source, 'MOA_TEST_VIDEO must point to a local video at least 600 seconds long');
 const fixture = await mkdtemp(join(tmpdir(), 'moa-preview-'));
 execFileSync('ffmpeg', ['-v', 'error', '-i', source, '-t', '60', '-an', '-c:v', 'copy', '-hls_time', '4', '-hls_playlist_type', 'vod', join(fixture, 'video.m3u8')]);
 const clips = new Map();
-for (const seconds of [20, 60, 1379, 1380, 1440, 1499, 1500]) {
+for (const seconds of seekOnly ? [] : [20, 60, 1379, 1380, 1440, 1499, 1500]) {
   const filename = `short-${seconds}.mp4`;
   execFileSync('ffmpeg', ['-v', 'error', '-stream_loop', '-1', '-i', source, '-t', String(seconds), '-an', '-c:v', 'copy', join(fixture, filename)]);
   clips.set(filename, await readFile(join(fixture, filename)));
@@ -32,14 +33,16 @@ try {
     console.error(`Verifying ${mode} at ${width}px`);
     const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: width < 600 });
     await context.addInitScript(() => { localStorage.setItem('moa.profile', 'test'); localStorage.setItem('moa.remoteMode', 'off'); });
-    const previews = [];
+    const previews = [], sheets = [];
+    let busyPreview = mode === 'remux', failPreview = false, segmentRequests = 0;
     const sessions = [];
     let videoRequests = 0, resumePosition = 10, autoplayNext = true, autoplayDelay = 5, ending = mode === 'remux' ? undefined : 600, markerDelay = 0, settingsDelay = 0, remoteMarkers = false, short = 0;
-    let mediaType = 'anime', markerOverride;
+    let mediaType = 'anime', markerOverride, nextEpisodeLeadSeconds = 0;
     const markers = () => ({ source: 'aniskip', introStart: 20, introEnd: 80, creditsStart: 480, ...(ending === undefined ? {} : { creditsEnd: ending }) });
     await context.route(url => url.pathname.startsWith('/fixture/'), async route => {
       const name = basename(new URL(route.request().url()).pathname);
       videoRequests++;
+      if (name.endsWith('.ts')) segmentRequests++;
       if (name === 'video.mp4' || clips.has(name)) {
         const body = clips.get(name) ?? bytes;
         const match = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/), start = Number(match?.[1] || 0), end = Math.min(body.length - 1, match?.[2] ? Number(match[2]) : body.length - 1);
@@ -53,11 +56,18 @@ try {
         await new Promise(resolve => setTimeout(resolve, 500));
         const { episodeId, startPosition } = route.request().postDataJSON();
         sessions.push(episodeId);
-        return route.fulfill({ json: { sessionId: `preview-${episodeId}`, episodeId, episodeLabel: episodeId, mediaId: 'm', mediaTitle: '미리보기 확인', mediaType, mode: mode === 'remux' ? 'remux' : 'direct', mime: mode === 'hls' ? 'application/vnd.apple.mpegurl' : 'video/mp4', url: short ? `/fixture/short-${short}.mp4` : `/fixture/video.${mode === 'hls' ? 'm3u8' : 'mp4'}`, duration: short || (mode === 'hls' ? 60 : 600), startPosition: startPosition ?? (episodeId === 'ep' ? resumePosition : 10), subtitles: [], audioTracks: [], next: episodeId === 'ep' ? { episodeId: 'e2', title: '다음 회차', label: '2화' } : null, markers: markerOverride ?? (short || remoteMarkers ? undefined : markers()) } });
+        return route.fulfill({ json: { sessionId: `preview-${episodeId}`, episodeId, episodeLabel: episodeId, mediaId: 'm', mediaTitle: '미리보기 확인', mediaType, mode: mode === 'remux' ? 'remux' : 'direct', mime: mode === 'hls' ? 'application/vnd.apple.mpegurl' : 'video/mp4', url: short ? `/fixture/short-${short}.mp4` : `/fixture/video.${mode === 'hls' ? 'm3u8' : 'mp4'}`, duration: short || (mode === 'hls' ? 12 : 60), ...(mode === 'remux' ? { previewSheet: { url: '/api/playback/sheet/preview-sheet', interval: 10, columns: 4, rows: 2, width: 160, height: 90 } } : {}), startPosition: startPosition ?? (episodeId === 'ep' ? resumePosition : 10), subtitles: [], audioTracks: [], next: episodeId === 'ep' ? { episodeId: 'e2', title: '다음 회차', label: '2화' } : null, markers: markerOverride ?? (short || remoteMarkers ? undefined : markers()) } });
       }
-      if (path.endsWith('/preview')) { previews.push(Number(url.searchParams.get('at'))); return route.fulfill({ contentType: 'image/jpeg', body: jpeg }); }
+      if (path.endsWith('/preview-sheet')) { sheets.push(Number(url.searchParams.get('index'))); return route.fulfill({ contentType: 'image/jpeg', body: jpeg }); }
+      if (path.endsWith('/preview')) {
+        assert.equal(url.searchParams.get('exact'), '1');
+        previews.push(Number(url.searchParams.get('at')));
+        if (busyPreview) { busyPreview = false; return route.fulfill({ status: 429 }); }
+        if (failPreview) return route.fulfill({ status: 410 });
+        return route.fulfill({ contentType: 'image/jpeg', body: jpeg });
+      }
       if (path.endsWith('/markers')) { await new Promise(resolve => setTimeout(resolve, markerDelay)); return route.fulfill({ json: remoteMarkers ? { status: 'ready', markers: markers() } : { status: 'unavailable' } }); }
-      if (path === '/api/settings') { await new Promise(resolve => setTimeout(resolve, settingsDelay)); return route.fulfill({ json: { defaultSubtitleLang: 'ko', autoFetchSubtitles: false, autoplayNext, autoplayDelay, rememberSubtitles: false } }); }
+      if (path === '/api/settings') { await new Promise(resolve => setTimeout(resolve, settingsDelay)); return route.fulfill({ json: { defaultSubtitleLang: 'ko', autoFetchSubtitles: false, autoplayNext, autoplayDelay, nextEpisodeLeadSeconds, rememberSubtitles: false } }); }
       if (path === '/api/me') return route.fulfill({ json: { id: 'admin', role: 'admin', permissions: ['video.watch', 'subtitles.add'] } });
       if (path === '/api/translation/config') return route.fulfill({ json: { enabled: false, configured: false } });
       if (path === '/api/plugin-runtime') return route.fulfill({ json: [] });
@@ -67,12 +77,15 @@ try {
     });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(String(error)));
-    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    page.on('console', message => {
+      const expectedFailure = message.location().url.includes('/preview?') && /429|410/.test(message.text());
+      if (message.type() === 'error' && !expectedFailure) errors.push(message.text());
+    });
     await page.goto(new URL('watch/ep', base).href);
     const loading = page.locator('.player-loading');
     await loading.waitFor({ state: 'visible' });
     assert.notEqual(await loading.evaluate(element => getComputedStyle(element).display), 'none');
-    await page.waitForFunction(() => document.querySelector('.player-video')?.currentTime > 10).catch(async error => {
+    await page.waitForFunction(() => document.querySelector('.player-video')?.currentTime > 10.6).catch(async error => {
       console.error(await page.locator('.player-video').evaluate(video => ({ position: video.currentTime, duration: video.duration, paused: video.paused, readyState: video.readyState, error: video.error?.message })));
       throw error;
     });
@@ -81,40 +94,126 @@ try {
     const before = await page.locator('.player-video').evaluate(video => video.currentTime);
     assert.equal(await page.locator('video').count(), 1);
     const seek = await page.locator('.seek').boundingBox();
+    const mediaDuration = await page.locator('.player-video').evaluate(video => video.duration);
+    let requested = 0;
+    const move = ratio => {
+      const x = Math.round(seek.x + seek.width * ratio);
+      requested = (x - seek.x) / seek.width * mediaDuration;
+      return page.mouse.move(x, seek.y + seek.height / 2);
+    };
+    const resultAtPointer = () => page.waitForFunction(at => {
+      const image = document.querySelector('.seek-preview img');
+      return image?.naturalWidth > 0 && Math.abs(Number(image.parentElement.dataset.frameTime) - at) <= .001;
+    }, requested);
     const previewStarted = performance.now();
-    if (mode === 'remux') {
-      await page.mouse.move(seek.x + seek.width * .1, seek.y + seek.height / 2);
-      await page.mouse.move(seek.x + seek.width * .2, seek.y + seek.height / 2);
+    if (mode !== 'remux') {
+      const requestsBefore = videoRequests;
+      await move(before / mediaDuration);
+      await page.waitForFunction(() => document.querySelector('.seek-preview img')?.src.startsWith('data:image/jpeg'));
+      assert.equal(videoRequests, requestsBefore, 'a watched preview uses the main decoded frame');
+      await page.mouse.move(4, 4);
     }
-    await page.mouse.move(seek.x + seek.width * .4, seek.y + seek.height / 2);
+    if (mode === 'hls') await page.waitForFunction(() => {
+      const video = document.querySelector('.player-video');
+      const at = video.duration * .407;
+      for (let i = 0; i < video.buffered.length; i++) if (video.buffered.start(i) <= at && video.buffered.end(i) > at + 4) return true;
+      return false;
+    });
+    const segmentsBefore = segmentRequests;
+    await move(.1);
+    await move(.2);
+    await move(.407);
     if (mode === 'remux') {
-      await page.waitForFunction(() => document.querySelector('.seek-preview img')?.naturalWidth > 0);
-      assert.equal(previews.length, 1);
-      assert.ok(Math.abs(previews[0] - 240) <= 2.1);
+      await page.waitForFunction(() => document.querySelector('.seek-preview img')?.style.position === 'absolute');
+      await page.waitForFunction(() => document.querySelector('.seek-preview.is-approximate .spinner'));
+    }
+    await resultAtPointer();
+    assert.ok(requested > (mode === 'hls' ? 12 : 60), 'decoded duration supersedes the shorter catalogue estimate');
+    if (mode === 'remux') {
+      assert.equal(previews.length, 2, 'stationary exact request retries a busy decoder');
+      assert.equal(previews[0], previews[1]);
+      assert.ok(Math.abs(previews[0] - requested) <= .001);
+      assert.ok(sheets.includes(Math.floor(requested / 80)));
       assert.equal(await page.locator('video').count(), 1);
     } else {
-      await page.waitForFunction(() => { const video = document.querySelector('.seek-preview video'); return video?.readyState >= 2 && getComputedStyle(video).opacity === '1'; });
-      const current = await page.locator('.seek-preview video').evaluate(video => video.currentTime);
-      assert.ok(Math.abs(current - (mode === 'hls' ? 24 : 240)) <= 2.1, `${mode}: unexpected preview position ${current}`);
-      assert.equal(await page.locator('.seek-preview video').evaluate(video => video.paused), true);
-      await page.mouse.move(seek.x + seek.width * .7, seek.y + seek.height / 2);
-      await page.waitForFunction(at => { const video = document.querySelector('.seek-preview video'); return video?.readyState >= 2 && Math.abs(video.currentTime - at) <= 2.1 && getComputedStyle(video).opacity === '1'; }, mode === 'hls' ? 42 : 420);
+      if (mode === 'hls') assert.equal(segmentRequests, segmentsBefore, 'the precise HLS preview reuses media segments received by the main player');
+      await move(.707);
+      await resultAtPointer();
     }
     const previewMs = Math.round(performance.now() - previewStarted);
+    const selectedAt = requested;
+    const selectedImage = await page.locator('.seek-preview img').getAttribute('src');
     assert.equal(await page.locator('.player-video').evaluate(video => video.currentTime), before);
-    await page.locator('.seek-preview').evaluate(element => { element.dataset.retained = 'yes'; });
     const tip = await page.locator('.seek-tip').boundingBox();
     assert.ok(tip.x >= 0 && tip.x + tip.width <= width);
     await page.screenshot({ path: verificationPath(`verification-player-preview-${mode}-${width}.png`) });
     await page.mouse.move(4, 4);
-    assert.equal(await page.locator('.seek-preview').isVisible(), false);
-    assert.equal(await page.locator('video').count(), mode === 'remux' ? 1 : 2);
-    const requestsBeforeReturn = previews.length + videoRequests;
-    await page.mouse.move(seek.x + seek.width * (mode === 'remux' ? .4 : .7), seek.y + seek.height / 2);
-    assert.equal(await page.locator('.seek-preview').getAttribute('data-retained'), 'yes');
-    assert.equal(await page.locator('.seek-preview').isVisible(), true);
-    assert.equal(previews.length + videoRequests, requestsBeforeReturn);
+    assert.equal(await page.locator('.seek-preview').count(), 0);
+    assert.equal(await page.locator('video').count(), 1);
+    const requestsBeforeReturn = previews.length + sheets.length + videoRequests;
+    await move(mode === 'remux' ? .407 : .707);
+    await resultAtPointer();
+    await page.waitForTimeout(225);
+    assert.equal(previews.length + sheets.length + videoRequests, requestsBeforeReturn);
+    await move(.88);
     await page.mouse.move(4, 4);
+    await page.waitForTimeout(225);
+    assert.equal(previews.length + sheets.length + videoRequests, requestsBeforeReturn, 'leaving cancels queued work');
+    if (mode !== 'remux') {
+      // Independently seek the paused main player AFTER checking that previews never moved it.
+      const matches = await page.locator('.player-video').evaluate(async (video, { at, image, previous }) => {
+        const displayed = new Image();
+        displayed.src = image;
+        await displayed.decode();
+        const seekTo = seconds => new Promise(resolve => {
+          video.addEventListener('seeked', resolve, { once: true });
+          video.currentTime = seconds;
+        });
+        await seekTo(at);
+        const canvas = document.createElement('canvas');
+        canvas.width = displayed.naturalWidth;
+        canvas.height = displayed.naturalHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        const same = canvas.toDataURL('image/jpeg', .65) === image;
+        await seekTo(previous);
+        return same;
+      }, { at: selectedAt, image: selectedImage, previous: before });
+      assert.equal(matches, true, 'preview pixels match the actual frame at the requested fractional time');
+    }
+    if (mode === 'remux') {
+      failPreview = true;
+      await move(.876);
+      await page.waitForFunction(() => document.querySelector('.seek-preview img')?.style.position === 'absolute');
+      await page.waitForFunction(() => document.querySelector('.seek-tip') && !document.querySelector('.seek-preview'));
+      failPreview = false;
+      await move(.407);
+      await resultAtPointer();
+      await page.mouse.move(4, 4);
+    }
+    if (mode === 'direct' && width === 1280) {
+      // Simulate a device that allows video display but refuses canvas readback.
+      await page.evaluate(() => {
+        window.previewOriginalEncode = HTMLCanvasElement.prototype.toDataURL;
+        HTMLCanvasElement.prototype.toDataURL = () => { throw new DOMException('protected', 'SecurityError'); };
+      });
+      await move(.84);
+      await page.waitForFunction(at => {
+        const preview = document.querySelector('.seek-preview video');
+        return preview?.paused && !preview.seeking && preview.readyState >= 2 && Math.abs(preview.currentTime - at) < .001 && getComputedStyle(preview).opacity === '1';
+      }, requested);
+      assert.equal(await page.locator('.player-video').evaluate(video => video.currentTime), before);
+      await page.mouse.move(4, 4);
+      assert.equal(await page.locator('video').count(), 1);
+      await page.evaluate(() => {
+        HTMLCanvasElement.prototype.toDataURL = window.previewOriginalEncode;
+        delete window.previewOriginalEncode;
+      });
+    }
+    if (seekOnly) {
+      results.push({ width, mode, previewMs, accurate: true, reused: true });
+      await context.close();
+      continue;
+    }
     await page.getByLabel('자막 파일 선택', { exact: true }).setInputFiles({ name: 'invalid.txt', mimeType: 'text/plain', buffer: Buffer.from('unsupported subtitle') });
     const notice = page.locator('.player-notice');
     await notice.waitFor({ state: 'visible' });
@@ -177,9 +276,9 @@ try {
         { name: 'delayed postcredits markers', saved: 575, ending: 540, markerDelay: 1400 },
         { name: 'delayed autoplay disabled', saved: 590, autoplay: false, settingsDelay: 1400 },
         { name: '20s middle resume', saved: 10, short: 20 },
-        { name: '20s tail resume', saved: 19, short: 20, next: true },
+        { name: 'unmarked 20s tail stays on episode', saved: 19, short: 20 },
         { name: '60s middle resume', saved: 35, short: 60 },
-        { name: '60s tail resume', saved: 57, short: 60, next: true }
+        { name: 'unmarked 60s tail stays on episode', saved: 57, short: 60 }
       ];
       for (const test of cases) {
         console.error(`Verifying ${test.name}`);
@@ -218,11 +317,12 @@ try {
       await page.waitForFunction(() => document.querySelector('.player-title span')?.textContent.includes('e2') && document.querySelector('.player-video')?.readyState >= 2);
       results.push({ shortVideoEndedAutoplay: true, passed: true });
       autoplayNext = false;
+      nextEpisodeLeadSeconds = 30;
       for (const test of [
         { duration: 1379, promptAt: 1349 },
-        { duration: 1380, promptAt: 1320 },
-        { duration: 1440, promptAt: 1320 },
-        { duration: 1499, promptAt: 1320 },
+        { duration: 1380, promptAt: 1350 },
+        { duration: 1440, promptAt: 1410 },
+        { duration: 1499, promptAt: 1469 },
         { duration: 1500, promptAt: 1470 },
         { duration: 1440, type: 'series', promptAt: 1410 },
         { duration: 1440, markers: { source: 'aniskip', creditsStart: 1390, creditsEnd: 1440 }, promptAt: 1390 },

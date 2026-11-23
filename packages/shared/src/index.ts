@@ -353,6 +353,8 @@ export interface PlaybackSession {
   /** Echo on progress saves from a session opened after this edition was hidden from Continue. */
   continueVisibility?: { token: string; startPosition: number };
   saved?: boolean;
+  /** A row-major JPEG sheet for local file playback. GET url?index=N, zero-based. */
+  previewSheet?: { url: string; interval: number; columns: number; rows: number; width: number; height: number };
   /** APK process must stay alive; client sends heartbeats while paused and can recreate an expired session once. */
   runtimeDependent?: boolean;
   sessionId: string;

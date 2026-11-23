@@ -1,3 +1,4 @@
+import { retainPlaybackFragments } from './preview-fragments';
 import type Hls from "hls.js";
 import type { ClientCapabilities, PlaybackSession, SubtitleTrack } from "@moa/shared";
 import { preferredResolutionIndex } from "@moa/shared";
@@ -53,7 +54,9 @@ export async function attach(video: HTMLVideoElement, session: PlaybackSession, 
   }
 
   const { default: HlsClass } = await import("hls.js");
+  const fragments = !session.live && session.mode === 'direct' ? retainPlaybackFragments(session.sessionId, HlsClass.DefaultConfig.loader) : undefined;
   const hls: Hls = new HlsClass({
+    ...(fragments && { fLoader: fragments.fLoader }),
     startPosition: session.live ? -1 : start,
     maxBufferLength: 30,
     maxMaxBufferLength: 120,
@@ -79,7 +82,7 @@ export async function attach(video: HTMLVideoElement, session: PlaybackSession, 
   hls.loadSource(session.url);
   hls.attachMedia(video);
   return {
-    destroy() { hls.destroy(); },
+    destroy() { hls.destroy(); fragments?.release(); },
     levels: () => hls.levels.map((level, index) => ({ index, height: level.height })),
     level: () => hls.manualLevel,
     setLevel(index) { manualChoice = true; hls.currentLevel = index; },

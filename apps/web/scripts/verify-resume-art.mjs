@@ -31,7 +31,7 @@ try {
   const base = `http://127.0.0.1:${gateway.address().port}`;
   scratch = await mkdtemp(join(tmpdir(), 'moa-resume-scene-'));
   const path = process.env.MOA_TEST_VIDEO || join(scratch, 'sample.mp4');
-  if (!process.env.MOA_TEST_VIDEO) execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=240x136:rate=2', '-t', '210', '-c:v', 'libx264', '-threads', '1', '-preset', 'ultrafast', '-movflags', '+faststart', path]);
+  if (!process.env.MOA_TEST_VIDEO) execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', "color=red:size=240x136:rate=4,drawbox=color=blue:t=fill:enable='gte(t,30.5)'", '-t', '210', '-c:v', 'libx264', '-threads', '1', '-preset', 'ultrafast', '-movflags', '+faststart', path]);
   const bytes = await readFile(path);
   const context = await browser.newContext();
   await context.route(url => url.pathname === '/settings', async route => {
@@ -84,8 +84,9 @@ try {
     if (url === '/api/home') return route.fulfill({ json: { hero: [], rows: [{ id: 'continue', kind: 'continue', title: '이어보기', layout: 'landscape', items: [{ ...card, resume: { episodeId, position: kind === 'resume' ? progress.position : 0, label: '이어보기', kind, updatedAt: progress.updatedAt, thumb }, ...(kind === 'resume' && { progress: { episodeId, ratio: progress.position / progress.duration, label: '1화' } }) }] }] } });
     if (url === '/api/playback' && route.request().method() === 'POST') {
       count++;
-      const startPosition = progress.position + (checkVisibility && route.request().postDataJSON().audioTrackId ? 4 : 0);
-      return route.fulfill({ json: { sessionId: 'session-' + count, episodeId, mediaId, mediaTitle: card.title, mediaType: 'series', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', duration: 210, startPosition, subtitles: [],
+      const request = route.request().postDataJSON();
+      const startPosition = (request.startPosition ?? progress.position) + (checkVisibility && request.audioTrackId ? 4 : 0);
+      return route.fulfill({ json: { sessionId: 'session-' + count, episodeId, mediaId, mediaTitle: card.title, mediaType: 'series', mode: 'direct', mime: 'video/mp4', url: '/fixture/video.mp4', previewSheet: { url: '/fixture/sheet', interval: 8, columns: 5, rows: 5, width: 160, height: 90 }, duration: 210, startPosition, subtitles: [],
         ...(checkVisibility && { continueVisibility: { token: 'hide-' + count, startPosition } }),
         audioTracks: checkVisibility ? [{ id: 'a', label: '기본 음성', default: true }, { id: 'b', label: '다른 음성' }] : [] } });
     }
@@ -122,10 +123,24 @@ try {
   const waitForArt = src => page.waitForFunction(url => document.querySelector('.landscape-card img')?.getAttribute('src') === url, src);
   await image.waitFor({ timeout: 12_000 }).catch(async err => { throw new Error([err.message, errors.join(' '), diagnostics.slice(0, 12).join(' '), (await page.locator('body').innerText()).slice(0, 800)].join('\n')); });
   await waitForArt(episodeThumb);
+  // Pre-upgrade captures used the paused fractional instant even with an identical history revision.
+  const legacy = 'moa.resumeScene:' + JSON.stringify([progress.updatedAt, account, 'viewer', episodeId, progress.position]);
+  await page.evaluate(({ key, mediaId }) => {
+    const image = document.createElement('canvas').toDataURL('image/jpeg');
+    localStorage.setItem(key, JSON.stringify({ mediaId, image }));
+  }, { key: legacy, mediaId });
+  await page.reload();
+  await waitForArt(episodeThumb);
   assert.equal(count + mediaRequests, 0);
   // In-page Back during active playback and after a manual pause both preserve a real decoded frame.
   let lastVisibility;
   const opened = () => page.waitForResponse(r => new URL(r.url()).pathname === '/api/playback' && r.request().method() === 'POST');
+  // A newly opened/replaced stream can start after its fractional-second boundary.
+  const playAcrossSecond = async () => {
+    await page.bringToFront();
+    const boundary = await page.locator('.player-video').evaluate(video => Math.floor(video.currentTime) + 1);
+    await page.waitForFunction(second => document.querySelector('.player-video').currentTime >= second + .15, boundary);
+  };
   for (const mode of ['playing', 'paused', 'resumed']) {
     const opening = opened();
     await page.locator('.landscape-card .card-frame').click();
@@ -146,14 +161,45 @@ try {
       assert.notEqual(switched.startPosition, initialVisibility.startPosition);
       await page.waitForFunction(start => { const v = document.querySelector('.player-video'); return v && !v.paused && !v.seeking && v.currentTime >= start; }, switched.startPosition);
     }
+    if (mode === 'playing') await playAcrossSecond();
+    if (mode === 'paused' && !process.env.MOA_TEST_VIDEO) {
+      // Cross 30 naturally, then pin a deterministic save after the mid-second cut.
+      await page.locator('.player-video').evaluate(async video => {
+        video.currentTime = 29.75;
+        await new Promise(resolve => video.addEventListener('seeked', resolve, { once: true }));
+        await new Promise(resolve => {
+          function frame(_now, { mediaTime }) {
+            if (mediaTime >= 30.5) resolve();
+            else video.requestVideoFrameCallback(frame);
+          }
+          video.requestVideoFrameCallback(frame);
+        });
+        video.pause();
+        video.currentTime = 30.75;
+        await new Promise(resolve => video.addEventListener('seeked', resolve, { once: true }));
+        const canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+        context.drawImage(video, 0, 0);
+        const [red, , blue] = context.getImageData(1, 1, 1, 1).data;
+        if (blue < 200 || red > 50) throw new Error('Expected the blue frame at 30.75');
+      });
+    }
+    if (mode === 'resumed' && !process.env.MOA_TEST_VIDEO) {
+      assert.equal(new URL(page.url()).searchParams.get('t'), '30');
+      assert.equal(initialVisibility.startPosition, 30);
+      const [red, , blue] = await page.locator('.player-video').evaluate(video => {
+        const canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+        context.drawImage(video, 0, 0);
+        return [...context.getImageData(1, 1, 1, 1).data];
+      });
+      assert.ok(red > 200 && blue < 50, 'resumed playback opens on the same red frame as the card');
+    }
     let pausedAt;
     if (mode !== 'playing') {
       pausedAt = await page.locator('.player-video').evaluate(video => { video.pause(); return video.currentTime; });
-      await page.waitForFunction(at => window.capturedPositions.includes(at), pausedAt);
     }
     if (mode === 'resumed') {
       await page.locator('.player-video').evaluate(video => video.play());
-      await page.waitForFunction(at => document.querySelector('.player-video').currentTime >= at + .3, pausedAt);
+      await page.waitForFunction(at => document.querySelector('.player-video').currentTime >= Math.floor(at) + 1.3, pausedAt);
     }
     const finalSave = page.waitForResponse(response => isExitSave(response.request()));
     await page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
@@ -172,10 +218,16 @@ try {
       throw new Error(`${mode}: ${JSON.stringify({ progress, view, errors })} (${error.message})`);
     });
     assert.equal(await page.locator('video').count(), 0);
-    if (mode === 'resumed') {
-      const last = await page.evaluate(() => window.capturedPositions.at(-1));
-      assert.ok(last > pausedAt && last - pausedAt < 2, 'a fresh frame replaces the paused image even across a sub-two-second scene change');
-      assert.ok(Math.abs(last - progress.position) < .1);
+    if (mode === 'paused' && !process.env.MOA_TEST_VIDEO) {
+      assert.equal(progress.position, 30.75, 'progress preserves fractional precision');
+      assert.ok((await page.locator('.landscape-card .card-frame').getAttribute('href')).endsWith('?t=30&resume=1'));
+      const [red, , blue] = await image.evaluate(async img => {
+        await img.decode();
+        const canvas = document.createElement('canvas'), context = canvas.getContext('2d');
+        context.drawImage(img, 0, 0);
+        return [...context.getImageData(1, 1, 1, 1).data];
+      });
+      assert.ok(red > 200 && blue < 50, 'home shows the frame at 30 seconds, before the blue scene starts');
     }
   }
   checkVisibility = false;
@@ -218,8 +270,23 @@ try {
   });
   const back = () => page.getByRole('button', { name: '뒤로', exact: true }).click({ force: true });
   const sceneKey = saved => 'moa.resumeScene:' + JSON.stringify([saved.updatedAt, account, 'viewer', episodeId, saved.position]);
+  // Seeking directly into an unseen second has no decoded frame for its start.
   await page.locator('.landscape-card .card-frame').click();
   await playerReady();
+  await page.locator('.player-video').evaluate(async video => {
+    video.pause();
+    video.currentTime = 14.75;
+    await new Promise(resolve => video.addEventListener('seeked', resolve, { once: true }));
+  });
+  const jumpedExit = page.waitForResponse(r => isExitSave(r.request()));
+  await back();
+  const jumped = await (await jumpedExit).json();
+  assert.equal(jumped.position, 14.75);
+  await waitForArt(episodeThumb);
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), sceneKey(jumped)), null);
+  await page.locator('.landscape-card .card-frame').click();
+  await playerReady();
+  await playAcrossSecond();
   heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
   await back();
   await heldSave.committed.promise;
@@ -316,6 +383,7 @@ try {
   // Re-enabling restores real, newly saved scene artwork.
   await frame.click();
   await playerReady();
+  await playAcrossSecond();
   const enabledExit = page.waitForResponse(r => isExitSave(r.request()));
   await back();
   const enabledProgress = await (await enabledExit).json();
@@ -343,17 +411,25 @@ try {
     await page.reload();
     await frame.click();
     await playerReady();
+    await playAcrossSecond();
     const exit = page.waitForResponse(r => isExitSave(r.request()));
     await back();
     const saved = await (await exit).json();
     await page.waitForFunction(key => {
       const image = JSON.parse(localStorage.getItem(key) || '{}').image;
       return image && document.querySelector('.landscape-card img')?.src === image;
-    }, sceneKey(saved));
+    }, sceneKey(saved), { timeout: 8000 }).catch(async error => {
+      const state = await page.evaluate(() => ({
+        captured: window.capturedPositions, shown: document.querySelector('.landscape-card img')?.src.slice(0, 48),
+        keys: Object.keys(localStorage).filter(key => key.startsWith('moa.resumeScene:'))
+      }));
+      throw new Error(`Home scene for ${sceneKey(saved)}: ${JSON.stringify(state)} (${error.message})`);
+    });
   };
   const holdExit = async () => {
     await frame.click();
     await playerReady();
+    await playAcrossSecond();
     heldSave = { committed: Promise.withResolvers(), ack: Promise.withResolvers() };
     await back();
     await heldSave.committed.promise;
@@ -486,7 +562,7 @@ try {
   assert.equal(await authTab.evaluate(() => document.cookie.includes('moa_scene_reset=')), false);
   assert.equal(await authTab.evaluate(() => localStorage.getItem('moa.profile')), 'viewer');
   assert.deepEqual(errors, []);
-  console.log('Resume artwork verified for active Back, paused Back, nearby scene change, reload, account isolation, rewind and unseen next episode, disabling and re-enabling in another tab, pending and stale settings, progress with capture disabled, native and current-device logout, revocation failure/retry, other devices, remote revocation, reauthentication and delayed progress after logout.');
+  console.log('Resume artwork verified for active Back, paused Back, integer resume artwork across a mid-second cut, exact fractional progress, reload, account isolation, rewind and unseen next episode, disabling and re-enabling in another tab, pending and stale settings, progress with capture disabled, native and current-device logout, revocation failure/retry, other devices, remote revocation, reauthentication and delayed progress after logout.');
 } finally {
   await browser.close();
   if (gateway.listening) await new Promise(resolve => gateway.close(resolve));

@@ -2,9 +2,10 @@ import { mergePlaybackMarkers } from '../player/playback/skip-markers';
 import { nextUpTiming } from '../player/playback/next-up';
 import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
 import { attachAnime4k } from '../player/playback/anime4k';
-import { captureResumeScene, resumeSceneEnabled, storeResumeScene, type ResumeScene } from '../player/playback/resume-scene';
+import { sampleResumeSeconds, resumeSceneEnabled, storeResumeScene } from '../player/playback/resume-scene';
 import { PlayerNotice, type PlayerNoticeValue } from '../player/playback/PlayerNotice';
 import { SeekPreview } from '../player/playback/SeekPreview';
+import { useSeekFrames } from '../player/playback/seek-frames';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
 import { PluginScripts, PluginTools } from '../features/plugins/WebsitePlugins';
@@ -336,7 +337,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
   /* ---------- progress ---------- */
   const accountId = useRef(account?.id);
   accountId.current = account?.id;
-  const lastScene = useRef<{ sessionId: string; scene: ResumeScene } | undefined>(undefined);
+  const sampler = useRef<{ sessionId: string; owner: string; frames: ReturnType<typeof sampleResumeSeconds> } | null>(null);
   const saveProgress = useCallback((keepalive = false, v = video.current) => {
     const position = castProgress.current?.position ?? v?.currentTime, duration = castProgress.current?.duration ?? v?.duration;
     if (viewingProfile !== currentProfileId() || !session || session.live || position === undefined || !Number.isFinite(duration) || !duration || position < 1) return;
@@ -344,13 +345,10 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
     const owner = accountId.current;
     // The attach cleanup and its acknowledgement can run after a profile setting changes or the player unmounts.
     const scenesEnabled = () => resumeSceneEnabled(client.getQueryData<ProfileSettings>(keys.settings(viewingProfile)));
-    let scene: ResumeScene | undefined;
-    if (owner && viewingProfile && v && scenesEnabled() && !castProgress.current && (keepalive || v.paused) && position < duration * .9 && duration - position >= 120) {
-      const previous = lastScene.current;
-      scene = previous?.sessionId === session.sessionId && previous.scene.position === position
-        ? previous.scene : captureResumeScene(v, position);
-      if (scene) lastScene.current = { sessionId: session.sessionId, scene };
-    }
+    const source = sampler.current;
+    const scene = source && source.sessionId === session.sessionId && source.owner === owner && viewingProfile && v && scenesEnabled()
+      && !castProgress.current && (keepalive || v.paused) && position < duration * .9 && duration - position >= 120
+      ? source.frames.sceneFor(position) : undefined;
     void api<EpisodeProgress>("/progress", { method: "POST", body: { episodeId: session.episodeId, continueVisibility: session.continueVisibility, position, duration }, keepalive }).then(saved => {
       if (owner && viewingProfile && scene && scenesEnabled() && !saved?.completed && saved?.updatedAt && viewingProfile === currentProfileId() && owner === accountId.current) {
         storeResumeScene(owner, viewingProfile, session.mediaId, session.episodeId, saved.updatedAt, saved.position, scene);
@@ -418,6 +416,15 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  const sampleScenes = resumeSceneEnabled(settings);
+  useEffect(() => {
+    const v = video.current;
+    if (!sampleScenes || !v || !session || session.live || casting || airplayMedia || !account?.id || !viewingProfile || viewingProfile !== currentProfileId()) return;
+    const frames = sampleResumeSeconds(v);
+    sampler.current = { sessionId: session.sessionId, owner: account.id, frames };
+    return () => { frames.stop(); sampler.current = null; };
+  }, [session, sampleScenes, account?.id, viewingProfile, casting, airplayMedia]);
 
   useEffect(() => {
     if (!session?.runtimeDependent) return;
@@ -1369,8 +1376,17 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
   /* ---------- seek bar ---------- */
   const bar = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
-  const previewPosition = useRef<number | null>(null);
-  if (hover !== null) previewPosition.current = hover;
+  const [previewInterest, setPreviewInterest] = useState<string>();
+  const sampleSeekFrames = Boolean(settings && !casting && !airplayMedia && (sampleScenes || previewInterest === session?.sessionId));
+  const seekFrames = useSeekFrames(session, video, sampleSeekFrames);
+  const [foreground, setForeground] = useState(true);
+  useEffect(() => {
+    const doc = root.current?.ownerDocument ?? document;
+    const changed = () => { setForeground(!doc.hidden); if (doc.hidden) setHover(null); };
+    changed();
+    doc.addEventListener('visibilitychange', changed);
+    return () => doc.removeEventListener('visibilitychange', changed);
+  }, [pipWindow]);
   const [scrub, setScrub] = useState<number | null>(null);
   const ratioAt = (clientX: number) => {
     const rect = bar.current!.getBoundingClientRect();
@@ -1378,10 +1394,14 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
   };
   const onBarDown = (event: React.PointerEvent) => {
     resumeNextChecked.current = true;
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    setScrub(ratioAt(event.clientX));
+    setPreviewInterest(session?.sessionId);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const ratio = ratioAt(event.clientX);
+    setHover(ratio);
+    setScrub(ratio);
   };
   const onBarMove = (event: React.PointerEvent) => {
+    setPreviewInterest(session?.sessionId);
     const r = ratioAt(event.clientX);
     setHover(r);
     if (scrub !== null) setScrub(r);
@@ -1391,6 +1411,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
     if (scrub === null) return;
     seekTo(ratioAt(event.clientX) * total);
     setScrub(null);
+    if (event.pointerType !== "mouse") setHover(null);
   };
   const shown = scrub !== null ? scrub * total : remoteSeek ?? time;
 
@@ -1446,6 +1467,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
         onPlaying={() => setWaiting(false)}
         onVolumeChange={event => { setMuted(event.currentTarget.muted); setVolume(event.currentTarget.volume); }}
         onCanPlay={() => setWaiting(false)}
+        onDurationChange={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); }}
         onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); setLevel(engine.current?.level() ?? -1); }}
         onTimeUpdate={event => {
           const v = event.currentTarget;
@@ -1575,7 +1597,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
         )}
         {notice && <PlayerNotice notice={notice} onDismiss={() => setNotice(null)} />}
         <div className="player-controls-chrome">
-        {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => setHover(null)}
+        {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => setHover(null)} onPointerCancel={() => { setHover(null); setScrub(null); }}
           role="slider" aria-label="재생 위치" aria-valuemin={0} aria-valuemax={Math.round(total)} aria-valuenow={Math.round(shown)} aria-valuetext={clock(shown)} tabIndex={0}>
           <div className="seek-rail">
             <i className="seek-buffer" style={{ width: `${total ? (buffered / total) * 100 : 0}%` }} />
@@ -1583,7 +1605,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
             {skipRanges.map(range => <i key={range.kind} className={`seek-marker seek-${range.kind}`} title={`${range.label} ${clock(range.start)}–${clock(range.end)}`} style={{ left: `${range.start / total * 100}%`, width: `${(range.end - range.start) / total * 100}%` }} />)}
           </div>
           <i className="seek-thumb" style={{ left: `${total ? (shown / total) * 100 : 0}%` }} />
-          {previewPosition.current !== null && total > 0 && <span className="seek-tip" hidden={hover === null} style={{ left: `clamp(84px, ${previewPosition.current * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={session.sessionId} session={session} seconds={previewPosition.current * total} />}<span>{skipRanges.find(range => previewPosition.current! * total >= range.start && previewPosition.current! * total < range.end)?.label} {clock(previewPosition.current * total)}</span></span>}
+          {hover !== null && foreground && chrome && total > 0 && <span className="seek-tip" style={{ left: `clamp(84px, ${hover * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={JSON.stringify([session.sessionId, session.url])} session={session} seconds={hover * total} duration={total} cache={seekFrames} />}<span>{skipRanges.find(range => hover * total >= range.start && hover * total < range.end)?.label} {clock(hover * total)}</span></span>}
         </div>}
 
         <div className="player-controls" data-remote-group>

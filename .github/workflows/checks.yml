@@ -27,7 +27,7 @@ jobs:
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/components.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
       - name: Device settings, subtitles and sessions
         run: |
-          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/enrichment.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts ../web/tests/subtitle-timing.test.ts
+          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/enrichment.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts ../web/tests/subtitle-timing.test.ts ../web/tests/preview-fragments.test.mjs
           node --experimental-vm-modules apps/web/scripts/verify-subtitle-controller.mjs
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions

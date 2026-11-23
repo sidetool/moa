@@ -62,8 +62,18 @@ export function registerPlaybackRoutes(app: FastifyInstance, { db, catalog, sour
   });
   casting.asset(app, '/api/playback/:sessionId/remote/:asset', async (req, reply) => remotePlayback.proxy(req, reply, params(req).sessionId, params(req).asset));
   const session = (req: FastifyRequest) => playback.get(params(req).sessionId, req.moaProfile);
-  app.get('/api/playback/:sessionId/preview', { schema: { params: idParams('sessionId'), querystring: object({ at: { type: 'number', minimum: 0, maximum: 864000 } }, ['at']) } }, async (req, reply) => {
-    return reply.type('image/jpeg').header('Cache-Control', 'private, max-age=1800').send(await playback.preview(session(req), query(req).at));
+  app.get('/api/playback/:sessionId/preview', { schema: { params: idParams('sessionId'), querystring: object({ at: { type: 'number', minimum: 0, maximum: 864000 }, exact: { type: 'integer', enum: [0, 1] } }, ['at']) } }, async (req, reply) => {
+    const exact = query(req).exact === 1;
+    const controller = new AbortController(), disconnect = () => controller.abort();
+    reply.raw.once('close', disconnect);
+    try {
+      const frame = await playback.preview(session(req), query(req).at, exact, controller.signal);
+      return reply.type('image/jpeg').header('Cache-Control', exact ? 'private, no-store' : 'private, max-age=1800').send(frame);
+    } finally { reply.raw.off('close', disconnect); }
+  });
+  app.get('/api/playback/:sessionId/preview-sheet', { schema: { params: idParams('sessionId'), querystring: object({ index: { type: 'integer', minimum: 0 } }, ['index']) } }, async (req, reply) => {
+    const sheet = await playback.previewSheets.get(session(req), query(req).index);
+    return reply.type('image/jpeg').header('Cache-Control', 'private, no-store').send(sheet);
   });
   casting.asset(app, '/api/playback/:sessionId/index.m3u8', async (req, reply) => {
     const s = session(req); if (s.response.mode === 'direct') throw new ApiFailure(404, 'not-hls');

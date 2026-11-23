@@ -82,6 +82,9 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .seek-preview { position: relative; display: grid; place-items: center; width: 160px; height: 90px; overflow: hidden; border-radius: 4px; background: #080808; }
 .seek-preview video, .seek-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .seek-preview .spinner { position: absolute; }
+/* A nearby picture standing in after the pointer rests: dimmed until the exact frame arrives. */
+.seek-preview img { transition: opacity var(--motion-fast) var(--ease); }
+.seek-preview.is-approximate img { opacity: var(--disabled-opacity); }
 
 .player-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
 .controls-left, .controls-right { display: flex; align-items: center; gap: 4px; }
