@@ -5,7 +5,7 @@ import type { TranslationMode } from "../../api/translation";
 import { jimakuSource, type JimakuState } from "./jimaku";
 import { type TranslationOrigin, type TranslationSource } from "./subtitle-translation";
 import { trackSource, translatableTracks } from "./TranslationPanel";
-import { subtitleLanguage } from "../subtitles/subtitle-language";
+import { selectAutomaticTrack, automaticTrackRank } from "./automatic-source";
 import { trackName } from "../subtitles/track-name";
 
 /**
@@ -60,12 +60,6 @@ export interface AutopilotInput {
   useSaved: (track: SubtitleTrack) => void;
 }
 
-/** Prefer a track with an explicit language, keeping the current selection when possible. */
-function certainTrack(tracks: SubtitleTrack[], current: SubtitleTrack | null) {
-  const known = translatableTracks(tracks).filter(track => subtitleLanguage(track));
-  return known.find(track => track.id === current?.id) ?? known[0] ?? null;
-}
-
 /**
  * Translation modes, once per episode: reuse Korean or a saved translation first,
  * then a site track or Jimaku according to the profile preference. "ask" suggests;
@@ -104,7 +98,7 @@ export function useTranslationAutopilot(input: AutopilotInput) {
     };
     const candidates = translatableTracks(tracks);
     // Unknown site language is allowed only after WatchPage's configured protection passes.
-    const track = certainTrack(tracks, current) ?? candidates.find(t => t.id === current?.id) ?? candidates[0];
+    const track = selectAutomaticTrack(tracks, current);
     const useTrack = () => act({ kind: "track", trackId: track!.id, label: trackName(track!) });
     if (sourcePriority === "site" && track) return useTrack();
     if (jimaku.status === "idle") {
@@ -119,22 +113,24 @@ export function useTranslationAutopilot(input: AutopilotInput) {
     }
     // A failed/empty Jimaku search falls back to this video's track automatically.
     if (track) return useTrack();
-    if (jimaku.status === "done" && jimaku.result.candidates.length) return act({ kind: "choose" });
+    if (candidates.length || jimaku.status === "done" && jimaku.result.candidates.length) return act({ kind: "choose" });
     stop();
   }, [episodeId, mode, sourcePriority, enabled, ready, skip, busy, hasKorean, saved, tracks, current, userChose, jimaku]);
 
   // Withdraw a suggestion once it no longer applies: subtitles off, Korean picked, translation started from
   // the menu, the profile switched to manual, or the admin turned translation off.
   useEffect(() => {
-    if (offer && (skip || hasKorean || busy || mode === "manual" || !enabled)) { setOffer(null); phase.current = "done"; }
-  }, [offer, skip, hasKorean, busy, mode, enabled]);
+    if (offer && (skip || hasKorean || saved || busy || mode === "manual" || !enabled)) { setOffer(null); phase.current = "done"; }
+  }, [offer, skip, hasKorean, saved, busy, mode, enabled]);
 
   /** Starts the offered translation; returns false when the offered track is gone (the viewer should pick instead). */
   const accept = useCallback(() => {
     if (!offer || offer.kind === "choose") return false;
+    const now = latest.current;
+    if (now.episodeId !== episodeId || !now.ready || now.skip || now.hasKorean || now.saved || now.busy || !now.enabled || now.mode === "manual" || ["cancelled", "dismissed", "started"].includes(autoMemo(episodeId) ?? "")) return false;
     // Read the track from the current session, not the one that was playing when the offer appeared.
     const track = offer.kind === "track" ? latest.current.tracks.find(item => item.id === offer.trackId) : null;
-    if (offer.kind === "track" && !track) { setOffer(null); phase.current = "done"; return false; }
+    if (offer.kind === "track" && (!track || automaticTrackRank(track) === null)) { setOffer(null); phase.current = "done"; return false; }
     rememberAuto(episodeId, "started");
     phase.current = "done";
     setOffer(null);

@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
-      - run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+      - run: sudo apt-get update && sudo apt-get install -y libarchive-tools ffmpeg
       - run: pnpm --filter @moa/server build
       - run: pnpm build:auth:css
       - run: pnpm typecheck
@@ -27,17 +27,63 @@ jobs:
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/components.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
       - name: Device settings, subtitles and sessions
         run: |
-          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts
+          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/enrichment.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts ../web/tests/subtitle-timing.test.ts
+          node --experimental-vm-modules apps/web/scripts/verify-subtitle-controller.mjs
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
-        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+      - name: Resume an interrupted video over local HTTP
+        env:
+          MOA_TEST_VIDEO: ${{ runner.temp }}/moa-resume.mp4
+        run: |
+          ffmpeg -v error -f lavfi -i testsrc2=size=640x360:rate=24 -t 5 -c:v libx264 -preset ultrafast -crf 15 -threads 2 -pix_fmt yuv420p -movflags +faststart "$MOA_TEST_VIDEO"
+          MOA_TEST_FFPROBE="$(command -v ffprobe)" pnpm --filter @moa/server exec tsx --test test/downloads-media.integration.ts
+      - name: Metadata scheduling and automatic subtitle selection
+        run: pnpm --filter @moa/server exec tsx --test test/tmdb.test.ts test/tmdb-settings.test.ts test/tmdb-scheduler.test.ts test/jimaku.test.ts ../web/tests/automatic-source.test.ts
       - name: Source playback integration
-        run: pnpm --filter @moa/server exec tsx --test test/inline-hls.test.ts test/sources.test.ts test/source-quality.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/api.test.ts test/inline-hls.test.ts test/sources.test.ts test/source-quality.test.ts test/source-identity.test.ts test/source-cache.test.ts test/catalog-discovery.test.ts test/source-addresses.test.ts test/apk-sources.test.ts test/history.test.ts test/domain.test.ts
       - name: Plugin history, discovery and people contracts
         run: |
-          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/website-plugins.test.ts
+          pnpm --filter @moa/server exec tsx --test test/history-reader.test.ts test/plugin-discovery.test.ts test/plugin-schedule.test.ts test/plugin-news-boxoffice.test.ts test/plugin-people.test.ts test/plugin-reviews.test.ts test/plugin-lookup.test.ts test/cache-tuning.test.ts test/catalog-refresh*.test.ts test/website-plugins.test.ts
           node --test plugins/title-people/test/plugin.test.mjs
       - run: pnpm --filter @moa/web build
+      - name: Install isolated browser test tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/moa-browser-tools" --ignore-scripts --no-audit --no-fund playwright-core@1.62.0
+          node "$RUNNER_TEMP/moa-browser-tools/node_modules/playwright-core/cli.js" install --with-deps chromium
+      - name: Automatic subtitle selection in the player
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+        run: node apps/web/tests/automatic-source.browser.mjs
+      - name: Experimental playback filters
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+        run: |
+          node apps/web/scripts/verify-settings-browse.mjs
+          node apps/web/scripts/verify-segmented-subtitles.mjs
+          node apps/web/scripts/verify-anime4k.mjs
+      - name: Search results and back navigation
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+          MOA_TEST_BASE: http://127.0.0.1:5137
+          MOA_API: http://127.0.0.1:1
+        run: |
+          pnpm --filter @moa/web exec vite --port 5137 --strictPort > "$RUNNER_TEMP/moa-search-vite.log" 2>&1 &
+          trap 'kill "$!" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
+          node apps/web/scripts/verify-search-loading.mjs
+          node apps/web/scripts/verify-search-return.mjs
+      - name: Catalog refresh and saved-title updates
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+          MOA_TEST_BASE: http://127.0.0.1:5187
+          MOA_API: http://127.0.0.1:1
+          VITE_MOCK: '1'
+        run: |
+          pnpm --filter @moa/web exec vite --host 127.0.0.1 --port 5187 --strictPort > "$RUNNER_TEMP/moa-catalog-vite.log" 2>&1 &
+          trap 'kill "$!" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
+          node apps/web/scripts/verify-catalog-refresh.mjs
       - name: Isolated Docker update and rollback
         run: |
           docker pull node:22-bookworm-slim

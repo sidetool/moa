@@ -9,7 +9,7 @@ export function categorySelection(schema:BrowseSchema, category?:string):BrowseS
   return { revision:schema.revision, filters:[{position:field.position,...(field.groupPosition === undefined ? {} : {groupPosition:field.groupPosition}),value:index}] };
 }
 export function sourcePage(id:string, mode:string, q='', page=1, selection?:BrowseSelection, signal?:AbortSignal) {
-  return api<Page<MediaCard>>(`/sources/${encodeURIComponent(id)}/browse`,{method:'POST',body:{mode,q,page,...(selection ? {selection} : {})},signal});
+  return api<Page<MediaCard>>(`/sources/${encodeURIComponent(id)}/browse`,{method:'POST',body:{mode,q,page,preferCached:true,...(selection ? {selection} : {})},signal});
 }
 export const sourceUrl = (id:string, selection?:BrowseSelection) => `/sources/${encodeURIComponent(id)}${selection ? '?filters='+encodeURIComponent(JSON.stringify(selection)) : ''}`;
 

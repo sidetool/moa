@@ -60,7 +60,7 @@ number-stepper
 
 `Select`는 `options(value/label)`, `value`, `onChange`, 표준 버튼 속성을 받습니다. `multiple=true`에서는 값과 변경 결과가 문자열 배열입니다. `aria-label` 또는 `aria-labelledby`로 이름을 연결합니다.
 
-단일 선택은 선택 후 닫히고 다중 선택은 열린 채 변경됩니다. Tab·Escape로 닫고 방향키·Home·End·Enter·Space와 글자 검색을 지원합니다. 선택 후 포커스는 열기 버튼으로 돌아옵니다.
+단일 선택은 선택 후 닫히고 다중 선택은 열린 채 변경됩니다. Tab·Escape로 닫고 방향키·Home·End·Enter·Space와 글자 검색을 지원합니다. 선택 후 포커스는 열기 버튼으로 돌아옵니다. TV 리모컨에서는 닫힌 버튼에서 방향키로 다른 조작 요소에 이동하고 확인 키로 목록을 엽니다. 열린 목록에서 위·아래로 항목을 고르고 뒤로 키로 목록을 닫습니다.
 
 최소 높이는 40px입니다. 긴 값은 버튼에서 말줄임하고 목록에서는 줄바꿈합니다. 목록은 화면 안에 배치하고 내부 스크롤을 사용합니다. Popover를 지원하지 않는 브라우저에서는 기본 `select`를 사용합니다. 비활성화된 다중 선택은 읽기만 가능합니다.
 
@@ -70,7 +70,7 @@ select
 
 ## 토글과 체크박스
 
-`Toggle`은 `checked`, `onChange`, `label`, `disabled`를 받으며 Space·Enter로 바꿉니다. 다중 목록은 기본 `input type=checkbox`를 사용합니다. 체크 모양과 색상으로 상태를 알리고, 작은 체크박스도 넓은 `label` 영역에서 누를 수 있게 합니다.
+`Toggle`은 `checked`, `onChange`, `label`, `disabled`를 받으며 Space·Enter로 바꿉니다. 설명이 있는 스위치는 `aria-describedby`로 설명을 연결할 수 있습니다. 다중 목록은 기본 `input type=checkbox`를 사용합니다. 체크 모양과 색상으로 상태를 알리고, 작은 체크박스도 넓은 `label` 영역에서 누를 수 있게 합니다.
 
 ```preview
 toggle

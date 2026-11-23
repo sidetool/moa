@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { cx } from "../../lib/format";
-import { remoteKey } from "../../lib/remote";
+import { isRemoteMode, remoteKey } from "../../lib/remote";
 
 // Older TV browsers lack the Popover API; Select falls back to a native <select> there.
 const popoverSupported = typeof HTMLElement !== "undefined" && typeof HTMLElement.prototype.showPopover === "function" && typeof HTMLElement.prototype.hidePopover === "function";
@@ -67,9 +67,11 @@ export function Select({ value, options, onChange, multiple, className, disabled
       onClick={event => { event.preventDefault(); if (open) close(); else show(); }} onKeyDown={event => {
         const key = remoteKey(event.nativeEvent);
         if (key === "Tab") { close(); return; }
-        if (key === "Back" && open) { event.preventDefault(); event.stopPropagation(); close(); return; }
+        if (open && (key === "Back" || (key === "Backspace" && isRemoteMode()))) { event.preventDefault(); event.stopPropagation(); close(); return; }
+        if (open && (key === "ArrowLeft" || key === "ArrowRight")) { event.preventDefault(); event.stopPropagation(); return; }
         if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(key)) {
           event.preventDefault(); event.stopPropagation();
+          if (key === "Enter" && event.repeat) return;
           if (!open) { show(); if (key === "End") setActive(options.length - 1); }
           else if (key === "Enter" || key === " ") choose(active);
           else setActive(index => key === "Home" ? 0 : key === "End" ? options.length - 1 : Math.max(0, Math.min(options.length - 1, index + (key === "ArrowDown" ? 1 : -1))));

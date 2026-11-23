@@ -203,6 +203,9 @@
 .hero-meta { display: flex; flex-wrap: wrap; align-items: center; margin-top: 14px; font-size: .98rem; color: var(--text-2); font-weight: 500; }
 .hero-meta > span + span::before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 10px; border-radius: 50%; background: var(--text-3); vertical-align: middle; }
 .hero-meta .rating { display: inline-flex; align-items: center; gap: 4px; color: #ffd36b; font-weight: 700; }
+.episode-refresh-button.icon-btn { color: var(--text-2); }
+.episode-refresh-button.icon-btn:hover:not(:disabled) { background: transparent; color: var(--text); }
+.episode-refresh-button[aria-busy="true"] svg { animation: spin var(--motion-spinner) linear infinite; }
 .hero-title.has-logo, .title-name.has-logo { display: block; line-height: 0; text-shadow: none; }
 .hero-title.has-logo img { width: auto; max-width: min(460px, 82%); max-height: clamp(90px, 17vh, 170px); object-fit: contain; object-position: left bottom; filter: drop-shadow(0 4px 24px rgba(0, 0, 0, .45)); }
 .hero-overview { margin-top: 14px; max-width: 560px; color: var(--text); opacity: .86; font-size: 1rem; line-height: 1.6; text-shadow: 0 1px 12px rgba(0, 0, 0, .5); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

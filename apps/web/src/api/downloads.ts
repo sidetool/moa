@@ -24,6 +24,7 @@ const DOWNLOAD_ERROR_TEXT: Record<string, string> = {
   "download-subtitles-incomplete": "영상은 저장됐지만 일부 자막·트랙은 받지 못했어요.",
   "download-quota-exceeded": "저장 한도를 넘어요. 한도를 늘리거나 저장본을 정리해 주세요.",
   "download-space-low": "서버 디스크 여유 공간이 부족해요.",
+  "download-upstream-unavailable": "영상 서버가 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.",
   "download-auth-expired": "소스 인증이 만료됐어요. 다시 시도하면 영상 주소를 새로 받아요.",
   "download-selection-changed": "소스의 영상 목록이 바뀌었어요. 다시 시도해 주세요.",
   "download-file-missing": "저장 파일을 찾을 수 없어요.",

@@ -165,14 +165,14 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
       if (owner) pins.assert(owner, req);
     }
   });
-  registerProfileRoutes(app, { db, cfg, pins, online, translations, remotePlayback, playback, recommendations, catalog, groups, sources });
+  const watchlistRefresh = registerProfileRoutes(app, { db, cfg, pins, online, translations, remotePlayback, playback, recommendations, catalog, groups, sources });
   const discovery = new PluginDiscovery(db, tmdb);
   const shorts = new Shorts(db, tmdb, recommendations, youtube);
   registerShortsRoutes(app, { db, shorts, nativeShorts, sources, pins, translations });
   registerWebsitePlugins(app, db, discovery, new PluginPeople(db, tmdb, Date.now, { catalog, groups }), new PluginSchedule(db,tmdb,services.schedule),new PluginNews(db,tmdb,services.schedule?.now),new PluginBoxOffice(db,services.boxoffice),new PluginReviews(db,tmdb,{...services.reviews,anilist}),undefined,imageCache);
   registerUpdates(app, { prepareComponent:()=>{if(downloads.busy)throw new ApiFailure(409,'update-app-busy');return downloads.suspend();}, prepare:()=>downloads.suspend(), resume:()=>downloads.resume(), canResume:()=>!updateMaintenance.paused });
   casting.register(app);
-  registerSourceRoutes(app, { db, cfg, sources, online, remotePlayback, playback, tmdb, catalog });
+  registerSourceRoutes(app, { db, cfg, sources, online, remotePlayback, playback, tmdb, catalog, pins });
   registerMetadataRoutes(app, { db, cfg, tmdb, youtube, catalog, imageCache, sources });
   registerNetworkRoutes(app, { remoteAccess, sources });
   app.get('/api/me', async req => req.moaAccount);
@@ -180,7 +180,7 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
 
   app.get('/api/health', async () => ({ ok: true, version: '0.1.0' }));
   registerSettingsRoutes(app, { db });
-  registerCatalogRoutes(app, { db, catalog, groups, tmdb, sources, franchises, youtube });
+  registerCatalogRoutes(app, { db, catalog, groups, tmdb, sources, franchises, youtube, pins });
   registerLibraryRoutes(app, { db, cfg, library, playback });
   registerPlaybackRoutes(app, { db, catalog, sources, playback, remotePlayback, downloads, subtitleLibrary, online, translations, casting, enrichment, generalMarkers });
   registerSubtitleRoutes(app, { subtitleLibrary, online, playback });
@@ -196,6 +196,6 @@ export async function buildApp(overrides: Partial<Config> = {}, logger = true, s
   const interval = Math.max(0, Number(process.env.MOA_SCAN_INTERVAL_MS ?? 6 * 60 * 60 * 1000));
   const scanTimer = interval > 0 ? setInterval(() => { if (!updateMaintenance.paused) library.start(); }, interval) : undefined; scanTimer?.unref();
   app.addHook('onReady', async () => { await remoteAccess.init(); enrichment.schedule(); void tmdb.backfill().catch(error => app.log.warn({ event: 'tmdb-backfill-error', error: String(error) })); });
-  app.addHook('onClose', async () => { recommendations.close(); anilist.close(); nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await library.pending; await enrichment.close(); await playback.close(); db.close(); });
+  app.addHook('onClose', async () => { const watchlistDone = watchlistRefresh.close(); recommendations.close(); anilist.close(); nativeShorts.close(); shorts.close(); youtube.close(); generalMarkers.close(); remoteAccess.close(); clearInterval(cacheStatsTimer); clearInterval(subtitleMemoryTimer); await imageCache.close(); if (scanTimer) clearInterval(scanTimer); await franchises.close(); tmdb.close(); await jimaku.close(); await translations.close(); online.close(); remotePlayback.close(); await downloads.close(); await sources.close(); await watchlistDone; await library.pending; await enrichment.close(); await playback.close(); db.close(); });
   return { app, db, downloads, sources, remotePlayback, catalog, library, playback, online, translations, jimaku, enrichment, config: cfg };
 }

@@ -37,13 +37,46 @@ export function titleGroupSeason(title: string, tmdbTitle?: string): number | un
 }
 interface GroupMember { id: string; provider: string; tmdb?: string; useTmdb: boolean; count?: number }
 
+function providerRank(provider: MediaCard['provider'] | null) {
+  if (provider?.lang === 'ko') return 0;
+  return !provider || provider.lang === 'all' || provider.kind === 'local' ? 1 : 2;
+}
+
 export class TitleGroups {
+  private mappings = new Map<string, Map<string, string>>();
+  private mappingRevision = '';
+
   constructor(private catalog: Catalog) {
     catalog.db.db.exec(`CREATE TABLE IF NOT EXISTS title_group_overrides(profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,group_id TEXT NOT NULL,PRIMARY KEY(profile_id,media_id));`);
+    // Connection-local triggers avoid persistent migrations and observe direct SQL,
+    // cascades and rollback. Progress, cache timestamps and preferences do not rebuild identities.
+    catalog.db.db.exec(`CREATE TEMP TABLE IF NOT EXISTS title_group_revision(value INTEGER NOT NULL);
+      INSERT INTO title_group_revision SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM title_group_revision);`);
+    const inputs: Record<string, string[]> = {
+      media: ['id','title','type','metadata'], episodes: ['id','media_id','season'],
+      withdrawn_episodes: ['episode_id'],
+      tmdb_links: ['media_id','kind','tmdb_id','season','status'], tmdb_titles: ['kind','tmdb_id','card'],
+      source_entries: ['id','enabled'], profiles: ['id','kids'],
+      title_group_overrides: ['profile_id','media_id','group_id'],
+    };
+    for (const [table, columns] of Object.entries(inputs)) {
+      for (const event of ['INSERT','DELETE']) catalog.db.db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS group_${table}_${event}
+        AFTER ${event} ON main.${table} BEGIN UPDATE title_group_revision SET value=value+1; END;`);
+      catalog.db.db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS group_${table}_UPDATE
+        AFTER UPDATE OF ${columns.join(',')} ON main.${table}
+        WHEN ${columns.map(column => `OLD.${column} IS NOT NEW.${column}`).join(' OR ')}
+        BEGIN UPDATE title_group_revision SET value=value+1; END;`);
+    }
   }
-  mapping(profile: string) {
+  mapping(profile: string, beforeGroupChanges = false) {
     const db = this.catalog.db;
-    const rows = db.all(`SELECT m.*,l.kind AS tmdb_kind,l.tmdb_id,l.season AS tmdb_season, t.card AS tmdb_card, (SELECT COUNT(*) FROM episodes e WHERE e.media_id=m.id) AS episode_count
+    // Other connections cannot run our TEMP triggers; data_version invalidates
+    // conservatively for their commits. Local writes use only grouping inputs.
+    const revision = `${db.get('SELECT value FROM title_group_revision')!.value}:${db.get('PRAGMA data_version')!.data_version}`;
+    if (revision !== this.mappingRevision) { this.mappings.clear(); this.mappingRevision = revision; }
+    const cached = this.mappings.get(profile);
+    if (cached && (db.db.isTransaction === false || beforeGroupChanges)) return cached;
+    const rows = db.all(`SELECT m.*,l.kind AS tmdb_kind,l.tmdb_id,l.season AS tmdb_season, t.card AS tmdb_card, (SELECT COUNT(*) FROM available_episodes e WHERE e.media_id=m.id) AS episode_count
       FROM media m LEFT JOIN tmdb_links l ON l.media_id=m.id AND l.status IN ('auto','manual')
       LEFT JOIN tmdb_titles t ON t.kind=l.kind AND t.tmdb_id=l.tmdb_id`);
     const overrides = new Map(db.all('SELECT * FROM title_group_overrides WHERE profile_id=?',profile).map(r => [r.media_id,r.group_id]));
@@ -112,6 +145,12 @@ export class TitleGroups {
       const count = r.count || 'unknown';
       result.set(r.id, overrides.get(r.id) || (conflict ? `${key}:episodes:${count}` : key));
     }
+    // Never publish a snapshot read within a transaction that may roll back.
+    // Older Node 22 builds lack isTransaction; conservatively skip caching there.
+    if (db.db.isTransaction === false) {
+      if (this.mappings.size >= 16) this.mappings.delete(this.mappings.keys().next().value!);
+      this.mappings.set(profile, result);
+    }
     return result;
   }
   group(id: string, profile: string): TitleGroup {
@@ -137,20 +176,69 @@ export class TitleGroups {
     }).map(row => row.id as string);
     return { episodeIds, mediaIds };
   }
+  savedIds(profile: string): string[] {
+    return this.catalog.db.all('SELECT media_id FROM watchlist WHERE profile_id=? ORDER BY added_at DESC,media_id', profile).map(row => row.media_id);
+  }
+  latestWatchedMembers(profile: string, mapping: Map<string, string>, selected: ReadonlySet<string>) {
+    const watched = new Map<string, string>();
+    if (!selected.size) return watched;
+    for (const row of this.catalog.db.all(`SELECT e.media_id,MAX(p.updated_at) AS updated
+      FROM progress p JOIN episodes e ON e.id=p.episode_id
+      WHERE p.profile_id=? AND (p.position>0 OR p.completed=1)
+      GROUP BY e.media_id ORDER BY updated DESC,e.media_id`, profile)) {
+      const group = mapping.get(row.media_id);
+      if (group && selected.has(group) && !watched.has(group)) watched.set(group, row.media_id);
+    }
+    return watched;
+  }
+  // Resolve the same saved representative and watched edition as saved(), without
+  // hydrating cards or reading every episode for a refresh-status poll.
+  savedEditions(profile: string) {
+    const mapping = this.mapping(profile);
+    const representatives = new Map<string, { id: string; rank: number }>();
+    const rows = this.catalog.db.all(`SELECT m.id,json_extract(m.metadata,'$.provider') AS provider
+      FROM watchlist w JOIN media m ON m.id=w.media_id WHERE w.profile_id=? ORDER BY w.added_at DESC,m.id`, profile);
+    for (const row of rows) {
+      const group = mapping.get(row.id);
+      if (!group) continue;
+      const rank = providerRank(JSON.parse(row.provider ?? 'null'));
+      const current = representatives.get(group);
+      if (!current || rank < current.rank) representatives.set(group, { id: row.id, rank });
+    }
+    const watched = this.latestWatchedMembers(profile, mapping, new Set(representatives.keys()));
+    return [...representatives].map(([group, saved]) => ({ group, saved: saved.id, watched: watched.get(group) }));
+  }
+  saved(profile: string, ids = this.savedIds(profile)) {
+    return this.resolveMapped(ids, profile, this.mapping(profile), undefined, true)
+      .map(card => ({ ...card, watchlistMediaId: card.id }));
+  }
+  savedMembers(profile: string, detailId: string, savedEdition: string) {
+    // This read precedes the watchlist write. The transaction has made no grouping
+    // changes, and mapping() checks the revision and other connections' data_version.
+    const mapping = this.mapping(profile, true), group = mapping.get(detailId);
+    if (!group || mapping.get(savedEdition) !== group) return undefined;
+    return this.savedIds(profile).filter(id => mapping.get(id) === group);
+  }
   resolve(ids: string[], profile: string, query?: string): MediaCard[] {
     return this.resolveMapped(ids,profile,this.mapping(profile),query);
   }
-  private resolveMapped(ids:string[],profile:string,map:Map<string,string>,query?:string):MediaCard[]{
+  private resolveMapped(ids:string[],profile:string,map:Map<string,string>,query?:string,withHistory = query !== undefined):MediaCard[]{
     const groups = new Map<string,MediaCard[]>();
     for (const id of new Set(ids)) {
       const k = map.get(id); if (!k) continue;
       const cards = groups.get(k) || [];
       cards.push(this.catalog.card(this.catalog.db.get('SELECT * FROM media WHERE id=?',id)!,profile)); groups.set(k,cards);
     }
-    return [...groups.values()].map(cards => {
-      const rank = (c: MediaCard) => c.provider.lang === 'ko' ? 0 : c.provider.lang === 'all' || c.provider.kind === 'local' ? 1 : 2;
-      const representative = cards.reduce((best, card) => rank(card) < rank(best) ? card : best);
-      return { ...representative,
+    // History is read fresh, independently of the cached identity mapping. Only real
+    // viewing activity participates; a completed latest source must suppress an older resume.
+    const watched = withHistory ? this.latestWatchedMembers(profile, map, new Set(groups.keys())) : undefined;
+    return [...groups].map(([groupId, cards]) => {
+      const representative = cards.reduce((best, card) => providerRank(card.provider) < providerRank(best.provider) ? card : best);
+      const watchedId = watched?.get(groupId);
+      const latest = watchedId ? cards.find(card => card.id === watchedId)
+        ?? this.catalog.card(this.catalog.db.get('SELECT * FROM media WHERE id=?', watchedId)!, profile) : undefined;
+      return { ...representative, groupId, groupMemberIds: cards.map(card => card.id),
+        ...(latest ? { resume: latest.resume, progress: latest.progress, resumeMediaId: latest.id } : {}),
         langs: [...new Set(cards.flatMap(c => c.provider.lang ? [c.provider.lang] : []))].sort(),
         ...(query?.trim() ? { relevance: Math.max(...cards.map(c => searchRelevance(c,query))) } : {}),
         sourceCount: new Set(cards.map(c => c.provider.id)).size };

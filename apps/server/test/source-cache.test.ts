@@ -51,7 +51,7 @@ test('a quick transient detail error retries once; permission and invalid payloa
   if(input.action==='list')return{result:{list:[{name:'작품',link:'/title'}],hasNextPage:false},changes:{}};
   calls++;if(fail==='invalid-payload')return{result:{name:'작품'},changes:{}};if(calls%2===1)throw Error(fail);return{result:{name:'작품',chapters:[]},changes:{}};
  });seed(db);db.run('INSERT INTO profiles(id,name,color,kids,created_at) VALUES(?,?,?,?,?)','p','p','blue',0,'2026');
- try{const mid=(await sources.browse('s','p')).items[0].id;await Promise.all([sources.detail(mid),sources.detail(mid)]);assert.equal(calls,2);sources.invalidate('s');fail='source_access_denied';await assert.rejects(sources.detail(mid),/access_denied/);assert.equal(calls,3);sources.invalidate('s');fail='invalid-payload';await assert.rejects(sources.detail(mid),/source-invalid-response/);assert.equal(calls,4);}
+ try{const mid=(await sources.browse('s','p')).items[0].id;await Promise.all([sources.detail(mid),sources.detail(mid)]);assert.equal(calls,2);sources.invalidate('s');fail='source_access_denied';await assert.rejects(sources.detail(mid,true),/access_denied/);assert.equal(calls,3);sources.invalidate('s');fail='invalid-payload';await assert.rejects(sources.detail(mid,true),/source-invalid-response/);assert.equal(calls,4);}
  finally{await sources.close();db.close();await rm(root,{recursive:true,force:true});}
 });
 

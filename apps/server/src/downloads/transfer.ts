@@ -1,3 +1,4 @@
+import { readCheckpoint, writeCheckpoint, clearCheckpoint, urlDigest, strongETag, type Checkpoint } from './checkpoint.js';
 import { open, writeFile, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { DownloadQuality } from '@moa/shared';
@@ -8,17 +9,55 @@ import type { Config } from '../config.js';
 import type { Probe } from '../playback/probe.js';
 import { ApiFailure } from '../util.js';
 
-export type DownloadTransport=(url:string,range?:string)=>Promise<{response:import('node:http').IncomingMessage;url:string}>;
+export type DownloadTransport=(url:string,range?:string,ifRange?:string)=>Promise<{response:import('node:http').IncomingMessage;url:string}>;
 const fail=(code:string):never=>{throw new ApiFailure(422,code);};
 const attributes=(s:string)=>Object.fromEntries([...s.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g)].map(m=>[m[1],m[2].replace(/^"|"$/g,'')]));
 
+const transientStatus = (status:number|undefined) => status === 408 || status === 425 || status === 429 || (status !== undefined && status >= 500 && status < 600);
+// Source validation failures may also use HTTP 502. They carry a definite rejection.
+export function rethrowUpstreamFailure(error:unknown):never {
+  if(error instanceof ApiFailure && transientStatus(error.statusCode) &&
+    !['source-invalid-response','unsupported-stream-format','apk-stream-forbidden','apk-response-limit'].includes(error.error)){
+    throw new ApiFailure(503,'download-upstream-unavailable');
+  }
+  throw error;
+}
+
+const isPlaylist = (result:Awaited<ReturnType<DownloadTransport>>) =>
+  /mpegurl/i.test(String(result.response.headers['content-type'] || '')) || /\.m3u8(?:\?|$)/i.test(result.url);
+
+function sameRepresentation(result:Awaited<ReturnType<DownloadTransport>>, checkpoint:Checkpoint) {
+  return result.response.headers.etag === checkpoint.etag && urlDigest(result.url) === checkpoint.finalUrlDigest;
+}
+
+function hasConsistentFullHeaders(result:Awaited<ReturnType<DownloadTransport>>, checkpoint:Checkpoint) {
+  const headers = result.response.headers;
+  return result.response.statusCode === 200 && headers['content-range'] === undefined &&
+    (!sameRepresentation(result,checkpoint) || headers['content-length'] === undefined || Number(headers['content-length']) === checkpoint.totalBytes);
+}
+
+function matchesCheckpoint(result:Awaited<ReturnType<DownloadTransport>>, checkpoint:Checkpoint) {
+  const headers = result.response.headers;
+  const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(headers['content-range']));
+  return result.response.statusCode === 206 && sameRepresentation(result,checkpoint) &&
+    String(headers['content-encoding'] || 'identity').toLowerCase() === 'identity' &&
+    range !== null && Number(range[1]) === checkpoint.confirmedOffset && Number(range[2]) === checkpoint.totalBytes - 1 &&
+    Number(range[3]) === checkpoint.totalBytes && Number(headers['content-length']) === checkpoint.totalBytes - checkpoint.confirmedOffset &&
+    !isPlaylist(result);
+}
+
 /** Materialize a finite playlist first. ffmpeg/ffprobe never receive an upstream URL. */
-export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetcher:DownloadTransport,signal:AbortSignal,account:(bytes:number,total?:number)=>Promise<void>,finalizing:()=>void,quality:DownloadQuality='best'){
+export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetcher:DownloadTransport,signal:AbortSignal,account:(bytes:number,total?:number)=>Promise<void>,finalizing:()=>void,quality:DownloadQuality='best',identity?:{jobId:string;episodeId:string}){
   let sequence=0,requests=0,expectedDuration=0,omittedSubtitles=false; const files:string[]=[];
-  const request=async(url:string,range?:string)=>{
+  const request=async(url:string,range?:string,ifRange?:string)=>{
     signal.throwIfAborted();if(++requests>12000)fail('download-request-limit');
-    const r=await fetcher(url,range),status=r.response.statusCode;
+    const r=await fetcher(url,range,ifRange).catch(rethrowUpstreamFailure);
+    if(signal.aborted){r.response.destroy();signal.throwIfAborted();}
+    const status=r.response.statusCode;
+    if(transientStatus(status)){r.response.destroy();throw new ApiFailure(503,'download-upstream-unavailable');}
+    if(ifRange && (status===200 || status===206 || status===412 || status===416))return r;
     if(status!==(range?206:200)){r.response.destroy();fail(status===401||status===403?'download-auth-expired':'download-fetch-failed');}
+    if(!range && r.response.headers['content-range']!==undefined){r.response.destroy();fail('download-range-invalid');}
     if(range){const expected=/^bytes=(\d+)-(\d+)$/.exec(range)!,received=/^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(r.response.headers['content-range']));
       if(!received||received[1]!==expected[1]||received[2]!==expected[2]){r.response.destroy();fail('download-range-invalid');}}
     return r;
@@ -92,10 +131,47 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
     const name=`list-${++sequence}.m3u8`;await writeFile(path.join(dir,name),output.join('\n')+'\n',{mode:0o600});files.push(name);return name;
   };
   if(!item.url.startsWith('https:')||item.audios?.length)fail('download-stream-unsupported');
-  const first=await request(item.url),mime=String(first.response.headers['content-type']||'');
+  let checkpoint=identity?await readCheckpoint(dir,identity.jobId,identity.episodeId):undefined;
+  signal.throwIfAborted();
+  const requestedDigest=urlDigest(item.url);
+  if(checkpoint?.urlDigest!==requestedDigest)checkpoint=undefined;
+  if(!checkpoint)await clearCheckpoint(dir);
+  let first=await request(item.url,checkpoint ? `bytes=${checkpoint.confirmedOffset}-` : undefined,checkpoint?.etag);
+  const resumeOffset=checkpoint && matchesCheckpoint(first,checkpoint) ? checkpoint.confirmedOffset : 0;
+  if(checkpoint && !resumeOffset){
+    if(!hasConsistentFullHeaders(first,checkpoint)){
+      first.response.destroy();
+      first=await request(item.url);
+      if(!hasConsistentFullHeaders(first,checkpoint)){first.response.destroy();fail('download-range-invalid');}
+    }
+    try{await clearCheckpoint(dir);}catch(error){first.response.destroy();throw error;}
+  }
   let input:string;
-  if(/mpegurl/i.test(mime)||/\.m3u8(?:\?|$)/i.test(first.url))input=await playlist(first.url,0,(await consume(first,2*1024*1024)).toString('utf8'));
-  else {input='input.mp4';await consume(first,20*1024**3,input,true);files.push(input);}
+  if(isPlaylist(first)){
+    input=await playlist(first.url,0,(await consume(first,2*1024*1024)).toString('utf8'));
+  }else {
+    input='input.mp4';
+    const headers=first.response.headers,encoding=String(headers['content-encoding']||'identity').toLowerCase();
+    const finalUrlDigest=urlDigest(first.url);
+    const total=checkpoint && sameRepresentation(first,checkpoint) ? checkpoint.totalBytes : Number(headers['content-length']);
+    const resumable=identity&&headers['content-length']!==undefined&&encoding==='identity'&&strongETag(headers.etag)&&Number.isSafeInteger(total)&&total>0&&total<=20*1024**3;
+    let offset=resumeOffset,lastCheckpoint=offset;
+    const target=await open(path.join(dir,input),resumeOffset?'a':'wx',0o600).catch(error=>{first.response.destroy();throw error;});
+    const save=async()=>{
+      if(resumable&&offset>0&&offset<total){await target.sync();await writeCheckpoint(dir,{version:2,...identity!,urlDigest:requestedDigest,finalUrlDigest,etag:headers.etag as string,totalBytes:total,confirmedOffset:offset,updatedAt:Date.now()});}
+    };
+    try {
+      await account(offset,Number.isSafeInteger(total)&&total>0?total:undefined);
+      for await(const chunk of first.response){signal.throwIfAborted();const data=Buffer.from(chunk);if(offset+data.length>20*1024**3)fail('download-response-limit');await account(data.length);await target.writeFile(data);offset+=data.length;if(resumable&&offset-lastCheckpoint>=8*1024*1024){await save();lastCheckpoint=offset;}}
+      if(!offset)fail('download-empty');
+      if(Number.isSafeInteger(total)&&total>0&&offset!==total)fail('download-truncated');
+    }catch(error){
+      // Only the transfer's transport/timeout path may leave a resumable payload.
+      if(!(error instanceof ApiFailure)||error.error==='download-truncated')await save();
+      throw error;
+    }finally{first.response.destroy();await target.close();}
+    files.push(input);
+  }
   signal.throwIfAborted();finalizing();
   const target=path.join(dir,'video.mp4.part');
   if(input.endsWith('.m3u8')){
@@ -119,6 +195,7 @@ export async function transferVideo(cfg:Config,dir:string,item:SourceVideo,fetch
     }catch{signal.throwIfAborted();subtitleWarning=true;await rm(path.join(dir,name),{force:true});}
   }
   signal.throwIfAborted();await rename(target,path.join(dir,'video.mp4'));
+  await clearCheckpoint(dir);
   for(const f of files)await rm(path.join(dir,f),{force:true});
   return {probe,subtitles,subtitleWarning,size:(await stat(path.join(dir,'video.mp4'))).size};
 }

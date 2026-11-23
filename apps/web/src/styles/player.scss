@@ -16,7 +16,8 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
   touch-action: manipulation;
 }
 .player.is-idle { cursor: none; }
-.player-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transition: transform .25s var(--ease); }
+.player-video, .player-anime4k { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; transition: transform .25s var(--ease); }
+.player-anime4k { z-index: 0; pointer-events: none; }
 .player.cue-custom .player-video { font-size: var(--subtitle-font-size, 16px); }
 @font-face { font-family: "Noto Sans CJK JP"; src: url('../assets/fonts/NotoSansCJKjp-Regular.woff2') format('woff2'); font-style: normal; font-weight: 400; font-display: swap; }
 .player.cue-custom .player-video::cue { font-size: var(--subtitle-font-size, 16px); }

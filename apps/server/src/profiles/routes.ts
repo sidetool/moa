@@ -16,6 +16,8 @@ import { ApiFailure, now } from '../util.js';
 import type { ProfilePins } from './pin.js';
 import { hashPin } from './pin.js';
 import { completion } from './progress.js';
+import { WatchlistRefresh } from './watchlist-refresh.js';
+import { watchlistUpdates } from './watchlist-updates.js';
 import type { Recommendations } from './recommendations.js';
 
 const COLORS = ['red', 'blue', 'green', 'amber', 'violet', 'teal'];
@@ -25,11 +27,16 @@ const toProfile = (p: Record<string, any>): Profile => ({ id: p.id, name: p.name
 export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, online, translations, remotePlayback, playback, recommendations, catalog, groups, sources }: {
   db: Store; cfg: Config; pins: ProfilePins; online: OnlineSubtitles; translations: Translations; remotePlayback: RemotePlayback; playback: Playback; recommendations: Recommendations; catalog: Catalog; groups: TitleGroups; sources: Sources;
 }) {
+  const watchlistRefresh = new WatchlistRefresh(db, sources, groups);
+  app.get('/api/watchlist/refresh-status', async (req, reply) => {
+    return reply.header('Cache-Control', 'private, no-store').send(watchlistRefresh.request(profile(req)));
+  });
   app.get('/api/recommendations', async (req,reply) => reply.header('Cache-Control','private, no-store').send(recommendations.get(profile(req))));
   app.put('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key); return {ok:true}; });
   app.delete('/api/recommendations/dismissals/:key', async req => { recommendations.dismiss(profile(req),params(req).key,true); return {ok:true}; });
   app.delete('/api/recommendations/dismissals', async req => { recommendations.reset(profile(req)); return {ok:true}; });
   async function removeProfile(id: string) {
+    watchlistRefresh.forget(id);
     pins.invalidate(id);
     // Delete the ownership row before awaiting process cleanup so concurrent asset requests fail closed.
     db.run('DELETE FROM profiles WHERE id=?', id);
@@ -83,7 +90,27 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
     await removeProfile(params(req).id);
     return reply.code(204).send();
   });
-  app.get('/api/watchlist', async req => groups.resolve(catalog.watchlist(profile(req)).map(c=>c.id),profile(req)));
+  app.get('/api/watchlist', { schema: { querystring: object({ sort: { type: 'string', enum: ['saved', 'updated'], default: 'saved' } }) } }, async (req, reply) => {
+    const result = watchlistUpdates(db, groups.saved(profile(req)), profile(req));
+    if (query(req).sort === 'updated') result.sort((a,b) => (b.episodesUpdatedAt ?? '').localeCompare(a.episodesUpdatedAt ?? ''));
+    return reply.header('Cache-Control', 'private, no-store').send(result);
+  });
+  const groupWatchlistSchema = { params: idParams('mediaId'), querystring: object({ savedEdition: string }, ['savedEdition']) };
+  app.get('/api/watchlist/:mediaId/group', { schema: groupWatchlistSchema }, async (req, reply) => {
+    const members = groups.savedMembers(profile(req), params(req).mediaId, query(req).savedEdition);
+    return reply.header('Cache-Control', 'private, no-store').send({ grouped: Boolean(members), inWatchlist: Boolean(members?.length) });
+  });
+  app.route({ method: ['PUT', 'DELETE'], url: '/api/watchlist/:mediaId/group', schema: groupWatchlistSchema, handler: async (req, reply) => {
+    const viewer = profile(req), anchor = query(req).savedEdition;
+    db.transaction(() => {
+      const members = groups.savedMembers(viewer, params(req).mediaId, anchor);
+      if (!members) throw new ApiFailure(409, 'watchlist-group-changed');
+      if (req.method === 'DELETE') {
+        db.run('DELETE FROM watchlist WHERE profile_id=? AND media_id IN (SELECT value FROM json_each(?))', viewer, JSON.stringify(members));
+      } else if (!members.length) db.run('INSERT INTO watchlist VALUES(?,?,?)', viewer, anchor, now());
+    });
+    return reply.code(204).send();
+  } });
   app.put('/api/watchlist/:mediaId', { schema: { params: idParams('mediaId') } }, async (req, reply) => {
     const id = params(req).mediaId; if (!db.get('SELECT id FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
     db.run('INSERT OR IGNORE INTO watchlist VALUES(?,?,?)', profile(req), id, now()); return reply.code(204).send();
@@ -102,10 +129,11 @@ export function registerProfileRoutes(app: FastifyInstance, { db, cfg, pins, onl
   app.post('/api/progress', { schema: { body: object({ episodeId: string, position: { type: 'number', minimum: 0 }, duration: { type: 'number', exclusiveMinimum: 0 } }, ['episodeId', 'position', 'duration']) } }, async req => {
     const body = req.body as { episodeId: string; position: number; duration: number };
     if (!db.get('SELECT id FROM episodes WHERE id=?', body.episodeId)) throw new ApiFailure(404, 'episode-not-found');
-    const remote = sources.remoteEpisode(body.episodeId);
+    const remote = sources.remoteEpisode(body.episodeId, true);
     if (remote && sources.row(remote.source_id).live) throw new ApiFailure(400, 'live-progress-unavailable');
     const position = Math.min(body.position, body.duration);
     db.run('INSERT OR REPLACE INTO progress VALUES(?,?,?,?,?,?)', profile(req), body.episodeId, position, body.duration, Number(completion(position, body.duration)), now());
     return episodeProgress(db.get('SELECT * FROM progress WHERE profile_id=? AND episode_id=?', profile(req), body.episodeId)!);
   });
+  return watchlistRefresh;
 }

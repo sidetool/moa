@@ -35,6 +35,11 @@ test('online subtitles: profile/episode binding, expiry, deduplication, persiste
     assert.equal((await env.app.inject({ url: '/api/episodes/missing/subtitles/online', headers })).statusCode, 404);
     assert.equal((await env.app.inject({ url: '/api/settings', headers })).json().autoFetchSubtitles, true);
     assert.equal((await env.app.inject({url:'/api/settings',headers})).json().experimentalSubtitleSync,true);
+    const settingsRoute = '/api/settings';
+    assert.equal((await env.app.inject({ url: settingsRoute, headers })).json().experimentalSegmentedSubtitleSync, false);
+    assert.equal((await env.app.inject({ method: 'PATCH', url: settingsRoute, headers, payload: { experimentalSegmentedSubtitleSync: 'invalid' } })).statusCode, 400);
+    assert.equal((await env.app.inject({ method: 'PATCH', url: settingsRoute, headers, payload: { experimentalSegmentedSubtitleSync: true } })).json().experimentalSegmentedSubtitleSync, true);
+    assert.equal((await env.app.inject({ url: settingsRoute, headers: { 'x-moa-profile': p2.id } })).json().experimentalSegmentedSubtitleSync, false);
     assert.equal((await env.app.inject({method:'PATCH',url:'/api/settings',headers,payload:{experimentalSubtitleSync:false}})).json().experimentalSubtitleSync,false);
     assert.equal((await env.app.inject({url:'/api/settings',headers:{'x-moa-profile':p2.id}})).json().experimentalSubtitleSync,true);
     assert.equal((await env.app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { autoFetchSubtitles: false } })).json().autoFetchSubtitles, false);

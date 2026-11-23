@@ -128,7 +128,7 @@ export class Franchises {
     const mapping = this.groups.mapping(profile);
     const enabled = new Map(db.all('SELECT id,entry FROM source_entries WHERE enabled=1 AND live=0').map(r=>[r.id, JSON.parse(r.entry).lang as string | undefined]));
     const counts = new Map<string, {number:number;count:number}[]>();
-    for (const r of db.all('SELECT media_id,season,COUNT(*) AS n FROM episodes GROUP BY media_id,season')) {
+    for (const r of db.all('SELECT media_id,season,COUNT(*) AS n FROM available_episodes GROUP BY media_id,season')) {
       const list = counts.get(r.media_id) || []; list.push({number:r.season,count:r.n}); counts.set(r.media_id,list);
     }
     return db.all(`SELECT m.*,l.kind,l.tmdb_id,l.season,t.card AS tmdb_card FROM media m

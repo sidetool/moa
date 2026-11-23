@@ -71,6 +71,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.104.0
         version: 5.104.0(react@19.3.0)
+      anime4k.js:
+        specifier: 1.1.3
+        version: 1.1.3
       hls.js:
         specifier: ^1.7.3
         version: 1.7.3
@@ -849,6 +852,9 @@ packages:
 
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
+
+  anime4k.js@1.1.3:
+    resolution: {integrity: sha512-q/wVVlyiNGtbq5T1dhc4Xt25pP5lqVqHxMrSsMKHFfUuy0gVnv0jykDczqnSVw5EBi9RCmXHjFeZ8FSKXSs5Fg==}
 
   anynum@1.0.1:
     resolution: {integrity: sha512-N6//FLET/tXYNM/F6ABca1oH6fWB+KlTt909Le28WMDBk8oaT4vY17DCrwg2MvmuqUKt3Ni4N5dGJ/EoBgcO6A==}
@@ -2227,6 +2233,8 @@ snapshots:
       fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
+
+  anime4k.js@1.1.3: {}
 
   anynum@1.0.1: {}
 

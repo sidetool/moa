@@ -1,10 +1,10 @@
+import { catalogFreshMs } from '../system/catalog-refresh.js';
 import { ByeDpi } from '../network/byedpi.js';
 import { SourceIdentities } from './identity.js';
 import { SourceQueue, type SourceLane } from './queue.js';
 import { isInlineHls } from '../playback/inline-hls.js';
 import { SourceBrowser } from './browser.js';
 import { CacheStats } from '../system/cache-stats.js';
-import { DetailPolicy } from '../catalog/detail-policy.js';
 import { SourceReadCache } from './cache.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ApkBridge, apkIconUrl, type ApkEntry, type ExtractedVideos } from './apk-bridge.js';
@@ -35,7 +35,6 @@ export class Sources {
   private preloads = new Map<string, { status: SourcePreload; abort: AbortController; work?: Promise<void> }>();
   private reads: SourceReadCache;
   readonly stats = new CacheStats();
-  private details: DetailPolicy;
   private identities: SourceIdentities;
   private navigationRevision = new Map<string,number>();
   private failedNavigation = new Map<string,{source:string;until:number}>();
@@ -57,7 +56,6 @@ export class Sources {
       INSERT OR IGNORE INTO source_repositories(url) SELECT DISTINCT repository FROM source_entries;`);
     if(!db.all('PRAGMA table_info(source_repositories)').some(r=>r.name==='kind')) db.db.exec("ALTER TABLE source_repositories ADD COLUMN kind TEXT NOT NULL DEFAULT 'mangayomi-js'");
     this.reads = new SourceReadCache(db,this.abort.signal,Date.now,undefined,this.stats);
-    this.details = new DetailPolicy(db);
     this.identities = new SourceIdentities(db);
   }
   network() {
@@ -312,7 +310,7 @@ export class Sources {
     this.cancelPreload(id);
     this.navigationRevision.set(id,(this.navigationRevision.get(id)||0)+1);
     for(const [key,value] of this.failedNavigation)if(value.source===id)this.failedNavigation.delete(key);
-    this.reads.invalidate(id); this.details.invalidateSource(id); this.db.run('UPDATE source_media SET detail_at=0 WHERE source_id=?', id); }
+    this.reads.invalidate(id); this.catalog.details.invalidateSource(id); this.db.run('UPDATE source_media SET detail_at=0 WHERE source_id=?', id); }
   configure(id: string, values: { enabled?: boolean; type?: MediaType; live?: boolean }) {
     const r = this.row(id, false);
     if (!r.code) throw new ApiFailure(409, 'source-not-installed');
@@ -564,22 +562,23 @@ export class Sources {
       seen.add(k);
     }
   }
-  browse(id: string, profile: string, mode = 'popular', page = 1, query = '', selection?: BrowseSelection) {
-    return this.trackRead(id,()=>this.browseRead(id,profile,mode,page,query,selection));
+  browse(id: string, profile: string, mode = 'popular', page = 1, query = '', selection?: BrowseSelection, preferCached = false) {
+    return this.trackRead(id,()=>this.browseRead(id,profile,mode,page,query,selection,preferCached));
   }
-  private async browseRead(id: string, profile: string, mode: string, page: number, query: string, selection?: BrowseSelection) {
-    const result = await this.browsePage(id, mode, page, query, selection);
+  private async browseRead(id: string, profile: string, mode: string, page: number, query: string, selection?: BrowseSelection, preferCached = false) {
+    const result = await this.browsePage(id, mode, page, query, selection, preferCached);
     const ids=result.ids.filter(mid=>this.db.get('SELECT 1 FROM media WHERE id=?',mid));
-    return {items:this.catalog.kids.filter(ids.map(id=>({id})),profile).map(({id:mid})=>this.catalog.card(this.db.get('SELECT * FROM media WHERE id=?',mid)!,profile)),page,hasNextPage:result.more};
+    return {items:this.catalog.kids.filter(ids.map(id=>({id})),profile).map(({id:mid})=>this.catalog.card(this.db.get('SELECT * FROM media WHERE id=?',mid)!,profile)),page,hasNextPage:result.more,refreshing:result.refreshing, cached:result.cached};
   }
-  private async browsePage(id: string, mode: string, page: number, query: string, selection?: BrowseSelection) {
+  private async browsePage(id: string, mode: string, page: number, query: string, selection?: BrowseSelection, preferCached = false) {
     if (this.removing.has(id)) throw new ApiFailure(409, 'source-removing');
     this.row(id);
     // Validation also shares its schema read. Do it outside the source lane to avoid nested queue waits.
-    if(selection)await this.checkFilters(id,selection);
+    if(selection && !preferCached)await this.checkFilters(id,selection);
     if(query || selection?.filters.length)mode='search';
     const cacheKey='browse:'+key(mode,String(page),query,JSON.stringify(selection||null));
-    const result=await this.reads.read(id,cacheKey,{freshMs:mode==='search'?6*60*60_000:5*60_000,staleMs:mode==='search'?24*60*60_000:60*60_000,operation:mode==='search'?'search':'list'},current=>this.serial(id,async()=>{
+    const cached = this.reads.has(id, cacheKey);
+    const result=await this.reads.read(id,cacheKey,{freshMs:catalogFreshMs(this.db,mode==='search'?6*60*60_000:5*60_000),staleMs:Infinity,empty:value=>!(value as {ids:string[]}).ids.length,operation:mode==='search'?'search':'list'},current=>this.serial(id,async()=>{
       current();this.row(id);
       // A preference update can enter the lane after the first validation. Check again before using positional values.
       if(selection)await this.checkFilters(id,selection,await this.schemaValue(id));
@@ -587,12 +586,14 @@ export class Sources {
       const raw=await this.readCall(id,'list',{mode,page,query,filters:selection?.filters||[]}) as SourcePage;
       current();this.row(id);
       if(!raw || !Array.isArray(raw.list))throw new ApiFailure(502,'source-invalid-response');
+      const items = raw.list.slice(0,500);
+      if (items.length && !items.some(item => item && text(item.name) && text(item.link,16384))) throw new ApiFailure(502,'source-invalid-response');
       const ids:string[]=[];
-      this.db.transaction(()=>{for(const item of raw.list.slice(0,500)){const mid=this.putItem(id,item);if(mid&&!ids.includes(mid))ids.push(mid);}});
+      this.db.transaction(()=>{for(const item of items){const mid=this.putItem(id,item);if(mid&&!ids.includes(mid))ids.push(mid);}});
       return {ids,more:Boolean(raw.hasNextPage)};
     }, 'background'));
     this.row(id);
-    return result;
+    return {...result, cached, refreshing:this.reads.pending(id,cacheKey)};
   }
   preloadStatus(id: string): SourcePreload {
     this.row(id, false);
@@ -638,19 +639,37 @@ export class Sources {
     }).finally(() => { job.status.updatedAt = now(); job.work = undefined; });
     return this.preloadStatus(id);
   }
-  detail(id:string) {
-    const mapping=this.db.get('SELECT source_id FROM source_media WHERE media_id=?',id);
-    return mapping?this.trackRead(mapping.source_id,()=>this.detailRead(id)):Promise.resolve();
+  assertDetailAvailable(id:string) {
+    const mapping = this.db.get('SELECT source_id FROM source_media WHERE media_id=?', id);
+    if (!mapping) return;
+    if (this.removing.has(mapping.source_id)) throw new ApiFailure(409, 'source-removing');
+    this.row(mapping.source_id);
   }
-  private async detailRead(id: string) {
+  detailFreshMs(id: string) {
+    return catalogFreshMs(this.db, this.catalog.details.policy(id).freshMs);
+  }
+  detailRefreshing(id:string) {
+    const mapping=this.db.get('SELECT source_id FROM source_media WHERE media_id=?',id);
+    return Boolean(mapping && this.reads.pending(mapping.source_id,'detail:'+id));
+  }
+  detail(id:string, force = false, lane: 'interactive' | 'background' = 'interactive') {
+    const mapping=this.db.get('SELECT source_id FROM source_media WHERE media_id=?',id);
+    return mapping?this.trackRead(mapping.source_id,()=>this.detailRead(id, force, lane)):Promise.resolve();
+  }
+  private async detailRead(id: string, force: boolean, lane: 'interactive' | 'background') {
     const mapping = this.db.get('SELECT * FROM source_media WHERE media_id=?', id);
     if (!mapping) return;
     if (this.removing.has(mapping.source_id)) throw new ApiFailure(409, 'source-removing');
     this.row(mapping.source_id);
     const cacheKey='detail:'+id;
     // Reuse successful details from before the persistent shared cache migration.
-    if(mapping.detail_at>0)this.reads.prime(mapping.source_id,cacheKey,true,mapping.detail_at);
-    return this.reads.read(mapping.source_id,cacheKey,this.details.policy(id),current=>this.serial(mapping.source_id, async () => {
+    const hasEpisodes = Boolean(this.db.get('SELECT 1 FROM available_episodes WHERE media_id=? LIMIT 1', id));
+    // After an administrative reset, a complete catalog snapshot (including [])
+    // can still serve readers while the source revalidates it in the background.
+    if (mapping.detail_at > 0 || this.db.get('SELECT 1 FROM source_detail_observations WHERE media_id=? AND episode_ids IS NOT NULL', id)) {
+      this.reads.prime(mapping.source_id, cacheKey, hasEpisodes, mapping.detail_at);
+    }
+    return this.reads.read(mapping.source_id,cacheKey,{freshMs:this.detailFreshMs(id),staleMs:Infinity,emptyStaleMs:Infinity,empty:value=>value===false || value===true && !hasEpisodes,force},(current,background)=>this.serial(mapping.source_id, async () => {
       current();const row = this.row(mapping.source_id);
       const entry = JSON.parse(row.installed_entry || row.entry);
       const title=this.db.get('SELECT title FROM media WHERE id=?',id)?.title||'';
@@ -658,8 +677,12 @@ export class Sources {
       const navigation=await this.navigationCall(mapping.source_id,'detail',currentUrl,{title});
       const raw = navigation.result as SourceItem;
       current();this.row(mapping.source_id);
-      if (!raw || !Array.isArray(raw.chapters)) throw new ApiFailure(502, 'source-invalid-response');
-      let chapters = raw.chapters.slice(0, 10_000).filter(e => text(e.url, 16_384));
+      // Only a complete listing can withdraw previously playable episodes.
+      if (!Array.isArray(raw?.chapters) || raw.chapters.length > 10_000) throw new ApiFailure(502, 'source-invalid-response');
+      let chapters = raw.chapters;
+      for (const chapter of chapters) {
+        if (typeof chapter?.url !== 'string' || !chapter.url.trim() || chapter.url.length > 16_384) throw new ApiFailure(502, 'source-invalid-response');
+      }
       if (JSON.parse(row.installed_entry || row.entry)?.format === 'aniyomi-apk' && row.type === 'movie') {
         // Movie entries are often trailers plus the feature, not chronological episodes.
         const priority = (name:string) => /본편|full movie/i.test(name) ? 0 : /예고|티저|티져|trailer|teaser/i.test(name) ? 2 : 1;
@@ -685,13 +708,17 @@ export class Sources {
         }
         // Mangayomi JSON completed=1; Aniyomi SAnime completed=2.
         const apk = JSON.parse(row.installed_entry || row.entry).format === 'aniyomi-apk';
-        this.details.observe(id, [...observed].map(([episodeId,number])=>({id:episodeId,number})), raw.status === (apk ? 2 : 1));
+        this.catalog.details.observe(id, [...observed].map(([episodeId,number])=>({id:episodeId,number})), raw.status === (apk ? 2 : 1));
         this.db.run('UPDATE source_media SET detail_at=? WHERE media_id=?', Date.now(), id);
       });
-      return true;
-    }, 'interactive'));
+      return parsed.length > 0;
+    }, background ? 'background' : lane));
   }
-  remoteEpisode(episodeId: string) { return this.db.get('SELECT s.source_id,s.media_id,e.url FROM source_episodes e JOIN episodes ep ON ep.id=e.episode_id JOIN source_media s ON s.media_id=ep.media_id WHERE e.episode_id=?', episodeId); }
+  remoteEpisode(episodeId: string, includeWithdrawn = false) {
+    const episodes = includeWithdrawn ? 'episodes' : 'available_episodes';
+    return this.db.get(`SELECT s.source_id,s.media_id,e.url FROM source_episodes e JOIN ${episodes} ep ON ep.id=e.episode_id
+      JOIN source_media s ON s.media_id=ep.media_id WHERE e.episode_id=?`, episodeId);
+  }
   async videos(episodeId: string) {
     const source = this.remoteEpisode(episodeId); if (!source) throw new ApiFailure(404, 'episode-not-found');
     return this.serial(source.source_id, async () => {

@@ -68,9 +68,11 @@
 .title-body { padding: 8px var(--gutter) 40px; max-width: 1040px; }
 
 .episodes-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 8px; }
-.episodes-head h2 { font-size: 1.35rem; font-weight: 800; }
+.episodes-head h2 { flex: none; font-size: 1.35rem; font-weight: 800; }
 .episodes-season { color: var(--text-3); font-weight: 600; font-size: .92rem; }
-.episodes-tools { display: flex; align-items: center; gap: 6px; }
+.episodes-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; min-width: 0; gap: 6px; }
+.episode-order-actions { display: inline-flex; align-items: center; }
+.episode-order-actions:empty { display: none; }
 .episode-jump input { width: 104px; height: 38px; padding: 0 12px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-s); background: var(--surface-1); font-size: .9rem; }
 .episode-jump input:focus { outline: none; border-color: rgba(255, 255, 255, .5); }
 .range-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 4px 0 10px; padding-bottom: 2px; }
@@ -773,11 +775,12 @@
 
 /* ---------- Season picker ---------- */
 .episodes { scroll-margin-top: calc(var(--nav-h) + var(--safe-top) + 12px); }
-.season-picker { position: relative; }
-.season-trigger { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: var(--radius-s); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hairline-strong); color: #fff; font-size: .95rem; font-weight: 700; white-space: nowrap; }
+.season-picker { position: relative; min-width: 0; max-width: 100%; }
+.season-trigger { max-width: 100%; display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: var(--radius-s); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hairline-strong); color: #fff; font-size: .95rem; font-weight: 700; white-space: nowrap; }
 .season-trigger:hover, .season-trigger[aria-expanded="true"] { background: rgba(255, 255, 255, .12); }
 .season-trigger.is-static { background: none; box-shadow: none; padding: 0; height: auto; color: var(--text-2); font-size: .92rem; }
-.season-trigger-count { color: var(--text-3); font-weight: 600; }
+.season-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.season-trigger-count { flex: none; color: var(--text-3); font-weight: 600; }
 .season-trigger-count::before { content: "·"; margin-right: 8px; }
 .season-trigger-icon { color: var(--text-3); transition: transform .2s var(--ease); }
 .season-trigger[aria-expanded="true"] .season-trigger-icon { transform: rotate(180deg); }

@@ -72,8 +72,8 @@ test('API profile isolation, contract shapes, range streaming and SPA routing', 
     assert.equal((await app.inject({ url: '/api/watchlist', headers })).json().length, 1);
     assert.equal((await app.inject({ url: '/api/watchlist', headers: otherHeaders })).json().length, 0);
     assert.equal((await app.inject({ url: '/api/home?providers=local', headers })).json().rows[0].layout, 'landscape');
-    assert.deepEqual((await app.inject({ url: '/api/home', headers })).json(), { hero: [], rows: [] }, 'default home excludes local media even from continue/watchlist');
-    assert.deepEqual((await app.inject({ url: '/api/home?providers=other', headers })).json(), { hero: [], rows: [] }, 'unselected providers cannot leak into a tab');
+    assert.deepEqual((await app.inject({ url: '/api/home', headers })).json(), { hero: [], rows: [], refreshing: false }, 'default home excludes local media even from continue/watchlist');
+    assert.deepEqual((await app.inject({ url: '/api/home?providers=other', headers })).json(), { hero: [], rows: [], refreshing: false }, 'unselected providers cannot leak into a tab');
 
     assert.equal((await app.inject({ url: '/api/search?q=s%20h%20o%20w', headers })).json().groups[0].items.length, 1);
     assert.equal((await app.inject({ url: '/api/history', headers })).json().items[0].episode.id, 'ep');

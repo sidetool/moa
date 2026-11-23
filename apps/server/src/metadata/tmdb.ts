@@ -1,3 +1,6 @@
+import { catalogFreshMs } from '../system/catalog-refresh.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { TmdbScheduler, type TmdbWork, type TmdbPriority } from './tmdb-scheduler.js';
 import { trailerCandidates } from './tmdb-trailers.js';
 import { tmdbPeople, tmdbPersonWorks } from './tmdb-people.js';
 import { parseSeasonInfo } from '../catalog/season-info.js';
@@ -113,42 +116,44 @@ export class Tmdb {
     this.db.run("INSERT OR REPLACE INTO admin_settings VALUES('tmdb',?)", JSON.stringify(value.clear ? {} : value));
     this.reload();
     this.configurationRevision++;
+    this.scheduler.close(); this.scheduler = new TmdbScheduler();
+    this.inflight.clear(); this.linkContexts.clear(); this.seasonRequests.clear(); this.seasonContexts.clear(); this.trailerRequests.clear(); this.titleRequests.clear(); this.searchRequests.clear(); this.retryAfter.clear();
     return this.status();
   }
   private token?: string;
   private key?: string;
-  private active = 0;
-  private waiting: Array<() => void> = [];
+  private scheduler = new TmdbScheduler();
+  private context = new AsyncLocalStorage<TmdbWork>();
+  private linkContexts = new Map<string, TmdbWork>();
   private inflight = new Map<string, Promise<void>>();
-  private refreshing = new Set<string>();
+  private titleRequests = new Map<string, {work: Promise<CardInfo | null>; context: TmdbWork}>();
+  private searchRequests = new Map<string, Promise<MetadataCandidate[]>>();
+  private retryAfter = new Map<string, number>();
+  private seasonContexts = new Map<string, TmdbWork>();
   private trailerRequests = new Map<string, Promise<void>>();
   private seasonRequests = new Map<string, Promise<void>>();
   private abort = new AbortController();
   constructor(private db: Store, private log: (value: Record<string, unknown>) => void, options: { token?: string; key?: string; fetch?: typeof fetch } = { token: process.env.MOA_TMDB_TOKEN, key: process.env.MOA_TMDB_API_KEY }) {
     this.environment = { token: options.token?.trim() || undefined, key: options.key?.trim() || undefined };
+    db.db.exec('CREATE TABLE IF NOT EXISTS tmdb_search_cache(query TEXT PRIMARY KEY, payload TEXT NOT NULL, fetched_at INTEGER NOT NULL)');
     this.reload();
     if (options.fetch) this.fetcher = options.fetch;
   }
   private fetcher: typeof fetch = (...args) => fetch(...args);
-  private async slot() {
-    if (this.active >= 6) await new Promise<void>(resolve => this.waiting.push(resolve));
-    this.active++;
-  }
-  private release() { this.active--; this.waiting.shift()?.(); }
+  private currentWork(): TmdbWork { return this.context.getStore() ?? {priority: 'foreground', revision: this.configurationRevision}; }
+  private validRevision(revision: number) { return !this.abort.signal.aborted && revision === this.configurationRevision; }
   private async get(pathname: string, params: Record<string, string> = {}): Promise<any> {
+    const context = this.currentWork();
+    if (!this.validRevision(context.revision)) throw new Error('tmdb-configuration-changed');
+    const normalized = Object.entries(params).sort(([a], [b]) => a.localeCompare(b));
+    const key = JSON.stringify([context.revision, pathname, normalized]);
     const url = new URL(API + pathname);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    if (!this.token && this.key) url.searchParams.set('api_key', this.key);
-    await this.slot();
-    try {
-      for (let attempt = 0; ; attempt++) {
-        const res = await this.fetcher(url, { headers: { accept: 'application/json', ...(this.token ? { authorization: `Bearer ${this.token}` } : {}) }, signal: AbortSignal.any([AbortSignal.timeout(8000), this.abort.signal]) });
-        if (res.status === 429 && attempt < 2) { await sleep(1000 * (attempt + 1)); continue; }
-        if (res.status === 404) return null;
-        if (!res.ok) throw new Error(`tmdb-${res.status}`);
-        return await res.json();
-      }
-    } finally { this.release(); }
+    for (const [k, v] of normalized) url.searchParams.set(k, v);
+    const token = this.token;
+    if (!token && this.key) url.searchParams.set('api_key', this.key);
+    const value = await this.scheduler.request(key, context, signal => this.fetcher(url, {headers: {accept: 'application/json', ...(token ? {authorization: `Bearer ${token}`} : {})}, signal}));
+    if (!this.validRevision(context.revision)) throw new Error('tmdb-configuration-changed');
+    return value;
   }
 
   /** Read only existing accepted matches. Never run title matching on behalf of a plugin. */
@@ -176,17 +181,16 @@ export class Tmdb {
   async titleDetails(title: import('@moa/shared').LinkedPluginTitle): Promise<import('@moa/shared').TitleMetadata> {
     if (!this.enabled) throw new ApiFailure(503, 'metadata-unconfigured');
     if (title.provider !== this.providerId || !['movie','tv'].includes(title.kind) || !/^[1-9][0-9]{0,14}$/.test(title.id)) throw new ApiFailure(400, 'invalid-metadata-identity');
-    const cached = this.db.get('SELECT card,fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?', title.kind, Number(title.id));
-    const card = cached && cached.fetched_at > Date.now() - TITLE_TTL ? JSON.parse(cached.card) : await this.title(title.kind, Number(title.id));
+    const card = await this.title(title.kind, Number(title.id));
     if (!card || typeof card.title !== 'string' || !card.title.trim()) throw new Error('invalid-metadata-details');
     const text = (value: unknown, limit: number) => typeof value === 'string' ? value.slice(0, limit) : undefined;
     const image = (value: unknown) => typeof value === 'string' && /^https:\/\/image\.tmdb\.org\/t\/p\/(?:w\d+|original)\/[a-zA-Z0-9_-]+\.(?:jpg|png|webp)$/.test(value) ? value : undefined;
     return {
       title: card.title.slice(0, 300), originalTitle: text(card.originalTitle, 300), overview: text(card.overview, 4000),
       genres: Array.isArray(card.genres) ? card.genres.filter((value: unknown) => typeof value === 'string').slice(0,16).map((value: string) => value.slice(0,80)) : [],
-      year: Number.isInteger(card.year) && card.year > 0 && card.year < 10000 ? card.year : undefined,
-      runtime: Number.isFinite(card.runtime) && card.runtime > 0 && card.runtime <= 1440 ? card.runtime : undefined,
-      rating: Number.isFinite(card.rating) && card.rating >= 0 && card.rating <= 10 ? card.rating : undefined,
+      year: typeof card.year === 'number' && Number.isInteger(card.year) && card.year > 0 && card.year < 10000 ? card.year : undefined,
+      runtime: typeof card.runtime === 'number' && Number.isFinite(card.runtime) && card.runtime > 0 && card.runtime <= 1440 ? card.runtime : undefined,
+      rating: typeof card.rating === 'number' && Number.isFinite(card.rating) && card.rating >= 0 && card.rating <= 10 ? card.rating : undefined,
       certification: text(card.certification, 40), poster: image(card.poster), backdrop: image(card.backdrop),
     };
   }
@@ -248,7 +252,8 @@ export class Tmdb {
     if (!this.enabled) throw new ApiFailure(503,'metadata-unconfigured');
     if (!['tv','movie'].includes(kind) || !Number.isSafeInteger(id) || id <= 0) throw new ApiFailure(400,'invalid-metadata-identity');
     const cached=this.db.get('SELECT card,detail,fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?',kind,id);
-    if(cached && cached.fetched_at>Date.now()-7*86400_000){
+    if(cached){
+      void this.title(kind,id).catch(()=>{});
       const detail=JSON.parse(cached.detail),card=JSON.parse(cached.card);
       if(Array.isArray(detail.trailers))return {trailers:detail.trailers,adult:card.adult!==false};
     }
@@ -291,65 +296,107 @@ export class Tmdb {
     return {items,truncated:data.total_pages>1||data.results.length>12||rows.some(r=>r.status==='rejected')};
   }
 
-  /** Link titles in the background; resolves when done or after the budget, whichever is first. */
-  ensure(ids: string[], budgetMs: number): Promise<void> {
+  /** Link visible titles; the budget stops waiting without cancelling shared work. */
+  ensure(ids: string[], budgetMs: number, priority: TmdbPriority = 'foreground'): Promise<void> {
     if (!this.enabled || !ids.length) return Promise.resolve();
-    const work = Promise.allSettled([...new Set(ids)].map(async id => {
+    const work = this.context.run({priority, revision: this.configurationRevision}, () => Promise.allSettled([...new Set(ids)].map(async id => {
       await this.link(id);
+      if (!this.validRevision(this.currentWork().revision)) return;
       const row = linked(this.db,id);
       if (row?.kind === 'tv' && row.season != null && !JSON.parse(row.card).seasons?.[row.season]?.poster) await this.season(row.tmdb_id,row.season);
-    })).then(() => {});
+    })).then(() => {}));
     return budgetMs > 0 ? Promise.race([work, sleep(budgetMs)]) : Promise.resolve();
   }
-  /** Detail pages also need the episode lists of the linked seasons. */
+
+  private seasonNumbers(id: string, linkedSeason: number | null): number[] {
+    const source = linkedSeason != null && this.db.get("SELECT 1 FROM sqlite_master WHERE name='source_media'") && this.db.get('SELECT 1 FROM source_media WHERE media_id=?',id);
+    if (source) return [linkedSeason!];
+    const seasons = this.db.all('SELECT DISTINCT season FROM episodes WHERE media_id=? ORDER BY season LIMIT 6',id);
+    return seasons.length ? seasons.map(row => row.season) : [1];
+  }
+  /** A first detail can use a small matching budget. Persisted playable detail renders immediately. */
   async ensureDetail(id: string, budgetMs: number) {
     if (!this.enabled) return;
-    const work = (async () => {
+    const existing = linked(this.db,id);
+    const ready = existing && Array.isArray(JSON.parse(existing.detail).trailers)
+      || this.db.get('SELECT 1 FROM episodes WHERE media_id=? LIMIT 1',id);
+    const context = this.currentWork();
+    const work = this.context.run(context, async () => {
       await this.link(id);
-      const link = this.db.get("SELECT * FROM tmdb_links WHERE media_id=? AND status IN ('auto','manual') ", id);
+      if (!this.validRevision(context.revision)) return;
+      const link = linked(this.db,id);
       if (!link) return;
-      const trailers = this.ensureTrailers(link.kind,link.tmdb_id);
-      if (link.kind !== 'tv') { await trailers; return; }
-      const remote = Boolean(this.db.get('SELECT 1 FROM source_media WHERE media_id=?', id));
-      const seasons = remote && link.season != null ? [link.season] : this.db.all('SELECT DISTINCT season FROM episodes WHERE media_id=?', id).map(r => r.season as number);
-      await Promise.allSettled([trailers, ...[...new Set(seasons.length ? seasons : [1])].slice(0, 6).map(n => this.season(link.tmdb_id, n))]);
-    })().catch(error => this.log({ event: 'tmdb-detail-error', id, error: String(error) }));
-    await Promise.race([work, sleep(budgetMs)]);
+      await Promise.all([this.ensureTrailers(link.kind,link.tmdb_id), ...(link.kind === 'tv'
+        ? this.seasonNumbers(id,link.season).map(number => this.season(link.tmdb_id, number)) : [])]);
+    }).catch(error => this.log({ event: 'tmdb-detail-error', id, error: String(error) }));
+    if (!ready && budgetMs > 0) await Promise.race([work, sleep(budgetMs)]);
   }
-  private link(id: string): Promise<void> {
+  detailRefreshing(id: string) {
+    if (!this.enabled) return false;
+    if (this.inflight.has(id)) return true;
+    if (!this.titleRequests.size && !this.trailerRequests.size && !this.seasonRequests.size) return false;
+    const link = this.db.get("SELECT kind,tmdb_id FROM tmdb_links WHERE media_id=? AND status IN ('auto','manual')",id);
+    return Boolean(link && (this.titleRequests.has(`title:${link.kind}:${link.tmdb_id}`)
+      || this.trailerRequests.has(`${link.kind}:${link.tmdb_id}`) || link.kind === 'tv' && [...this.seasonRequests.keys()].some(key=>key.startsWith(`${link.tmdb_id}:`))));
+  }
+  private link(id: string, force = false): Promise<void> {
     const running = this.inflight.get(id);
-    if (running) return running;
-    const row = this.db.get('SELECT * FROM tmdb_links WHERE media_id=?', id);
-    const retry = row && foreignSource(this.db, id).foreign && (row.status === 'none' || row.status === 'auto' && row.score < 100) && (this.db.get('SELECT version FROM tmdb_match_versions WHERE media_id=?', id)?.version || 0) < MATCH_VERSION;
-    if (!retry && (row?.status === 'off' || row?.status === 'none' && row.checked_at > Date.now() - MISS_TTL)) return Promise.resolve();
-    if (!retry && row && ['auto', 'manual'].includes(row.status)) {
-      const title = this.db.get('SELECT fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?', row.kind, row.tmdb_id);
-      if (title && title.fetched_at > Date.now() - TITLE_TTL) return Promise.resolve();
-      if (title) { void this.title(row.kind, row.tmdb_id).catch(() => {}); return Promise.resolve(); }
+    if (running) {
+      if (this.currentWork().priority === 'foreground') this.linkContexts.get(id)!.priority = 'foreground';
+      return running;
     }
-    const work = (!retry && row && ['auto', 'manual'].includes(row.status) ? this.title(row.kind, row.tmdb_id).then(() => {}) : this.match(id))
-      .catch(error => this.log({ event: 'tmdb-match-error', id, error: String(error) }))
-      .finally(() => this.inflight.delete(id));
+    if (!force && (this.retryAfter.get('match:'+id) ?? 0) > Date.now()) return Promise.resolve();
+    const row = this.db.get(`SELECT l.*, t.fetched_at FROM tmdb_links l LEFT JOIN tmdb_titles t
+      ON t.kind=l.kind AND t.tmdb_id=l.tmdb_id WHERE l.media_id=?`, id);
+    const accepted = row && ['auto','manual'].includes(row.status);
+    if (row?.status === 'off') return Promise.resolve();
+    if (force && accepted) return this.title(row.kind,row.tmdb_id,true).then(card => {
+      if (!card) throw new ApiFailure(404,'metadata-not-found');
+    });
+    const retry = row && (row.status === 'none' || row.status === 'auto' && row.score < 100) && foreignSource(this.db, id).foreign && (this.db.get('SELECT version FROM tmdb_match_versions WHERE media_id=?', id)?.version || 0) < MATCH_VERSION;
+    if (!force && !retry && row?.status === 'none' && row.checked_at > Date.now() - Math.min(MISS_TTL,catalogFreshMs(this.db,MISS_TTL))) return Promise.resolve();
+    if (!retry && accepted && row.fetched_at != null) {
+      if (row.fetched_at <= Date.now()-catalogFreshMs(this.db,TITLE_TTL)) void this.title(row.kind,row.tmdb_id).catch(() => {});
+      return Promise.resolve();
+    }
+    const context = {...this.currentWork()};
+    const pending = this.context.run(context, () => !retry && accepted ? this.title(row.kind,row.tmdb_id).then(() => {}) : this.match(id,force));
+    if (!pending) return Promise.resolve();
+    this.linkContexts.set(id, context);
+    const work = pending
+      .catch(error => {
+        if (this.validRevision(context.revision)) {
+          if (context.priority === 'background') this.backoff('match:'+id);
+          this.log({ event: 'tmdb-match-error', id, error: String(error) });
+        }
+        throw error;
+      })
+      .finally(() => { if (this.inflight.get(id) === work) { this.inflight.delete(id); this.linkContexts.delete(id); } });
     this.inflight.set(id, work);
     return work;
   }
-  private async match(id: string) {
-    const previous = JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
-    const unchanged = () => Boolean(this.db.get('SELECT 1 FROM media WHERE id=?', id)) && previous === JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
+  private match(id: string, force: boolean) {
     const media = this.db.get('SELECT title,type,metadata FROM media WHERE id=?', id);
     if (!media) return;
     const meta = JSON.parse(media.metadata);
     // Live channels and truncated listing titles cannot be matched reliably.
     if (meta.live || /(?:\.{3}|…)\s*$/.test(media.title)) return;
+    return this.matchTitle(id, media, meta.year, force);
+  }
+  private async matchTitle(id: string, media: Record<string, any>, year: number | undefined, force: boolean) {
+    const revision = this.currentWork().revision;
+    const previous = JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
+    const unchanged = () => this.validRevision(revision) && Boolean(this.db.get('SELECT 1 FROM media WHERE id=?', id)) && previous === JSON.stringify(this.db.get('SELECT * FROM tmdb_links WHERE media_id=?',id));
     const terms = searchTerms(media.title);
     const source = foreignSource(this.db, id);
     const letters = media.title.match(/\p{L}/gu) || [];
     const english = source.foreign || letters.filter((c: string) => /\p{Script=Latin}/u.test(c)).length > letters.length / 2;
-    const expected = { type: source.anime && media.type === 'series' ? 'anime' : media.type, movieHint: terms.movieHint, year: meta.year || terms.year };
+    const expected = { type: source.anime && media.type === 'series' ? 'anime' : media.type, movieHint: terms.movieHint, year: year || terms.year };
     let best: { result: SearchResult; score: number; season?: number } | undefined;
     for (const target of terms.targets.slice(0, 4)) {
       for (const language of english ? ['ko-KR', 'en-US'] : ['ko-KR']) {
         const page = await this.get('/search/multi', { query: target.text, language, include_adult: 'false' });
+        if (!Array.isArray(page?.results)) throw new Error('tmdb-invalid-response');
         for (const result of (page?.results || []) as SearchResult[]) {
           if (!['tv', 'movie'].includes(result.media_type || '')) continue;
           const { score, season } = scoreResult(result, terms.targets, expected);
@@ -364,7 +411,8 @@ export class Tmdb {
       this.db.run('INSERT OR REPLACE INTO tmdb_match_versions VALUES(?,?)', id, MATCH_VERSION);
       return;
     }
-    const kind = best.result.media_type as MetadataKind, info = await this.title(kind, best.result.id);
+    const kind = best.result.media_type as MetadataKind, info = await this.title(kind, best.result.id,force);
+    if (!info && force) throw new ApiFailure(404,'metadata-not-found');
     if (!info || !unchanged()) return;
     const wanted = best.season ?? (/\bfinal\s+season\b/i.test(media.title) ? Math.max(0, ...Object.keys(info.seasons || {}).map(Number)) : undefined);
     const season = kind === 'tv' && wanted && info.seasons?.[wanted] ? wanted : null;
@@ -381,22 +429,69 @@ export class Tmdb {
     if (Array.isArray(extra.trailers) || (extra.trailerCheckedAt ?? 0) > Date.now() - 5*60_000) return Promise.resolve();
     // A failed refresh keeps the old trailer and backs off, including after restart.
     this.db.run('UPDATE tmdb_titles SET detail=? WHERE kind=? AND tmdb_id=?',JSON.stringify({...extra,trailerCheckedAt:Date.now()}),kind,id);
+    const revision = this.currentWork().revision;
     const work = (async () => {
       const data = await this.get(`/${kind}/${id}/videos`,{language:'ko-KR',include_video_language:'ko,en,ja,null'});
-      if (!Array.isArray(data?.results)) return;
+      if (!this.validRevision(revision) || !Array.isArray(data?.results)) return;
       const current = this.db.get('SELECT detail FROM tmdb_titles WHERE kind=? AND tmdb_id=?',kind,id);
       if (!current) return;
       const fresh: DetailInfo = JSON.parse(current.detail);
       if (Array.isArray(fresh.trailers)) return; // a concurrent title refresh already supplied newer metadata
       const trailers = trailerCandidates(data.results);
       this.db.run('UPDATE tmdb_titles SET detail=? WHERE kind=? AND tmdb_id=?',JSON.stringify({...fresh,trailer:trailers[0],trailers}),kind,id);
-    })().finally(() => this.trailerRequests.delete(key));
+    })().finally(() => { if (this.trailerRequests.get(key) === work) this.trailerRequests.delete(key); });
     this.trailerRequests.set(key,work); return work;
   }
-  private async title(kind: MetadataKind, tmdbId: number): Promise<CardInfo | null> {
+  private title(kind: MetadataKind, tmdbId: number, force = false): Promise<CardInfo | null> {
+    const key = `title:${kind}:${tmdbId}`, revision = this.currentWork().revision;
+    const cached = this.db.get('SELECT card,fetched_at FROM tmdb_titles WHERE kind=? AND tmdb_id=?',kind,tmdbId);
+    const refresh = (background: boolean) => {
+      const running = this.titleRequests.get(key);
+      if (running) {
+        if (!background && this.currentWork().priority === 'foreground') running.context.priority = 'foreground';
+        return running.work;
+      }
+      const context: TmdbWork = { revision, priority:background ? 'background' : this.currentWork().priority };
+      const work = this.context.run(context, () => this.fetchTitle(kind,tmdbId)).then(value => {
+        if (!value && this.validRevision(revision)) this.backoff(key);
+        return value;
+      }).catch(error => {
+        if (this.validRevision(revision)) this.backoff(key);
+        throw error;
+      }).finally(() => { if(this.titleRequests.get(key)?.work===work)this.titleRequests.delete(key); });
+      this.titleRequests.set(key,{work,context}); return work;
+    };
+    if(cached && !force) {
+      if(cached.fetched_at <= Date.now()-catalogFreshMs(this.db,TITLE_TTL) && (this.retryAfter.get(key)||0)<=Date.now()) void refresh(true).catch(()=>{});
+      return Promise.resolve(JSON.parse(cached.card));
+    }
+    return refresh(false);
+  }
+  private backoff(key: string) {
+    this.retryAfter.set(key,Date.now()+30_000);
+
+    if(this.retryAfter.size>10000)for(const [key,until] of this.retryAfter)if(until<=Date.now())this.retryAfter.delete(key);
+    while(this.retryAfter.size>10000)this.retryAfter.delete(this.retryAfter.keys().next().value!);
+  }
+  /** Explicit refresh preserves accepted/manual/off matches and propagates upstream failures. */
+  async refreshDetail(id: string) {
+    if(!this.enabled)return;
+    const revision = this.configurationRevision;
+    await this.link(id,true);
+    if (!this.validRevision(revision)) throw new Error('tmdb-configuration-changed');
+    const link = linked(this.db,id);
+    if (!link) return;
+    if (link.kind === 'tv') {
+      await Promise.all(this.seasonNumbers(id,link.season).map(number=>this.season(link.tmdb_id,number,true)));
+    }
+  }
+  private async fetchTitle(kind: MetadataKind, tmdbId: number): Promise<CardInfo | null> {
+    const revision = this.currentWork().revision;
     const append = kind === 'tv' ? 'aggregate_credits,images,videos,recommendations,content_ratings' : 'credits,images,videos,recommendations,release_dates';
     const d = await this.get(`/${kind}/${tmdbId}`, { language: 'ko-KR', append_to_response: append, include_image_language: 'ko,en,null', include_video_language: 'ko,en,ja,null' });
+    if (!this.validRevision(revision)) throw new Error('tmdb-configuration-changed');
     if (!d) return null;
+    if(typeof (d.name || d.title)!=='string' || !(d.name || d.title).trim() || d.genres != null && !Array.isArray(d.genres))throw new Error('invalid-metadata-title');
     const logos: any[] = d.images?.logos || [];
     const pickLogo = (lang: string) => logos.filter(l => l.iso_639_1 === lang).sort((a, b) => b.vote_average - a.vote_average)[0];
     // A Korean logo, or the English one for English-language titles. Others keep the text title.
@@ -427,16 +522,36 @@ export class Tmdb {
     this.db.run('INSERT OR REPLACE INTO tmdb_titles VALUES(?,?,?,?,?)', kind, tmdbId, JSON.stringify(card), JSON.stringify(detail), Date.now());
     return card;
   }
-  private season(tvId: number, number: number): Promise<void> {
-    const key = `${tvId}:${number}`;
-    const running = this.seasonRequests.get(key); if (running) return running;
-    const work = this.fetchSeason(tvId,number).finally(()=>this.seasonRequests.delete(key));
-    this.seasonRequests.set(key,work); return work;
+  private season(tvId: number, number: number, force = false): Promise<void> {
+    const key = `${tvId}:${number}`, retryKey = 'season:'+key;
+    const cached = this.db.get('SELECT fetched_at,payload FROM tmdb_seasons WHERE tmdb_id=? AND season=?',tvId,number);
+    const freshMs = cached?.payload === '[]' ? Math.min(60_000,catalogFreshMs(this.db,TITLE_TTL)) : catalogFreshMs(this.db,TITLE_TTL);
+    if (!force && ((this.retryAfter.get(retryKey) ?? 0) > Date.now() || cached && Date.now()-cached.fetched_at < freshMs)) return Promise.resolve();
+    let running = this.seasonRequests.get(key);
+    if (running) {
+      if ((!cached || force) && this.currentWork().priority === 'foreground') this.seasonContexts.get(key)!.priority = 'foreground';
+    } else {
+      const context = {...this.currentWork()};
+      if (cached && !force) context.priority = 'background';
+      this.seasonContexts.set(key, context);
+      const work = this.context.run(context, () => this.fetchSeason(tvId,number)).catch(error => {
+        if (this.validRevision(context.revision)) this.backoff(retryKey);
+        throw error;
+      }).finally(() => {
+        if (this.seasonRequests.get(key) === work) { this.seasonRequests.delete(key); this.seasonContexts.delete(key); }
+      });
+      running = work;
+      this.seasonRequests.set(key,work);
+    }
+    if (!force && cached) { void running.catch(() => {}); return Promise.resolve(); }
+    return running;
   }
   private async fetchSeason(tvId: number, number: number) {
-    const cached = this.db.get('SELECT fetched_at FROM tmdb_seasons WHERE tmdb_id=? AND season=?', tvId, number);
-    if (cached && cached.fetched_at > Date.now() - TITLE_TTL) return;
+    const revision = this.currentWork().revision;
+
     const d = await this.get(`/tv/${tvId}/season/${number}`, { language: 'ko-KR' });
+    if (!this.validRevision(revision)) return;
+    if(!d || !Array.isArray(d.episodes))throw new Error('invalid-metadata-season');
     if (d?.poster_path) {
       const row = this.db.get("SELECT card FROM tmdb_titles WHERE kind='tv' AND tmdb_id=?", tvId);
       if (row) {
@@ -451,18 +566,47 @@ export class Tmdb {
 
   async search(query: string): Promise<MetadataCandidate[]> {
     if (!this.enabled) throw new ApiFailure(409, 'metadata-unavailable');
-    const page = await this.get('/search/multi', { query, language: 'ko-KR', include_adult: 'false' });
-    return ((page?.results || []) as SearchResult[]).filter(r => ['tv', 'movie'].includes(r.media_type || '')).slice(0, 20).map(r => candidate(r, r.media_type as MetadataKind));
+    const key = query.trim();
+    const cached = this.db.get('SELECT payload,fetched_at FROM tmdb_search_cache WHERE query=?',key);
+    const value: MetadataCandidate[] | undefined = cached && JSON.parse(cached.payload);
+    const age = cached ? Date.now()-cached.fetched_at : Infinity;
+    const freshMs = catalogFreshMs(this.db,6*3_600_000);
+    if (value && age <= (value.length ? freshMs : Math.min(60_000,freshMs))) return value;
+    const usable = value && (value.length > 0 || age <= 5*60_000);
+    if (usable && (this.retryAfter.get('search:'+key) ?? 0)>Date.now()) return value;
+    let running = this.searchRequests.get(key);
+    if (!running) {
+      const revision = this.configurationRevision;
+      const work = this.get('/search/multi', {query:key,language:'ko-KR',include_adult:'false'}).then(page => {
+        if (!this.validRevision(revision) || !Array.isArray(page?.results)) throw new Error('tmdb-invalid-response');
+        const matches = (page.results as SearchResult[]).filter(r => r && ['tv', 'movie'].includes(r.media_type || ''));
+        if (matches.some(r => !Number.isSafeInteger(r.id) || r.id < 1 || typeof (r.name || r.title) !== 'string')) throw new Error('tmdb-invalid-response');
+        const results = matches.slice(0,20).map(r => candidate(r,r.media_type as MetadataKind));
+        this.db.run('INSERT OR REPLACE INTO tmdb_search_cache VALUES(?,?,?)',key,JSON.stringify(results),Date.now());
+        this.db.run('DELETE FROM tmdb_search_cache WHERE rowid IN (SELECT rowid FROM tmdb_search_cache ORDER BY fetched_at DESC,rowid DESC LIMIT -1 OFFSET 500)');
+        return results;
+      }).catch(error => {
+        if (this.validRevision(revision)) this.backoff('search:'+key);
+        throw error;
+      }).finally(() => { if (this.searchRequests.get(key) === work) this.searchRequests.delete(key); });
+      this.searchRequests.set(key,work);
+      running = work;
+    }
+    if (usable) { void running.catch(() => {}); return value; }
+    return running;
   }
+  searchRefreshing(query: string) { return this.searchRequests.has(query.trim()); }
   async change(id: string, body: { action: 'link' | 'off' | 'auto'; kind?: MetadataKind; tmdbId?: number; season?: number }): Promise<MetadataLink> {
     if (!this.enabled) throw new ApiFailure(409, 'metadata-unavailable');
+    const revision = this.configurationRevision;
     const media = this.db.get('SELECT title FROM media WHERE id=?', id);
     if (!media) throw new ApiFailure(404, 'media-not-found');
     if (body.action === 'off') this.db.run("INSERT OR REPLACE INTO tmdb_links(media_id,status,checked_at) VALUES(?,'off',?)", id, Date.now());
-    else if (body.action === 'auto') { this.db.run('DELETE FROM tmdb_links WHERE media_id=?', id); await this.link(id); }
+    else if (body.action === 'auto') { this.db.run('DELETE FROM tmdb_links WHERE media_id=?', id); await this.link(id,true); }
     else {
       if (!body.kind || !body.tmdbId) throw new ApiFailure(400, 'invalid-request');
-      const info = await this.title(body.kind, body.tmdbId);
+      const info = await this.title(body.kind, body.tmdbId,true);
+      if (!this.validRevision(revision)) throw new Error('tmdb-configuration-changed');
       if (!info) throw new ApiFailure(404, 'metadata-not-found');
       if (!this.db.get('SELECT 1 FROM media WHERE id=?', id)) throw new ApiFailure(404, 'media-not-found');
       const wanted = body.season ?? searchTerms(this.db.displayTitle(id, media.title)).season;
@@ -475,6 +619,7 @@ export class Tmdb {
   /** Fill in titles that have never been checked, a few at a time. */
   async backfill() {
     if (!this.enabled) return;
+    const revision = this.configurationRevision;
     const hasSources = this.db.get("SELECT 1 FROM sqlite_master WHERE name='source_entries'");
     const foreignRetry = hasSources ? `OR EXISTS(SELECT 1 FROM tmdb_links l
       JOIN source_media sm ON sm.media_id=l.media_id JOIN source_entries se ON se.id=sm.source_id
@@ -484,9 +629,9 @@ export class Tmdb {
       AND (l.status='none' OR l.status='auto' AND l.score<100) AND COALESCE(v.version,0)<${MATCH_VERSION})` : '';
     const rows = this.db.all(`SELECT id FROM media m WHERE json_extract(metadata,'$.live') IS NOT 1
       AND (NOT EXISTS(SELECT 1 FROM tmdb_links l WHERE l.media_id=m.id) ${foreignRetry}) ORDER BY added_at DESC LIMIT 2000`);
-    for (let i = 0; i < rows.length && !this.abort.signal.aborted; i += 6) await Promise.allSettled(rows.slice(i, i + 6).map(r => this.link(r.id)));
+    for (let i = 0; i < rows.length && this.validRevision(revision); i += 6) await Promise.allSettled(rows.slice(i, i + 6).map(r => this.context.run({priority: 'background', revision}, () => this.link(r.id))));
   }
-  close() { this.abort.abort(); }
+  close() { this.abort.abort(); this.scheduler.close(); }
 }
 
 function candidate(r: SearchResult, fallback: MetadataKind): MetadataCandidate {

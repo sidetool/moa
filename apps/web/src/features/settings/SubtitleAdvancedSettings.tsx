@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { SlidersHorizontal } from 'lucide-react';
 import type { Settings } from '@moa/shared';
@@ -31,7 +31,7 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
     s.skipSubtitleSearchWithSiteTrack ? '사이트 자막 있으면 검색 안 함' : '항상 자동 검색',
     s.skipTranslationWithoutSubtitles ? '자막 없는 영상 번역 안 함' : '자막 없는 영상도 번역',
     // Only a non-default online-subtitle choice, to keep the line short.
-    s.experimentalSubtitleSync ? null : '싱크 맞춤 끔',
+    !s.experimentalSubtitleSync ? '싱크 맞춤 끔' : s.experimentalSegmentedSubtitleSync ? '구간별 싱크 켬' : null,
     admin && config ? `요청 간격 ${seconds(config.requestIntervalMs)} · 재시도 ${config.retryCount}회` : null
   ].filter(Boolean).join(' · ');
 
@@ -63,17 +63,33 @@ export function SubtitleAdvancedSettings({ settings: s, admin, save }: { setting
           onChange={skipTranslationWithoutSubtitles => save({ skipTranslationWithoutSubtitles })} />
       </div>
       <p className="settings-advanced-label">한국어 온라인 자막</p>
-      <div className="setting">
-        <div>
-          <b>싱크 자동 맞춤 <span className="status-pill">실험</span></b>
-          <small>영상의 외국어 자막과 대사 시각을 비교해, 일정하게 어긋난 게 확실할 때만 시간을 맞춰요. 대사가 맞지 않아 보이는 자막은 자동으로 고르지 않고, 비교할 자막이 없거나 확실하지 않으면 그대로 둬요.</small>
-        </div>
-        <Toggle label="싱크 자동 맞춤" checked={s.experimentalSubtitleSync}
-          onChange={experimentalSubtitleSync => save({ experimentalSubtitleSync })} />
-      </div>
+      <SubtitleSyncSettings automatic={s.experimentalSubtitleSync} segmented={s.experimentalSegmentedSubtitleSync} save={save} />
       {admin && <RequestControls />}
     </SettingsDisclosure>
   );
+}
+
+export function SubtitleSyncSettings({ automatic, segmented, save }: {
+  automatic: boolean; segmented: boolean; save: (patch: Partial<Settings>) => void;
+}) {
+  const hint = useId();
+  return <>
+    <div className="setting">
+      <div>
+        <b>싱크 자동 맞춤 <span className="status-pill">실험</span></b>
+        <small>영상의 외국어 자막과 대사 시각을 비교해, 일정하게 어긋난 게 확실할 때만 시간을 맞춰요. 대사가 맞지 않아 보이는 자막은 자동으로 고르지 않고, 비교할 자막이 없거나 확실하지 않으면 그대로 둬요.</small>
+      </div>
+      <Toggle label="싱크 자동 맞춤" checked={automatic} onChange={experimentalSubtitleSync => save({ experimentalSubtitleSync })} />
+    </div>
+    <div className="setting">
+      <div>
+        <b>구간별 싱크 맞춤 <span className="status-pill">실험</span></b>
+        <small id={hint}>{automatic ? '자막이 중간부터 어긋날 때 구간마다 대사 시각을 비교해 맞춰요.' : '싱크 자동 맞춤을 켜면 사용할 수 있어요.'}</small>
+      </div>
+      <Toggle label="구간별 싱크 맞춤" aria-describedby={hint} disabled={!automatic} checked={Boolean(automatic && segmented)}
+        onChange={experimentalSegmentedSubtitleSync => save({ experimentalSegmentedSubtitleSync })} />
+    </div>
+  </>;
 }
 
 /** Admin only: server-wide pacing between Gemini requests and retries per batch. */
