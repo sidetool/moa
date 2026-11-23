@@ -1425,6 +1425,28 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
     seekHeld.current = event.pointerType !== "touch" || scrub !== null;
     poke();
   };
+  // Hidden controls take no pointer events, so a pointer that wakes them on the bar's spot never reaches
+  // the bar and, resting there, sends no further move. Read it from the player instead, and let go once it
+  // moves off the bar or leaves the player.
+  const followHiddenBar = (event: React.PointerEvent) => {
+    // Ordinary moves over visible controls cost nothing here.
+    if (chrome && !seekHeld.current) return;
+    const element = bar.current;
+    if (!element || scrub !== null || element.contains(event.target as Node)) return;
+    const rect = element.getBoundingClientRect();
+    // Idle controls sit lower (translateY); judge by where the rail shows once awake.
+    const transform = getComputedStyle(element.closest(".player-controls-chrome") ?? element).transform;
+    const lift = transform && transform !== "none" ? new DOMMatrixReadOnly(transform).m42 : 0;
+    const over = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top - lift && event.clientY <= rect.bottom - lift;
+    if (over && !chrome) {
+      setPreviewInterest(session?.sessionId);
+      setHover(ratioAt(event.clientX));
+      seekHeld.current = true;
+    } else if (!over && hover !== null) {
+      setHover(null);
+      releaseSeek();
+    }
+  };
   const onBarUp = (event: React.PointerEvent) => {
     if (scrub === null) return;
     seekTo(ratioAt(event.clientX) * total);
@@ -1466,7 +1488,8 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingSubtitle(false); }}
       onDrop={event => { event.preventDefault(); setDraggingSubtitle(false); void addSubtitleFiles(Array.from(event.dataTransfer.files)); }}
       onPointerDownCapture={onPlayerPointerDown}
-      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); } }}
+      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); followHiddenBar(event); } }}
+      onPointerLeave={event => { if (event.pointerType !== "touch" && scrub === null && hover !== null) { setHover(null); releaseSeek(); } }}
     >
       {session && <PluginScripts player={pluginPlayer} />}
       <input ref={subtitleInput} type="file" accept={SUBTITLE_FILES} multiple hidden aria-label="자막 파일 선택" onChange={event => { void addSubtitleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />

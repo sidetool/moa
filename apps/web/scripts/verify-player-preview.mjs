@@ -209,6 +209,35 @@ try {
         delete window.previewOriginalEncode;
       });
     }
+    if (mode === 'direct' && width === 1280) {
+      // Waking hidden controls by moving straight onto the bar and resting there opens the preview, and the
+      // still pointer keeps the controls past the idle delay. Leaving or hiding the tab restores the countdown.
+      const playerIdle = () => page.locator('.player').evaluate(element => element.classList.contains('is-idle'));
+      const idleAgain = () => page.waitForFunction(() => document.querySelector('.player')?.classList.contains('is-idle'), null, { timeout: 6000 });
+      const setHidden = hidden => page.evaluate(hidden => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => hidden ? 'hidden' : 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+      }, hidden);
+      await page.mouse.move(4, 4);
+      await page.locator('.player-video').evaluate(video => video.play());
+      await idleAgain();
+      await move(.5);
+      await page.locator('.seek-tip').waitFor();
+      await page.waitForTimeout(3500);
+      assert.equal(await playerIdle(), false);
+      assert.equal(await page.locator('.seek-tip').count(), 1);
+      await page.mouse.move(4, 4);
+      await idleAgain();
+      await move(.5);
+      await page.waitForTimeout(3500);
+      assert.equal(await playerIdle(), false);
+      await setHidden(true);
+      await setHidden(false);
+      await idleAgain();
+      await page.mouse.move(4, 4);
+      await page.locator('.player-video').evaluate(video => video.pause());
+    }
     if (seekOnly) {
       results.push({ width, mode, previewMs, accurate: true, reused: true });
       await context.close();
@@ -227,29 +256,6 @@ try {
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.player-controls-chrome')).opacity === '0');
     await page.screenshot({ path: verificationPath(`verification-player-notice-${width}.png`) });
     results.push({ width, mode, mainPosition: before, previewRequests: previews.length, previewMs, retainedOnReturn: true, noticeVisibleWithoutControls: true });
-    // A still pointer waiting on a slow preview keeps the controls past the idle delay; leaving or hiding the tab
-    // restores the usual countdown even after it was skipped while resting.
-    const playerIdle = () => page.locator('.player').evaluate(element => element.classList.contains('is-idle'));
-    const idleAgain = () => page.waitForFunction(() => document.querySelector('.player')?.classList.contains('is-idle'), null, { timeout: 6000 });
-    const setHidden = hidden => page.evaluate(hidden => {
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
-      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => hidden ? 'hidden' : 'visible' });
-      document.dispatchEvent(new Event('visibilitychange'));
-    }, hidden);
-    await move(.5);
-    await page.locator('.seek-tip').waitFor();
-    await page.waitForTimeout(3500);
-    assert.equal(await playerIdle(), false);
-    assert.equal(await page.locator('.seek-tip').count(), 1);
-    await page.mouse.move(4, 4);
-    await idleAgain();
-    await move(.5);
-    await page.waitForTimeout(3500);
-    assert.equal(await playerIdle(), false);
-    await setHidden(true);
-    await setHidden(false);
-    await idleAgain();
-    await page.mouse.move(4, 4);
     if (mode !== 'hls') {
       await page.locator('.player-video').evaluate(video => { video.pause(); video.currentTime = 30; });
       await page.getByRole('button', { name: '오프닝 건너뛰기', exact: true }).click();
