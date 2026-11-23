@@ -26,7 +26,7 @@ export function lookupTitle(catalog: Catalog, groups: TitleGroups, profile: stri
   const target = identity(query.title), parsed = parseSeasonInfo(query.title);
   const matched = lookupCandidates(query, candidates);
   const remote = new Set(matched.map(item => `${item.kind}:${item.id}`));
-  const found = catalog.search(profile, parsed.identityTitle, matched).groups.flatMap(group => group.items);
+  const found = catalog.search(profile, parsed.identityTitle, matched, 'titles').groups.flatMap(group => group.items);
   const ids = found.filter(card => {
     if (query.type && card.type !== query.type) return false;
     const row = catalog.db.get(`SELECT m.title,m.metadata,l.kind,l.tmdb_id,l.season,t.card FROM media m

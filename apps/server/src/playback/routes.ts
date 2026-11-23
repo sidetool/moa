@@ -37,6 +37,8 @@ export function registerPlaybackRoutes(app: FastifyInstance, { db, catalog, sour
     const body = req.body as { episodeId: string; capabilities: ClientCapabilities; location?:'auto'|'saved'|'source'; audioTrackId?: string; streamId?: string; startPosition?: number };
     const episode = db.get('SELECT media_id FROM episodes WHERE id=?', body.episodeId);
     if (episode) catalog.kids.assert(episode.media_id, profile(req));
+    // Capture before opening a slow source. A hide while this request is in flight wins.
+    const hidden = episode && db.get('SELECT token FROM hidden_continue WHERE profile_id=? AND media_id=?', profile(req), episode.media_id);
     const openSource=()=>sources.remoteEpisode(body.episodeId)
       ? remotePlayback.create(profile(req), body.episodeId, body.startPosition, body.streamId)
       : playback.create(profile(req), body.episodeId, body.capabilities, body.audioTrackId, body.startPosition);
@@ -47,7 +49,7 @@ export function registerPlaybackRoutes(app: FastifyInstance, { db, catalog, sour
     });
     const saved = subtitleLibrary.tracks(body.episodeId, profile(req));
     result.subtitles.push(...saved.filter(track => !result.subtitles.some(existing => existing.id === track.id)));
-    return result;
+    return hidden ? { ...result, continueVisibility: { token: hidden.token, startPosition: result.startPosition } } : result;
   });
   app.post('/api/playback/:sessionId/heartbeat', { schema: { params: idParams('sessionId') } }, async (req, reply) => {
     remotePlayback.heartbeat(params(req).sessionId, profile(req));
@@ -60,8 +62,18 @@ export function registerPlaybackRoutes(app: FastifyInstance, { db, catalog, sour
   });
   casting.asset(app, '/api/playback/:sessionId/remote/:asset', async (req, reply) => remotePlayback.proxy(req, reply, params(req).sessionId, params(req).asset));
   const session = (req: FastifyRequest) => playback.get(params(req).sessionId, req.moaProfile);
-  app.get('/api/playback/:sessionId/preview', { schema: { params: idParams('sessionId'), querystring: object({ at: { type: 'number', minimum: 0, maximum: 864000 } }, ['at']) } }, async (req, reply) => {
-    return reply.type('image/jpeg').header('Cache-Control', 'private, max-age=1800').send(await playback.preview(session(req), query(req).at));
+  app.get('/api/playback/:sessionId/preview', { schema: { params: idParams('sessionId'), querystring: object({ at: { type: 'number', minimum: 0, maximum: 864000 }, exact: { type: 'integer', enum: [0, 1] } }, ['at']) } }, async (req, reply) => {
+    const exact = query(req).exact === 1;
+    const controller = new AbortController(), disconnect = () => controller.abort();
+    reply.raw.once('close', disconnect);
+    try {
+      const frame = await playback.preview(session(req), query(req).at, exact, controller.signal);
+      return reply.type('image/jpeg').header('Cache-Control', exact ? 'private, no-store' : 'private, max-age=1800').send(frame);
+    } finally { reply.raw.off('close', disconnect); }
+  });
+  app.get('/api/playback/:sessionId/preview-sheet', { schema: { params: idParams('sessionId'), querystring: object({ index: { type: 'integer', minimum: 0 } }, ['index']) } }, async (req, reply) => {
+    const sheet = await playback.previewSheets.get(session(req), query(req).index);
+    return reply.type('image/jpeg').header('Cache-Control', 'private, no-store').send(sheet);
   });
   casting.asset(app, '/api/playback/:sessionId/index.m3u8', async (req, reply) => {
     const s = session(req); if (s.response.mode === 'direct') throw new ApiFailure(404, 'not-hls');

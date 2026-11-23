@@ -35,6 +35,9 @@ const write = (key: string, value: DeviceSettings, dirty: Partial<DeviceSettings
   try { localStorage.setItem(key, raw); fallback.delete(key); } catch {}
   window.dispatchEvent(new Event('moa:device-prefs'));
 };
+export function unsyncedDevicePrefs(): Partial<DeviceSettings> {
+  return record(storageKey())?.dirty ?? {};
+}
 export function devicePrefs(): DevicePrefs {
   return { ...DEFAULT_DEVICE_SETTINGS, ...record(storageKey())?.value };
 }

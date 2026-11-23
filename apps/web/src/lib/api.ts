@@ -1,5 +1,6 @@
 import { PROFILE_HEADER } from "@moa/shared";
 import { transformPluginCatalog } from '../features/plugins/plugin-hooks';
+import { clearResumeScenes } from '../player/playback/resume-scene';
 import { deviceId } from './device-id';
 
 export const hasLoginGate = document.querySelector('meta[name="moa-auth"]')?.getAttribute("content") === "enabled";
@@ -29,6 +30,21 @@ type ApiInit = { method?: string; body?: Json; signal?: AbortSignal; keepalive?:
 export const api = <T>(path: string, init: ApiInit = {}) => request<T>(`/api${path}`, init, false);
 export const authApi = <T>(path: string, init: ApiInit = {}) => request<T>(`/__moa/api${path}`, init, true);
 
+let redirectingToLogin = false;
+function redirectToLogin(next?: string) {
+  if (redirectingToLogin) return;
+  redirectingToLogin = true;
+  clearResumeScenes();
+  if (next) window.location.replace(`/__moa/login?next=${encodeURIComponent(next)}`);
+  else window.location.assign('/__moa/login');
+}
+// A restored page can receive a new session expiry after a trip through the back-forward cache.
+window.addEventListener('pageshow', event => { if (event.persisted) redirectingToLogin = false; });
+
+export function finishLogout() {
+  redirectToLogin();
+}
+
 async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", 'X-Moa-Device': deviceId() };
   const profile = currentProfileId();
@@ -49,7 +65,7 @@ async function request<T>(path: string, init: ApiInit, auth: boolean): Promise<T
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && data?.error === "login-required") {
-      window.location.replace(`/__moa/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
+      redirectToLogin(location.pathname + location.search + location.hash);
     }
     if (response.status === 401 && profile === currentProfileId() && ["profile-required", "profile-locked"].includes(data?.error)) {
       setCurrentProfileId(null);

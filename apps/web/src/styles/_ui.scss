@@ -3,18 +3,18 @@
 .btn > span { min-width: 0; }
 /* Icons belong in `icon`; one placed in the label still stays on the label's line. */
 .btn > span:has(> svg) { display: inline-flex; align-items: center; gap: var(--space-2); }
-.btn:disabled, .icon-btn:disabled, .switch:disabled { opacity: var(--disabled-opacity); }
+.btn:disabled, .btn[aria-disabled="true"], .icon-btn:disabled, .switch:disabled, .switch[aria-disabled="true"] { opacity: var(--disabled-opacity); }
 .btn-l { min-height: var(--control-height-lg); padding-inline: var(--space-6); font-size: var(--font-large); font-weight: var(--weight-bold); }
 .btn-icon-only { width: var(--control-height); padding: 0; }
 .btn-l.btn-icon-only { width: var(--control-height-lg); }
 .btn-primary { background: var(--primary-bg); color: var(--primary-text); }
-.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-primary:hover:not(:disabled, [aria-disabled="true"]) { background: var(--primary-hover); }
 .btn-secondary { background: var(--secondary-bg); color: var(--text); }
-.btn-secondary:hover:not(:disabled) { background: var(--secondary-hover); }
+.btn-secondary:hover:not(:disabled, [aria-disabled="true"]) { background: var(--secondary-hover); }
 .btn-ghost { color: var(--text-2); }
-.btn-ghost:hover:not(:disabled) { color: var(--text); background: var(--hairline); }
+.btn-ghost:hover:not(:disabled, [aria-disabled="true"]) { color: var(--text); background: var(--hairline); }
 .btn-accent { background: var(--accent); color: var(--primary-text); }
-.btn-accent:hover:not(:disabled) { background: var(--accent-strong); color: var(--primary-text); }
+.btn-accent:hover:not(:disabled, [aria-disabled="true"]) { background: var(--accent-strong); color: var(--primary-text); }
 .icon-btn { display: inline-grid; place-items: center; width: var(--control-height); height: var(--control-height); border-radius: var(--radius-pill); color: var(--text-2); transition: color var(--motion-fast), background-color var(--motion-fast); }
 .icon-btn:hover:not(:disabled), .icon-btn.is-active { color: var(--text); background: var(--hairline); }
 .icon-btn-s { width: var(--space-8); height: var(--space-8); }

@@ -3,3 +3,9 @@
 @media (max-width: 760px) {
   .player-boost { top: calc(68px + var(--safe-top)); }
 }
+
+.player-notice { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; margin: 0 0 8px auto; padding: 6px 8px 6px 10px; border-radius: var(--radius-s); background: #151519d9; font-size: .78rem; line-height: 1.4; animation: fade .2s var(--ease); }
+.player-notice > span { min-width: 0; overflow-wrap: anywhere; }
+.player-notice > svg { flex: none; }
+.player-notice button { flex: none; padding: 5px 8px; border-radius: 5px; background: #ffffff18; font-weight: 700; }
+.player-notice svg { color: var(--accent-strong); }

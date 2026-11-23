@@ -93,7 +93,8 @@ try {
     await audit(page, `${scenario.name}:controls`, [
       { selector: '[data-preview="buttons"] .btn:not(.btn-l)', minHeight: 40 },
       { selector: '[data-preview="buttons"] .btn-l', minHeight: 48 },
-      ...contrast('[data-preview="buttons"] .btn:not(:disabled) > span'),
+      ...contrast('[data-preview="buttons"] .btn:not(:disabled, [aria-disabled="true"]) > span'),
+      { selector: '[data-preview="buttons"] .btn[aria-busy="true"]', states: { busy: true, disabled: true } },
       { selector: '[data-preview="fields"] .input', minHeight: 40 },
       { selector: '[data-preview="fields"] [aria-invalid="true"]', states: { invalid: true } },
       { selector: '[data-preview="fields"] input[readonly]:not(:disabled)', states: { readOnly: true } },

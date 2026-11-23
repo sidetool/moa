@@ -1,88 +1,206 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import type Hls from 'hls.js';
-import type { PlaybackSession } from '@moa/shared';
+import { PROFILE_HEADER, type PlaybackSession } from '@moa/shared';
 import { Spinner } from '../../components/ui';
+import { currentProfileId } from '../../lib/api';
+import { cx } from '../../lib/format';
+import { hasPreviewFragments, previewBufferedLevel, previewFragmentOptions } from './preview-fragments';
+import { captureVideoStill } from './resume-scene';
+import type { SeekFrames } from './seek-frames';
 
-export function SeekPreview({ session, seconds }: { session: PlaybackSession; seconds: number }) {
-  const video = useRef<HTMLVideoElement>(null);
-  const hls = useRef<Hls | null>(null);
-  const target = useRef(seconds);
-  const deadline = useRef<number | undefined>(undefined);
-  const [ready, setReady] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [image, setImage] = useState('');
-  const imageUrl = useRef('');
-  const at = Math.min(Math.max(0, Math.floor(seconds / 2) * 2), session.duration > 0 ? Math.max(0, session.duration - .01) : Infinity);
-  target.current = at;
-  const server = session.mode !== 'direct';
+const DWELL_MS = 180;
+const EXACT_SECONDS = .001;
+// Only a frame stored for the exact requested time is final; 1ms away can already be across a cut.
+const FINAL_SECONDS = 0;
+// After the dwell a stand-in must be within one sheet cell, or the cache's nearby window without a sheet.
+const NEAR_SECONDS = 8;
+class PreviewBusy extends Error {}
 
-  useEffect(() => {
-    if (!server) return;
-    const abort = new AbortController();
-    setFailed(false);
-    const timer = window.setTimeout(() => {
-      fetch(`/api/playback/${encodeURIComponent(session.sessionId)}/preview?at=${at}`, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(12_000)]), credentials: 'same-origin' })
-        .then(response => response.ok ? response.blob() : Promise.reject(new Error('preview')))
-        .then(value => { if (!abort.signal.aborted) { const blob = URL.createObjectURL(value); if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); imageUrl.current = blob; setImage(blob); } })
-        .catch(() => { if (!abort.signal.aborted) setFailed(true); });
-    }, 80);
-    return () => { window.clearTimeout(timer); abort.abort(); };
-  }, [server, session.sessionId, at]);
+async function jpeg(url: string, signal: AbortSignal, limit: number) {
+  const profile = currentProfileId();
+  const response = await fetch(url, {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+    credentials: 'same-origin',
+    headers: profile ? { [PROFILE_HEADER]: profile } : {}
+  });
+  if (response.status === 429) throw new PreviewBusy();
+  if (!response.ok) throw new Error('preview-unavailable');
+  const blob = await response.blob();
+  if (blob.type !== 'image/jpeg' || !blob.size || blob.size > limit) throw new Error('invalid-preview');
+  const image = new Image();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    image.src = objectUrl;
+    await image.decode();
+    signal.throwIfAborted();
+    return objectUrl;
+  } catch (error) {
+    URL.revokeObjectURL(objectUrl);
+    throw error;
+  }
+}
 
-  useEffect(() => () => { if (imageUrl.current) URL.revokeObjectURL(imageUrl.current); }, []);
-  useEffect(() => setFailed(false), [at, session.sessionId]);
+// The preview video has its own decoder. A successful readback releases it immediately
+// after at most one nearby frame from media it has already buffered.
+function decodePreview(video: HTMLVideoElement, session: PlaybackSession, position: number, cache: SeekFrames, showVideo: () => void, failed: () => void) {
+  let hls: Hls | undefined;
+  let disposed = false;
+  let target = position;
+  let warming = false;
+  let timer: number;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    window.clearTimeout(timer);
+    video.removeEventListener('loadedmetadata', seek);
+    video.removeEventListener('loadeddata', loaded);
+    video.removeEventListener('seeked', loaded);
+    video.removeEventListener('error', fail);
+    hls?.destroy();
+    video.removeAttribute('src');
+    video.load();
+  };
+  const fail = () => {
+    if (disposed) return;
+    dispose();
+    if (!warming) failed();
+  };
+  const seek = () => {
+    if (!Number.isFinite(video.duration)) return;
+    // A different length on the preview rendition cannot supply this timestamp.
+    if (position > video.duration + EXACT_SECONDS) { fail(); return; }
+    target = Math.min(position, Math.max(0, video.duration - EXACT_SECONDS));
+    video.currentTime = target;
+  };
+  const loaded = () => {
+    if (disposed || video.seeking || video.readyState < 2 || Math.abs(video.currentTime - target) > EXACT_SECONDS) return;
+    window.clearTimeout(timer);
+    hls?.stopLoad();
+    // Key the sample by what was asked for. The currentTime tolerance and end clamp above still apply.
+    const frame = captureVideoStill(video, warming ? target : position);
+    if (!frame) {
+      if (warming) dispose();
+      else showVideo(); // A paused native frame still works when canvas readback is unavailable.
+      return;
+    }
+    cache.add(frame, true);
+    const neighbor = position + 4;
+    if (!warming && neighbor < video.duration && !cache.nearest(neighbor, FINAL_SECONDS, true)) {
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= neighbor && neighbor + .25 < video.buffered.end(i)) {
+          warming = true;
+          target = neighbor;
+          timer = window.setTimeout(dispose, 350);
+          video.currentTime = neighbor;
+          return;
+        }
+      }
+    }
+    dispose();
+  };
 
-  useEffect(() => {
-    const element = video.current;
-    if (server || failed || !element) return;
-    let stopped = false;
-    const seek = () => { if (Number.isFinite(element.duration)) element.currentTime = Math.min(target.current, Math.max(0, element.duration - .1)); };
-    const loaded = () => {
-      if (element.readyState >= 2 && Math.abs(element.currentTime - target.current) < 2) { window.clearTimeout(deadline.current); setReady(true); hls.current?.stopLoad(); }
-    };
-    const error = () => setFailed(true);
-    element.addEventListener('loadedmetadata', seek);
-    element.addEventListener('loadeddata', loaded);
-    element.addEventListener('seeked', loaded);
-    element.addEventListener('error', error);
-    void (async () => {
-      const isHls = session.mime === 'application/vnd.apple.mpegurl' || /\.m3u8(?:\?|$)/.test(session.url);
-      if (!isHls || element.canPlayType('application/vnd.apple.mpegurl')) { element.src = session.url; return; }
-      try {
+  timer = window.setTimeout(fail, 10_000);
+  video.addEventListener('loadedmetadata', seek);
+  video.addEventListener('loadeddata', loaded);
+  video.addEventListener('seeked', loaded);
+  video.addEventListener('error', fail);
+  void (async () => {
+    try {
+      const isHls = session.mime === 'application/vnd.apple.mpegurl' || /\.m3u8(?:\?|$)/i.test(session.url);
+      if (isHls && (hasPreviewFragments(session.sessionId) || !video.canPlayType('application/vnd.apple.mpegurl'))) {
         const { default: HlsClass } = await import('hls.js');
-        if (stopped) return;
-        if (!HlsClass.isSupported()) { setFailed(true); return; }
-        const instance = new HlsClass({ startPosition: target.current, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0, maxBufferSize: 2 * 1024 * 1024 });
-        hls.current = instance;
-        instance.on(HlsClass.Events.ERROR, (_, data) => { if (data.fatal) { setFailed(true); instance.stopLoad(); } });
-        instance.loadSource(session.url); instance.attachMedia(element);
-      } catch { if (!stopped) setFailed(true); }
-    })();
-    return () => {
-      stopped = true; window.clearTimeout(deadline.current);
-      element.removeEventListener('loadedmetadata', seek); element.removeEventListener('loadeddata', loaded); element.removeEventListener('seeked', loaded); element.removeEventListener('error', error);
-      hls.current?.destroy(); hls.current = null;
-      element.pause(); element.removeAttribute('src'); element.load();
-    };
-  }, [server, failed, session.sessionId, session.url, session.mime]);
+        if (disposed) return;
+        if (HlsClass.isSupported()) {
+          hls = new HlsClass({
+            ...previewFragmentOptions(session.sessionId, HlsClass.DefaultConfig.loader),
+            startPosition: position, startLevel: previewBufferedLevel(session.sessionId, position) ?? 0, maxBufferLength: 2, maxMaxBufferLength: 4,
+            backBufferLength: 0, maxBufferSize: 2 * 1024 * 1024
+          });
+          hls.on(HlsClass.Events.ERROR, (_, data) => { if (data.fatal) fail(); });
+          hls.loadSource(session.url);
+          hls.attachMedia(video);
+          return;
+        }
+        if (!video.canPlayType('application/vnd.apple.mpegurl')) { fail(); return; }
+      }
+      video.src = session.url;
+    } catch { fail(); }
+  })();
+  return dispose;
+}
+
+export function SeekPreview({ session, seconds, duration, cache }: { session: PlaybackSession; seconds: number; duration: number; cache: SeekFrames }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const at = Math.max(0, Math.min(seconds, duration - EXACT_SECONDS));
+  const [nativeAt, setNativeAt] = useState<number>();
+  const [failedAt, setFailedAt] = useState<number>();
+  const [settledAt, setSettledAt] = useState<number>();
+  useSyncExternalStore(cache.subscribe, cache.version);
+  const sheet = session.previewSheet;
+  const tile = sheet ? Math.floor(at / sheet.interval) : 0;
+  const cells = sheet ? sheet.columns * sheet.rows : 1;
+  const index = Math.floor(tile / cells);
+  const sheetImage = cache.sheet(index);
+  const precise = cache.nearest(at, FINAL_SECONDS, true);
+  const frame = precise ?? cache.nearest(at);
+  const exact = Boolean(precise);
+  const server = Boolean(sheet) || session.mode !== 'direct';
 
   useEffect(() => {
-    if (server || failed) return;
-    setReady(false);
-    deadline.current = window.setTimeout(() => setFailed(true), 10_000);
+    if (!sheet || sheetImage || exact) return;
+    const abort = new AbortController();
+    // Moving within a sheet keeps the same request and yields its other seven cells for free.
     const timer = window.setTimeout(() => {
-      const element = video.current;
-      if (!element || element.readyState < 1 || !Number.isFinite(element.duration)) return;
-      if (Math.abs(element.currentTime - at) < .1 && element.readyState >= 2) { window.clearTimeout(deadline.current); setReady(true); return; }
-      hls.current?.startLoad(at);
-      element.currentTime = Math.min(at, Math.max(0, element.duration - .1));
-    }, 80);
-    return () => { window.clearTimeout(timer); window.clearTimeout(deadline.current); };
-  }, [server, failed, at]);
+      void jpeg(`${sheet.url}?index=${index}`, abort.signal, 512 * 1024)
+        .then(url => { if (abort.signal.aborted) URL.revokeObjectURL(url); else cache.addSheet(index, url); })
+        .catch(() => {});
+    }, 40);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [cache, sheet, sheetImage, index, exact]);
 
-  if (failed) return null;
-  return <span className="seek-preview" aria-hidden="true">
-    {server ? image && <img src={image} alt="" /> : <video ref={video} muted playsInline preload="metadata" style={{ opacity: ready ? 1 : 0 }} />}
-    {!(server ? image : ready) && <Spinner size={18} />}
+  useEffect(() => {
+    const abort = new AbortController();
+    let dispose: (() => void) | undefined;
+    setNativeAt(undefined);
+    setFailedAt(undefined);
+    let retry: number | undefined;
+    const fetchPrecise = (attempt: number) => {
+      void jpeg(`/api/playback/${encodeURIComponent(session.sessionId)}/preview?at=${at}&exact=1`, abort.signal, 64 * 1024)
+        .then(image => { if (abort.signal.aborted) URL.revokeObjectURL(image); else cache.add({ image, position: at }, true); })
+        .catch(error => {
+          if (abort.signal.aborted) return;
+          if (error instanceof PreviewBusy && attempt < 3) retry = window.setTimeout(() => fetchPrecise(attempt + 1), 300 * (2 ** attempt));
+          else setFailedAt(at);
+        });
+    };
+    const timer = window.setTimeout(() => {
+      setSettledAt(at);
+      if (cache.nearest(at, FINAL_SECONDS, true)) return;
+      if (server) fetchPrecise(0);
+      else if (video.current) {
+        dispose = decodePreview(video.current, session, at, cache, () => setNativeAt(at), () => setFailedAt(at));
+      }
+    }, DWELL_MS);
+    return () => { window.clearTimeout(timer); window.clearTimeout(retry); abort.abort(); dispose?.(); };
+  }, [at, cache, session, server]);
+
+  const sheetDistance = sheet && sheetImage ? at - tile * sheet.interval : Infinity;
+  const showSheet = sheet && sheetImage && (!frame || sheetDistance < Math.abs(frame.position - at)) && !exact;
+  const nativeReady = nativeAt === at;
+  // Moving shows the nearby picture as is. Once the pointer rests, it only stands in, dimmed with a
+  // spinner, until the exact frame replaces it; a distant one is dropped rather than shown as this time.
+  const waiting = settledAt === at && !exact && !nativeReady;
+  const nearbyAt = showSheet ? tile * sheet.interval : frame?.position;
+  const nearby = nearbyAt !== undefined && Math.abs(nearbyAt - at) <= (sheet ? sheet.interval : NEAR_SECONDS);
+  const image = waiting && !nearby ? undefined : showSheet ? sheetImage : frame?.image;
+  const style: CSSProperties | undefined = showSheet ? {
+    position: 'absolute', width: `${sheet.columns * 100}%`, height: `${sheet.rows * 100}%`, maxWidth: 'none',
+    left: `${-(tile % sheet.columns) * 100}%`, top: `${-Math.floor(tile % cells / sheet.columns) * 100}%`
+  } : undefined;
+  if (failedAt === at && !exact) return null;
+  return <span className={cx("seek-preview", waiting && image && "is-approximate")} data-frame-time={nativeReady ? at : image ? nearbyAt : undefined} aria-hidden="true">
+    {image && !nativeReady && <img src={image} alt="" style={style} />}
+    {!server && <video ref={video} muted playsInline preload="metadata" style={{ position: 'absolute', opacity: nativeReady ? 1 : 0 }} />}
+    {(!image || waiting) && !nativeReady && <Spinner size={18} />}
   </span>;
 }

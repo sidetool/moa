@@ -21,6 +21,19 @@ test('API profile isolation, contract shapes, range streaming and SPA routing', 
     assert.deepEqual((await app.inject({ url: '/api/home', headers })).json().rows, []);
     assert.equal((await app.inject({ url: '/api/home', headers: { 'x-moa-profile': 'missing' } })).statusCode, 401);
     assert.deepEqual((await app.inject({ url: '/api/settings', headers })).json(), DEFAULT_SETTINGS);
+    // A profile saved by an older server inherits the default without losing other settings.
+    db.run('INSERT OR REPLACE INTO settings VALUES(?, ?)', p.id, JSON.stringify({ autoplayDelay: 9 }));
+    assert.equal((await app.inject({ url: '/api/settings', headers })).json().showResumeScene, true);
+    const off = await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { showResumeScene: false } });
+    assert.equal(off.json().showResumeScene, false);
+    assert.equal(off.json().autoplayDelay, 9);
+    assert.equal((await app.inject({ url: '/api/settings', headers })).json().showResumeScene, false);
+    assert.equal((await app.inject({ url: '/api/settings', headers: otherHeaders })).json().showResumeScene, true);
+    for (const showResumeScene of [0, 'false', null]) {
+      assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { showResumeScene } })).statusCode, 400);
+    }
+    const on = await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { showResumeScene: true } });
+    assert.equal(on.json().showResumeScene, true);
     await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { autoplayDelay: 9 } });
     assert.equal((await app.inject({ url: '/api/settings', headers: otherHeaders })).json().autoplayDelay, 5);
     assert.equal((await app.inject({ method: 'PATCH', url: '/api/settings', headers, payload: { autoplayDelay: -1 } })).statusCode, 400);

@@ -82,6 +82,9 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .seek-preview { position: relative; display: grid; place-items: center; width: 160px; height: 90px; overflow: hidden; border-radius: 4px; background: #080808; }
 .seek-preview video, .seek-preview img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .seek-preview .spinner { position: absolute; }
+/* A nearby picture standing in after the pointer rests: dimmed until the exact frame arrives. */
+.seek-preview img { transition: opacity var(--motion-fast) var(--ease); }
+.seek-preview.is-approximate img { opacity: var(--disabled-opacity); }
 
 .player-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
 .controls-left, .controls-right { display: flex; align-items: center; gap: 4px; }
@@ -283,13 +286,6 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .pf-range input::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; }
 .pf-range output { min-width: 3.2em; color: var(--text-2); font-size: .88rem; font-variant-numeric: tabular-nums; text-align: right; }
 .pf-reset { height: 28px; padding: 0 10px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: var(--text-2); font-size: .8rem; font-weight: 600; }
-.sync-row { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 10px; background: rgba(255, 255, 255, .07); }
-.seg-btn { flex: 1; height: 34px; border-radius: 8px; color: var(--text-2); font-size: .86rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.seg-btn:hover { background: rgba(255, 255, 255, .08); color: #fff; }
-.sync-value { flex: 1.3; height: 34px; border-radius: 8px; font-weight: 750; font-size: .92rem; font-variant-numeric: tabular-nums; color: #fff; }
-.sync-value.is-shifted { background: rgba(123, 97, 255, .3); }
-.panel-note { padding: 0 12px; color: var(--text-3); font-size: .84rem; line-height: 1.55; }
-.panel-form .panel-note { padding: 0; }
 
 .panel-episodes { list-style: none; margin: 0; padding: 8px; overflow: auto; overscroll-behavior: contain; }
 .panel-episode { display: grid; grid-template-columns: 128px minmax(0, 1fr) 24px; align-items: center; gap: 14px; padding: 8px; border-radius: var(--radius-m); color: var(--text-2); }
@@ -313,7 +309,7 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
   .player-title b { font-size: .98rem; }
   .player-title span { font-size: .82rem; }
   .player-bottom { padding-top: 40px; }
-  .controls-left .icon-btn-l:nth-child(2), .controls-left .icon-btn-l:nth-child(3), .volume, .hide-mobile { display: none; }
+  .controls-left > .icon-btn-l:nth-child(2), .controls-left > .icon-btn-l:nth-child(3), .volume:not(.is-silent), .volume input, .hide-mobile { display: none; }
   .player .icon-btn-l { width: 44px; height: 44px; }
   .player-time { font-size: .84rem; margin-left: 2px; }
   .next-card { grid-template-columns: 110px minmax(0, 1fr); }
@@ -333,12 +329,6 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 }
 @keyframes sheet-left { from { transform: translateX(40px); opacity: 0; } }
 
-
-.player-notice { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; margin: 0 0 8px auto; padding: 6px 8px 6px 10px; border-radius: var(--radius-s); background: #151519d9; font-size: .78rem; line-height: 1.4; animation: fade .2s var(--ease); }
-.player-notice > span { min-width: 0; overflow-wrap: anywhere; }
-.player-notice > svg { flex: none; }
-.player-notice button { flex: none; padding: 5px 8px; border-radius: 5px; background: #ffffff18; font-weight: 700; }
-.player-notice svg { color: var(--accent-strong); }
 
 .live-label { color: #f87171; letter-spacing: .08em; font-size: 13px; }
 
@@ -366,7 +356,6 @@ body.watch-pip { margin: 0; overflow: hidden; background: #000; }
 .online-query small { color: var(--text-3); }
 .online-query svg { flex: none; color: var(--text-3); }
 .online-query:hover { background: rgba(255, 255, 255, .1); color: #fff; }
-.panel-note.note-warn { color: var(--warning); }
 .pf-input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid rgba(255, 255, 255, .14); border-radius: 10px; background: rgba(255, 255, 255, .06); color: #fff; font: inherit; font-size: .97rem; }
 .pf-input:focus { outline: none; border-color: #fff; }
 .sub-search-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

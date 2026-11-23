@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { cx } from "../../lib/format";
 import { remoteKey } from "../../lib/remote";
+import { keepTabInDialog } from "../../lib/dialog-focus";
 import { Button } from "./Button";
 
 export function ConfirmDialog({ title, children, confirmLabel = "확인", busy = false, confirmDisabled = false, className, onConfirm, onClose }: { title: string; children: ReactNode; confirmLabel?: string; busy?: boolean; confirmDisabled?: boolean; className?: string; onConfirm?: () => void; onClose: () => void }) {
@@ -15,16 +16,7 @@ export function ConfirmDialog({ title, children, confirmLabel = "확인", busy =
   return <dialog ref={dialog} className={cx("confirm-dialog", className)} role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-body`}
     onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}
     onKeyDown={event => {
-      if (event.key === "Tab") {
-        const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, summary, [tabindex]')]
-          .filter(element => element.tabIndex >= 0 && !element.matches(':disabled, [inert]') && element.getClientRects().length);
-        const first = controls[0], last = controls.at(-1);
-        // Keep boundary Tab presses inside the dialog instead of browser chrome.
-        if (!first || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
-          event.preventDefault();
-          (event.shiftKey ? last : first)?.focus();
-        }
-      }
+      keepTabInDialog(event);
       if (remoteKey(event.nativeEvent) === "Back") { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); }
     }}
     onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); if (!busy && event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) onClose(); }}>

@@ -57,15 +57,22 @@ test('login devices expose no credentials and revoke only the current account se
     assert.equal(list[0].name, 'Edge · macOS');
     assert.ok(!JSON.stringify(list).includes(first.hash)); assert.ok(!JSON.stringify(list).includes(first.token));
     const foreign = (await (await request(second)).json())[0];
-    assert.equal((await request(first, `sessions/${foreign.id}`, 'DELETE')).status, 404);
-    assert.equal((await request(first, 'sessions', 'DELETE', { Origin: 'https://evil.example' })).status, 403);
-    assert.equal((await request(first, `sessions/${list.find(device => !device.current).id}`, 'DELETE')).status, 204);
+    const expectNoCookie = (response, status) => {
+      assert.equal(response.status, status);
+      assert.deepEqual(response.headers.getSetCookie(), []);
+    };
+    expectNoCookie(await request(first, `sessions/${foreign.id}`, 'DELETE'), 404);
+    expectNoCookie(await request(first, `sessions/${list.find(device => device.current).id}`, 'DELETE', { Origin: 'https://other.example' }), 403);
+    expectNoCookie(await request(first, `sessions/${list.find(device => !device.current).id}`, 'DELETE'), 204);
     assert.equal((await request(otherDevice)).status, 401);
     assert.equal((await request(first, `sessions/${randomUUID()}`, 'DELETE')).status, 404);
-    assert.equal((await request(first, 'sessions', 'DELETE')).status, 204);
+    expectNoCookie(await request(first, 'sessions', 'DELETE'), 204);
     assert.equal((await request(first)).status, 200); assert.equal((await request(second)).status, 200);
     const current = (await (await request(first)).json())[0];
-    assert.equal((await request(first, `sessions/${current.id}`, 'DELETE')).status, 204);
+    const logout = await request(first, `sessions/${current.id}`, 'DELETE');
+    assert.equal(logout.status, 204);
+    assert.match(logout.headers.getSetCookie().find(c => c.startsWith('moa_session=')), /Max-Age=0/);
+    assert.match(logout.headers.getSetCookie().find(c => c.startsWith('moa_scene_reset=')), /^moa_scene_reset=[a-f0-9-]{36}; Path=\/; SameSite=Lax;/);
     assert.equal((await request(first)).status, 401);
     assert.equal(db.prepare('SELECT count(*) n FROM session_devices').get().n, 1);
   } finally { await new Promise(resolve => server.close(resolve)); db.close(); }

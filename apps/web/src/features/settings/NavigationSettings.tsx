@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowDown, ArrowUp, Check, ChevronDown, FolderOpen, GripVertical, House, UserPlus, Pencil, Plus, Radio, RotateCcw, Trash2, Tv, X } from 'lucide-react';
 import type { BrowseSelection, DefaultNavigation, NavigationTab, Settings, VideoSource } from '@moa/shared';
-import { useMe } from '../../api/queries';
+import { keys, useMe } from '../../api/queries';
 import { api } from '../../lib/api';
 import { defaultTabs, useNavigation } from '../../lib/navigation';
 import { cx } from '../../lib/format';
@@ -15,6 +15,7 @@ const typeLabel = (s: VideoSource) => s.live ? '실시간' : s.type === 'anime' 
 /** Home tabs: a compact ordered list; each tab is edited in a sheet and saved at once. */
 export function NavigationSettings() {
   const { tabs, sources, pending, error } = useNavigation();
+  const settingsKey = keys.settings();
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const [editing, setEditing] = useState<NavigationTab | null>(null);
@@ -27,9 +28,9 @@ export function NavigationSettings() {
   const ordered = order ?? tabs;
   const save = useMutation({
     mutationFn: (navigation: NavigationTab[]) => api<Settings>('/settings', { method: 'PATCH', body: { navigation } }),
-    onMutate: navigation => { client.setQueryData<Settings>(['settings'], old => old ? { ...old, navigation } : old); },
-    onSuccess: data => client.setQueryData(['settings'], data),
-    onError: () => void client.invalidateQueries({ queryKey: ['settings'] }),
+    onMutate: navigation => { client.setQueryData<Settings>(settingsKey, old => old ? { ...old, navigation } : old); },
+    onSuccess: saved => client.setQueryData<Settings>(settingsKey, old => old ? { ...old, navigation: saved.navigation } : saved),
+    onError: () => void client.invalidateQueries({ queryKey: settingsKey }),
     onSettled: () => setOrder(null)
   });
 

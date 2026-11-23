@@ -11,7 +11,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,11 +27,11 @@ jobs:
       - run: pnpm --filter @moa/server exec tsx --test test/updates.test.ts test/updates-release.test.ts test/components.test.ts test/source-session.test.ts test/source-browser.test.ts test/source-network.test.ts test/byedpi.test.ts
       - name: Device settings, subtitles and sessions
         run: |
-          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/enrichment.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts ../web/tests/subtitle-timing.test.ts
+          pnpm --filter @moa/server exec tsx --test test/device-settings.test.ts test/enrichment.test.ts test/next-up.test.ts test/subtitle-library.test.ts test/playback-preview.test.ts ../web/tests/subtitle-timing.test.ts ../web/tests/preview-fragments.test.mjs
           node --experimental-vm-modules apps/web/scripts/verify-subtitle-controller.mjs
           node --test deploy/auth/*.test.mjs
       - name: Trailer feed, saved list and recommendation regressions
-        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
+        run: pnpm --filter @moa/server exec tsx --test test/home.test.ts test/hide-continue.test.ts test/kids.test.ts test/watchlist-reader.test.ts test/title-groups.test.ts test/search-groups.test.ts test/recommendations.test.ts test/anilist-recommendations.test.ts test/anilist-client.test.ts test/downloads.test.ts test/tmdb-trailers.test.ts test/youtube-trailers.test.ts test/shorts.test.ts test/shorts-native.test.ts test/translation.test.ts
       - name: Resume an interrupted video over local HTTP
         env:
           MOA_TEST_VIDEO: ${{ runner.temp }}/moa-resume.mp4
@@ -55,14 +55,25 @@ jobs:
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
         run: node apps/web/tests/automatic-source.browser.mjs
+      - name: Seek previews and player controls
+        env:
+          MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
+          MOA_TEST_VIDEO: ${{ runner.temp }}/moa-seek.mp4
+          MOA_API: http://127.0.0.1:1
+        run: |
+          ffmpeg -v error -f lavfi -i testsrc2=size=160x90:rate=8 -t 610 -c:v libx264 -threads 1 -preset ultrafast -crf 28 -g 16 -sc_threshold 0 -pix_fmt yuv420p -movflags +faststart "$MOA_TEST_VIDEO"
+          node apps/web/scripts/verify-player-preview.mjs --seek-only
       - name: Experimental playback filters
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
         run: |
           node apps/web/scripts/verify-settings-browse.mjs
+          node apps/web/scripts/verify-settings-watchlist-saves.mjs
+          ffmpeg -v error -f lavfi -i color=size=240x136:rate=2 -t 90 -c:v libx264 -threads 1 -movflags +faststart "$RUNNER_TEMP/moa-subtitles.mp4"
+          MOA_TEST_VIDEO="$RUNNER_TEMP/moa-subtitles.mp4" node apps/web/scripts/verify-player-subtitles.mjs --subtitles-only
           node apps/web/scripts/verify-segmented-subtitles.mjs
           node apps/web/scripts/verify-anime4k.mjs
-      - name: Search results and back navigation
+      - name: Search, viewing history and title navigation
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
           MOA_TEST_BASE: http://127.0.0.1:5137
@@ -73,6 +84,11 @@ jobs:
           curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 "$MOA_TEST_BASE" -o /dev/null
           node apps/web/scripts/verify-search-loading.mjs
           node apps/web/scripts/verify-search-return.mjs
+          node apps/web/scripts/verify-library-genre-search.mjs
+          node apps/web/scripts/verify-history-pagination.mjs
+          node apps/web/scripts/verify-hide-continue.mjs
+          node apps/web/scripts/verify-title-overview.mjs
+          node apps/web/scripts/verify-resume-art.mjs
       - name: Catalog refresh and saved-title updates
         env:
           MOA_PLAYWRIGHT_PATH: ${{ runner.temp }}/moa-browser-tools/node_modules/playwright-core
