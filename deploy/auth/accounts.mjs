@@ -43,6 +43,8 @@ export function migrateAccounts(db, credentials, now) {
     for (const session of db.prepare('SELECT s.token_hash,s.refreshed FROM sessions s LEFT JOIN session_devices d ON d.token_hash=s.token_hash WHERE d.id IS NULL').all()) device.run(randomUUID(), session.token_hash, '브라우저', session.refreshed, session.refreshed);
   });
 }
+export const sessionEnded = Symbol('session ended');
+
 export function accountsService(db, origin, now) {
   const get = id => db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
   const invalidate = id => db.prepare('DELETE FROM sessions WHERE account_id=?').run(id);
@@ -113,18 +115,23 @@ export function accountsService(db, origin, now) {
       WHERE s.account_id=? AND s.expires>? ORDER BY d.last_seen DESC,d.id`).all(actor.id, now()).map(row => ({
       id: row.id, name: row.name, current: row.token_hash === actor.token_hash, createdAt: row.created_at, lastSeen: row.last_seen, expiresAt: row.expires, deviceId: row.device_id,
     }));
+    if (path === 'logout' && method === 'POST') {
+      db.prepare('DELETE FROM sessions WHERE token_hash=?').run(actor.token_hash);
+      return sessionEnded;
+    }
     if (path === 'sessions' && method === 'DELETE') {
       db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash<>?').run(actor.id, actor.token_hash);
       return null;
     }
     const device = /^sessions\/([a-f0-9-]{36})$/.exec(path);
     if (device && method === 'DELETE') {
-      if (!db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash=(SELECT token_hash FROM session_devices WHERE id=?)').run(actor.id, device[1]).changes) fail(404, 'session-not-found');
-      return null;
+      const deleted = db.prepare('DELETE FROM sessions WHERE account_id=? AND token_hash=(SELECT token_hash FROM session_devices WHERE id=?) RETURNING token_hash').get(actor.id, device[1]);
+      if (!deleted) fail(404, 'session-not-found');
+      return deleted.token_hash === actor.token_hash ? sessionEnded : null;
     }
     if (method === 'POST' && path === 'password') {
       if (!await verify(actor, body.current)) fail(400, 'incorrect-password');
-      await changePassword(actor, body.next); return null;
+      await changePassword(actor, body.next); return sessionEnded;
     }
     if (actor.role !== 'admin') fail(403, 'admin-required');
     if (path === 'invites' && method === 'GET') return db.prepare('SELECT * FROM invites ORDER BY created_at DESC,id').all().map(row => inviteView(row, requestOrigin));

@@ -8,6 +8,8 @@
 
 `ButtonLink`는 앱 내부 경로로 이동합니다. `IconButton`에는 이름을 알리는 `label`이 필요합니다. 값 선택에는 `SegmentedControl`을 사용합니다.
 
+내 목록처럼 요청이 끝날 때까지 다시 누를 수 없는 토글은 요청 중 `aria-disabled`로 포커스를 유지하고 클릭 핸들러에서 중복 제출을 막습니다. 비활성 버튼과 같은 불투명도로 표시합니다.
+
 ```tsx
 import { Button, IconButton } from '../../components/ui';
 <Button type="submit" variant="primary" disabled={saving} aria-busy={saving}>저장</Button>
@@ -71,6 +73,8 @@ select
 ## 토글과 체크박스
 
 `Toggle`은 `checked`, `onChange`, `label`, `disabled`를 받으며 Space·Enter로 바꿉니다. 설명이 있는 스위치는 `aria-describedby`로 설명을 연결할 수 있습니다. 다중 목록은 기본 `input type=checkbox`를 사용합니다. 체크 모양과 색상으로 상태를 알리고, 작은 체크박스도 넓은 `label` 영역에서 누를 수 있게 합니다.
+
+시청 기록처럼 저장 응답을 기다리는 스위치는 `aria-disabled`로 중복 입력을 막고 포커스를 유지합니다. 응답을 받은 뒤 같은 자리에서 다시 조작할 수 있습니다.
 
 ```preview
 toggle

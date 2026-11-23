@@ -1,16 +1,17 @@
 import { episodeOrder } from '../profiles/progress.js';
 import { playbackMediaType } from '../metadata/tmdb.js';
 import { randomUUID } from 'node:crypto';
-import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, stat, readFile, writeFile, rm, rename } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import type { AudioTrack, ClientCapabilities, PlaybackSession, SubtitleTrack } from '@moa/shared';
 import { Store } from '../db.js';
 import { Catalog } from '../catalog/service.js';
 import type { Config } from '../config.js';
 import { ApiFailure, command, hash, safePath } from '../util.js';
 import { isAss, isHdr, textSubtitle, videoStream, type Probe, type StreamInfo } from './probe.js';
+import { PREVIEW_SHEET, PreviewSheets, LOCAL_PREVIEW_INPUT, previewSeek, frameAtTarget } from './preview-sheets.js';
+import { runCommand } from './skip-markers/process.js';
 import { SubtitleCache } from '../subtitles/service.js';
 import { vodInitialization } from './hls.js';
 import type { OnlineSubtitles } from '../subtitles/online.js';
@@ -49,10 +50,12 @@ export class Playback {
   active = new Set<Run>();
   subtitleCache: SubtitleCache;
   private janitor: NodeJS.Timeout;
-  private previewing = 0;
-  private previews = new WeakMap<Session, Map<number, Promise<Buffer>>>();
+  readonly previewSheets: PreviewSheets;
+  private previews = new WeakMap<Session, Map<string, Promise<Buffer>>>();
+  private pendingFrames = new Map<Promise<Buffer>, { session: Session; abort: AbortController; readers: number }>();
   constructor(private db: Store, private catalog: Catalog, public config: Config, private log: (value: Record<string, unknown>) => void, private online?: OnlineSubtitles, private enrichment?: Enrichment) {
     this.subtitleCache = new SubtitleCache(config);
+    this.previewSheets = new PreviewSheets(config, () => this.pendingFrames.size < 2 && [...this.active].filter(run => !run.paused && !run.stopped).length < config.maxTranscodes);
     this.janitor = setInterval(() => {
       for (const [id, s] of this.sessions) if (Date.now() - s.touched > config.sessionTtlMs) void this.remove(id).catch(error => this.log({ event: 'session-cleanup-error', error: String(error) }));
     }, 60_000); this.janitor.unref();
@@ -100,6 +103,7 @@ export class Playback {
     const markers = await this.enrichment?.markers(episodeId);
     const response: PlaybackSession = { ...(saved ? {saved:true} : {}), sessionId, episodeId, mediaId: episode.media_id, mediaTitle: this.db.displayTitle(episode.media_id, episode.media_title, episode.season), mediaType: playbackMediaType(this.db, episode.media_id, episode.type),
       ...(episode.type !== 'movie' ? { episodeTitle: episode.title, episodeLabel: `S${episode.season}:E${episode.number}` } : {}),
+      previewSheet: { ...PREVIEW_SHEET, url: `${base}/preview-sheet` },
       mode, url: mode === 'direct' ? `${base}/original` : `${base}/index.m3u8`, mime: mode === 'direct' ? path.extname(file).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4' : 'application/vnd.apple.mpegurl', duration: probe.duration, startPosition: position, subtitles, audioTracks,
       next: next ? { episodeId: next.id, title: next.title, label: `S${next.season}:E${next.number}`, thumb: next.thumb } : null,
       ...(fontSources.size ? { fonts: [...fontSources.keys()].map(id => `${base}/fonts/${id}`) } : {}),
@@ -130,24 +134,54 @@ export class Playback {
     // Session URL is an unguessable bearer capability, so <video>/<track>/libass can use it without custom headers.
     s.touched = Date.now(); return s;
   }
-  async preview(s: Session, at: number): Promise<Buffer> {
-    if (!Number.isFinite(at) || at < 0 || at >= s.probe.duration) throw new ApiFailure(400, 'invalid-preview-time');
-    const time = Math.floor(at / 2) * 2, frames = this.previews.get(s) ?? new Map<number, Promise<Buffer>>();
-    const cached = frames.get(time);
-    if (cached) return cached;
-    if (this.previewing >= 2) throw new ApiFailure(429, 'preview-busy');
-    this.previewing++;
+  private async readFrame(image: Promise<Buffer>, signal?: AbortSignal) {
+    const job = this.pendingFrames.get(image);
+    if (!job) return image;
+    if (job.abort.signal.aborted) throw new ApiFailure(429, 'preview-busy');
+    job.readers++;
+    const disconnect = () => { if (--job.readers === 0) job.abort.abort(); };
+    signal?.addEventListener('abort', disconnect, { once: true });
+    try { return await image; }
+    finally {
+      signal?.removeEventListener('abort', disconnect);
+      if (!signal?.aborted) job.readers--;
+    }
+  }
+
+  async preview(s: Session, at: number, exact = false, signal?: AbortSignal): Promise<Buffer> {
+    signal?.throwIfAborted();
+    if (s.deleted) throw new ApiFailure(404, 'session-expired');
+    if (!Number.isFinite(at) || at < 0 || (exact ? at > s.probe.duration : at >= s.probe.duration)) throw new ApiFailure(400, 'invalid-preview-time');
+    const time = exact ? Number(Math.min(at, Math.max(0, s.probe.duration - .000001)).toFixed(6)) : Math.floor(at / 2) * 2;
+    const key = `${exact ? 'exact' : 'bucket'}:${time}`;
+    const frames = this.previews.get(s) ?? new Map<string, Promise<Buffer>>();
+    const cached = frames.get(key);
+    if (cached) return this.readFrame(cached, signal);
+    if (this.pendingFrames.size + Number(this.previewSheets.busy) >= 2) throw new ApiFailure(429, 'preview-busy');
+    const abort = new AbortController();
     const image = (async () => {
       const file = await safePath(s.root, s.file);
       if (s.deleted) throw new ApiFailure(404, 'session-expired');
-      const result = await promisify(execFile)(this.config.ffmpeg, ['-v', 'error', '-nostdin', '-ss', String(time), '-i', file, '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=240:-2', '-pix_fmt', 'yuvj420p', '-threads', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer', timeout: 8000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
-      if (!result.stdout.length) throw new ApiFailure(502, 'preview-unavailable');
-      return result.stdout;
-    })().catch(error => { if (frames.get(time) === image) frames.delete(time); throw error instanceof ApiFailure ? error : new ApiFailure(502, 'preview-unavailable'); }).finally(() => { this.previewing--; });
-    frames.set(time, image);
+      const filter = "scale=w='max(2,trunc(min(240,240*dar)/2)*2)':h='max(2,trunc(min(240,240/dar)/2)*2)',setsar=1";
+      const result = await runCommand(this.config.ffmpeg, [
+        '-v', 'error', '-nostdin', ...LOCAL_PREVIEW_INPUT, ...(exact ? previewSeek(time) : ['-ss', String(time)]), '-i', file,
+        '-map', '0:V:0', '-an', '-sn', '-dn', '-frames:v', '1', '-filter_threads', '1', '-vf', exact ? `${frameAtTarget(time)},${filter}` : filter,
+        '-pix_fmt', 'yuvj420p', '-threads', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+      ], { signal: abort.signal, timeoutMs: 8000, maxBytes: 1024 * 1024 });
+      if (s.deleted) throw new ApiFailure(404, 'session-expired');
+      if (!result.length) throw new ApiFailure(502, 'preview-unavailable');
+      return result;
+    })().catch(error => {
+      if (frames.get(key) === image) frames.delete(key);
+      throw error instanceof ApiFailure ? error : new ApiFailure(502, 'preview-unavailable');
+    }).finally(() => {
+      this.pendingFrames.delete(image);
+    });
+    this.pendingFrames.set(image, { session: s, abort, readers: 0 });
+    frames.set(key, image);
     if (frames.size > 8) frames.delete(frames.keys().next().value!);
     this.previews.set(s, frames);
-    return image;
+    return this.readFrame(image, signal);
   }
   playlist(s: Session) {
     const lengths = s.timeline.map((t, i) => (s.timeline[i + 1] ?? s.probe.duration) - t);
@@ -163,11 +197,21 @@ export class Playback {
   }
   async remove(id: string) {
     const s = this.sessions.get(id); if (!s) return;
-    s.deleted = true; this.sessions.delete(id); await this.stop(s);
+    s.deleted = true; this.sessions.delete(id);
+    const pending = [...this.pendingFrames].filter(([, job]) => job.session === s);
+    for (const [, job] of pending) job.abort.abort();
+    this.previewSheets.release(s);
+    await this.stop(s);
+    await Promise.allSettled(pending.map(([image]) => image));
     // Waiting requests check deleted and cannot launch another process.
     await s.lock.catch(() => {}); await rm(s.dir, { recursive: true, force: true });
   }
-  async close() { clearInterval(this.janitor); await Promise.all([...this.sessions.keys()].map(id => this.remove(id))); await Promise.all([...this.active].map(run => run.exit)); }
+  async close() {
+    clearInterval(this.janitor);
+    await Promise.all([...this.sessions.keys()].map(id => this.remove(id)));
+    await Promise.all([...this.active].map(run => run.exit));
+    await this.previewSheets.close();
+  }
   async initialization(s: Session): Promise<string> {
     if (!s.init) await this.segment(s, s.cursor);
     if (!s.init) throw new ApiFailure(502, 'hls-initialization-failed');

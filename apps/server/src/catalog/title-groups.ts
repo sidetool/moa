@@ -259,7 +259,7 @@ export class TitleGroups {
       const group = members.get(key)!.map(row => this.catalog.card(row, profile));
       const rank = (item: MediaCard) => item.provider.lang === 'ko' ? 0 : item.provider.lang === 'all' || item.provider.kind === 'local' ? 1 : 2;
       const representative = group.reduce((best, item) => rank(item) < rank(best) ? item : best);
-      return [{ ...representative, resume: card.resume, progress: card.progress,
+      return [{ ...representative, groupId: mapping.get(card.id), resumeMediaId: card.id, resume: card.resume, progress: card.progress,
         sourceCount: new Set(group.map(item => item.provider.id)).size,
         langs: [...new Set(group.flatMap(item => item.provider.lang ? [item.provider.lang] : []))].sort() }];
     });
@@ -302,6 +302,6 @@ export class TitleGroups {
   candidates(q: string, profile: string) {
     if (!normalize(q)) return [];
     const map = this.mapping(profile);
-    return this.catalog.search(profile, q).groups.flatMap(group => group.items).filter(card => map.has(card.id)).slice(0,40);
+    return this.catalog.search(profile, q, [], 'titles').groups.flatMap(group => group.items).filter(card => map.has(card.id)).slice(0,40);
   }
 }

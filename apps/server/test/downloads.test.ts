@@ -591,6 +591,8 @@ test('saved playback API works with source offline, resumes existing history and
   const opened = await app.inject({ method: 'POST', url: '/api/playback', headers, payload: { episodeId: 'ep', capabilities: caps, location: 'auto' } });
   assert.equal(opened.statusCode, 200, opened.body); const session = opened.json();
   assert.equal(session.saved, true); assert.equal(session.episodeId, 'ep'); assert.equal(session.startPosition, 400); assert.equal(remoteCalls, 0);
+  assert.equal(session.mode, 'direct');
+  assert.equal(session.previewSheet.url, `/api/playback/${session.sessionId}/preview-sheet`);
   assert.equal(playback.get(session.sessionId).root, cfg.downloadRoot);
   const markerUrl=`/api/episodes/ep/markers?duration=1200&sessionId=${session.sessionId}`;
   assert.equal((await app.inject({url:markerUrl,headers})).statusCode,200);

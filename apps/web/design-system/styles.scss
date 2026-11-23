@@ -6,6 +6,7 @@
 
 .preview-player-frame { position: relative; display: grid; place-items: center; width: 100%; min-width: 0; min-height: 240px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-m); background: var(--surface-2); color: var(--text-3); }
 .preview-player-frame .player-boost { color: var(--text); }
+.preview-notice { position: absolute; inset-inline: var(--space-3); bottom: var(--space-1); color: var(--text); }
 .preview-sheet-screen { display: grid; place-items: center; height: 520px; padding: var(--space-3); border-radius: var(--radius-m); background: var(--backdrop); }
 .preview-sheet-screen.is-short { height: 320px; }
 .preview-sheet-screen .sheet { max-height: 100%; animation: none; }

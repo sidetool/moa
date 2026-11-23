@@ -30,3 +30,11 @@
 .seg-fill button { padding: 0 4px; }
 /* Up to six choices (the speed row) shrink their labels to stay visible; longer rows keep their size and scroll sideways as before. */
 .seg-fill:not(:has(> :nth-child(7))) button { padding: 0 2px; font-size: min(.88rem, calc(((100cqi - 2 * var(--switch-inset)) / var(--segments) - 4px) / 3.0)); }
+.sync-row { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 10px; background: rgba(255, 255, 255, .07); }
+.seg-btn { flex: 1; height: 34px; border-radius: 8px; color: var(--text-2); font-size: .86rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.seg-btn:hover { background: rgba(255, 255, 255, .08); color: #fff; }
+.sync-value { flex: 1.3; height: 34px; border-radius: 8px; font-weight: 750; font-size: .92rem; font-variant-numeric: tabular-nums; color: #fff; }
+.sync-value.is-shifted { background: rgba(123, 97, 255, .3); }
+.panel-note { padding: 0 12px; color: var(--text-3); font-size: .84rem; line-height: 1.55; }
+.panel-form .panel-note { padding: 0; }
+.panel-note.note-warn { color: var(--warning); }

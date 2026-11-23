@@ -24,7 +24,11 @@ const track = { id: 'ja', label: '일본어 (파일)', lang: 'ja', format: 'vtt'
 
 async function fixture(options = {}) {
   const context = await browser.newContext({ viewport: options.mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, hasTouch: Boolean(options.mobile), isMobile: Boolean(options.mobile) });
-  await context.addInitScript(() => localStorage.setItem('moa.profile', 'ui-test'));
+  await context.addInitScript(({ remote, volume }) => {
+    localStorage.setItem('moa.profile', 'ui-test');
+    if (remote) localStorage.setItem('moa.remoteMode', 'on');
+    if (volume !== undefined && localStorage.getItem('moa.volume') === null) localStorage.setItem('moa.volume', String(volume));
+  }, { remote: options.remote, volume: options.volume });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   const calls = { searches: [], applies: [], sessions: [] };
@@ -63,10 +67,10 @@ async function fixture(options = {}) {
       calls.applies.push(episode); await options.applyGate?.promise;
       return json({ ...track, id: `ko-${episode}`, lang: 'ko', label: `${episode} 한국어`, source: 'online', provenance: { creatorName: '검증 제작자', sourceUrl: 'https://example.com' } });
     }
-    if (path === '/api/media/m1') return json({ id: 'm1', title: '플레이어 검증', type: 'anime', provider: { id: 'local', name: '로컬', kind: 'local' }, seasons: [{ number: 1, episodes: [{ id: 'e1', number: 1, title: '첫 번째 회차' }, { id: 'e2', number: 2, title: '두 번째 회차' }] }] });
+    if (path === '/api/media/m1') return json({ id: 'm1', title: '플레이어 검증', type: 'anime', provider: { id: 'local', name: '로컬', kind: 'local' }, seasons: [{ number: 1, episodes: options.episodes ?? [{ id: 'e1', number: 1, title: '첫 번째 회차' }, { id: 'e2', number: 2, title: '두 번째 회차' }] }] });
     return route.fulfill({ status: 204 });
   });
-  await page.goto(`${base}/watch/e1`);
+  await page.goto(`${base}/watch/${options.episode ?? 'e1'}`);
   await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2).catch(async error => {
     console.error(await page.evaluate(() => ({ url: location.href, text: document.body.innerText, video: document.querySelector('video')?.currentSrc })), calls, errors);
     throw error;
@@ -119,6 +123,9 @@ try {
     assert.equal(f.calls.searches.includes('e2'), false, 'Choice survives reload');
     await f.page.goto(base+'/watch/e3');
     await until(() => f.calls.applies.includes('e3'), 'Other title uses its usual subtitles');
+    const foundSubtitle = f.page.locator('.player-notice', { hasText: '한국어 자막을 찾아 적용했어요' });
+    await foundSubtitle.getByRole('button', { name: '변경' }).click();
+    await f.panel.waitFor();
     await f.page.goto(base+'/watch/e2'); await f.open();
     assert.match(await f.off().getAttribute('class'), /is-active/);
     await f.panel.getByRole('button', { name: '일본어 (파일)' }).click();
@@ -179,6 +186,7 @@ try {
   for (const automatic of [false, true]) {
     const nextGate = gate();
     const f = await fixture({ mobile: true, nextGate, settings: { autoFetchSubtitles: false, autoplayDelay: 1 } });
+    await f.page.keyboard.press('Shift+Period');
     await f.page.evaluate(() => {
       window.fullscreenEvents = [];
       window.fullscreenHost = document.querySelector('.watch-fullscreen-host');
@@ -197,6 +205,7 @@ try {
     nextGate.release();
     await f.page.getByText('S1:E2 두 번째 회차', { exact: true }).waitFor();
     await f.page.waitForFunction(() => document.querySelector('video')?.currentTime > 0);
+    assert.equal(await f.page.locator('.player-video').evaluate(v => v.playbackRate), 1.25);
     assert.deepEqual(await f.page.evaluate(() => window.fullscreenEvents), [true], 'No exit or re-entry between episodes');
     assert.equal(await f.page.evaluate(() => document.fullscreenElement === window.fullscreenHost), true);
     await f.page.mouse.move(200, 200);
@@ -204,6 +213,83 @@ try {
     await f.page.waitForFunction(() => !document.fullscreenElement);
     results.push(`${automatic ? 'Automatic' : 'Manual'} next episode preserves real fullscreen through loading and playback`);
     await f.close();
+  }
+  {
+    const f = await fixture({ settings: { autoFetchSubtitles: false } });
+    const { page } = f;
+    const video = page.locator('.player-video');
+    await page.getByRole('button', { name: '재생 설정', exact: true }).click();
+    await page.getByRole('button', { name: '1.5x', exact: true }).click();
+    await page.getByRole('button', { name: '닫기', exact: true }).click();
+    await page.locator('button:focus').evaluateAll(buttons => buttons.forEach(button => button.blur()));
+    await page.keyboard.down('Space');
+    await page.waitForFunction(() => document.querySelector('.player-video').playbackRate === 2);
+    await page.keyboard.press('n');
+    await page.waitForURL('**/watch/e2');
+    await page.keyboard.up('Space');
+    await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
+    assert.equal(await video.evaluate(v => v.playbackRate), 1.5);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
+    assert.equal(await video.evaluate(v => v.playbackRate), 1);
+    await page.keyboard.press('Shift+Period');
+    assert.equal(await video.evaluate(v => v.playbackRate), 1.25);
+    await page.evaluate(() => localStorage.setItem('moa.profile', 'another-viewer'));
+    await page.getByRole('button', { name: '회차 목록' }).click();
+    await page.locator('.panel-episode[href="/watch/e1"]').click();
+    await page.waitForURL('**/watch/e1');
+    await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
+    assert.equal(await video.evaluate(v => v.playbackRate), 1);
+    results.push('Explicit speed survives next during a hold and resets on reload or profile change'); await f.close();
+  }
+  for (const remote of [false, true]) {
+    const episodes = Array.from({ length: 80 }, (_, i) => ({ id: `e${i + 1}`, number: i + 1, title: `${i + 1}화` }));
+    const f = await fixture({ episodes, episode: 'e63', remote, settings: { autoFetchSubtitles: false } });
+    const { page } = f;
+    const opener = page.getByRole('button', { name: '회차 목록' });
+    await opener.focus(); await page.keyboard.press('Enter');
+    const current = page.locator('.panel-episode[aria-current="true"]');
+    await current.waitFor();
+    await page.waitForFunction(() => {
+      const row = document.querySelector('.panel-episode.is-current')?.getBoundingClientRect();
+      const list = document.querySelector('ol.panel-episodes')?.getBoundingClientRect();
+      return row && list && row.top >= list.top && row.bottom <= list.bottom;
+    });
+    if (remote) {
+      await page.waitForFunction(() => document.activeElement?.classList.contains('is-current'));
+      await page.keyboard.press('ArrowDown');
+      assert.equal(await page.locator(':focus').getAttribute('href'), '/watch/e64');
+    } else {
+      assert.equal(await opener.evaluate(button => button === document.activeElement), true);
+      await page.locator('ol.panel-episodes').evaluate(list => { list.scrollTop = 0; });
+      // A timeupdate rerenders the player while the viewer browses other rows.
+      await page.locator('video').evaluate(v => { v.pause(); v.currentTime = 12; });
+      await page.waitForFunction(() => document.querySelector('.player-time')?.textContent.includes('0:12'));
+      assert.equal(await page.locator('ol.panel-episodes').evaluate(list => list.scrollTop), 0);
+    }
+    results.push(`Late current episode opens in view and respects ${remote ? 'TV focus and arrow navigation' : 'keyboard focus and manual scrolling'}`); await f.close();
+  }
+  {
+    const f = await fixture({ mobile: true, volume: 0, settings: { autoFetchSubtitles: false } });
+    const { page } = f;
+    const restore = page.getByRole('button', { name: /소리 켜기/ });
+    const bounds = await restore.boundingBox();
+    assert.ok(bounds.width >= 44 && bounds.height >= 44);
+    await restore.tap();
+    assert.equal(await page.locator('video').evaluate(v => !v.muted && v.volume === 1), true);
+    assert.equal(await page.locator('.volume').isVisible(), false);
+    await page.setViewportSize({ width: 1200, height: 800 });
+    const slider = page.getByRole('slider', { name: '볼륨' });
+    await slider.focus(); await slider.press('Home'); await slider.press('ArrowRight');
+    assert.equal(await slider.inputValue(), '0.05');
+    await slider.press('Home'); await page.reload();
+    await page.waitForFunction(() => document.querySelector('.player-video')?.readyState >= 2);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await restore.tap();
+    assert.equal(await page.locator('video').evaluate(v => !v.muted && v.volume === 0.05), true);
+    await page.keyboard.press('m'); await restore.tap();
+    assert.equal(await page.locator('video').evaluate(v => !v.muted && v.volume === 0.05), true);
+    results.push('Narrow controls restore a prior nonzero volume after reload, recover legacy zero and unmute'); await f.close();
   }
   assert.deepEqual(errors, [], 'Browser runtime errors');
   await writeFile(`${output}/results.json`, JSON.stringify({ results, errors }, null, 2));
