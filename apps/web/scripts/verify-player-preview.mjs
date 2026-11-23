@@ -15,13 +15,15 @@ assert.ok(source, 'MOA_TEST_VIDEO must point to a local video at least 600 secon
 const fixture = await mkdtemp(join(tmpdir(), 'moa-preview-'));
 execFileSync('ffmpeg', ['-v', 'error', '-i', source, '-t', '60', '-an', '-c:v', 'copy', '-hls_time', '4', '-hls_playlist_type', 'vod', join(fixture, 'video.m3u8')]);
 const clips = new Map();
-for (const seconds of seekOnly ? [] : [20, 60, 1379, 1380, 1440, 1499, 1500]) {
+for (const seconds of seekOnly ? [] : [20, 60, 600, 1379, 1380, 1440, 1499, 1500]) {
   const filename = `short-${seconds}.mp4`;
   execFileSync('ffmpeg', ['-v', 'error', '-stream_loop', '-1', '-i', source, '-t', String(seconds), '-an', '-c:v', 'copy', join(fixture, filename)]);
   clips.set(filename, await readFile(join(fixture, filename)));
 }
 execFileSync('ffmpeg', ['-v', 'error', '-ss', '20', '-i', source, '-frames:v', '1', '-vf', 'scale=160:-1', '-pix_fmt', 'yuvj420p', join(fixture, 'preview.jpg')]);
-const bytes = await readFile(source), jpeg = await readFile(join(fixture, 'preview.jpg'));
+// The ending and resume scenarios below place EOF at 600s, even when the supplied video is longer.
+const bytes = seekOnly ? await readFile(source) : clips.get('short-600.mp4');
+const jpeg = await readFile(join(fixture, 'preview.jpg'));
 process.env.VITE_MOCK = '0';
 const web = process.env.MOA_VERIFY_URL ? null : await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), logLevel: 'error', server: { port: 0, open: false, hmr: false } });
 await web?.listen();

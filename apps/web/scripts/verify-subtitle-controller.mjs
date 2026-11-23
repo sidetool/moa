@@ -7,6 +7,7 @@ import { preferredResolutionIndex } from '../../../packages/shared/src/index.ts'
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 
 const source = stripTypeScriptTypes(await readFile(new URL('../src/player/playback/engine.ts', import.meta.url), 'utf8'), { mode: 'transform' });
+const fragments = stripTypeScriptTypes(await readFile(new URL('../src/player/playback/preview-fragments.ts', import.meta.url), 'utf8'), { mode: 'transform' });
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => {
   let resolve, reject;
@@ -76,6 +77,7 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
   }, { context });
   await module.link(specifier => {
     if (specifier === '@moa/shared') return shared;
+    if (specifier === './preview-fragments') return new SourceTextModule(fragments, { context });
     throw new Error('Unexpected static import: ' + specifier);
   });
   await module.evaluate();
