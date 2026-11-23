@@ -191,6 +191,8 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
   const [airplayMedia, setAirplayMedia] = useState<CastMedia | null>(null);
   const subs = useRef<SubtitleController | null>(null);
   const hideTimer = useRef<number>(0);
+  // A pointer resting on the seek bar (hover or held scrub) is still reading the preview.
+  const seekHeld = useRef(false);
   const nextHideTimer = useRef<number>(0);
   const nextPress = useRef<AbortController | null>(null);
   const lastSaved = useRef(0);
@@ -832,7 +834,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
     window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
       // Hidden controls take the card out of remote navigation, so they stay while a card button is being chosen.
-      if (!video.current?.paused && !root.current?.querySelector(".player-panel, dialog[open]") && !choosingNext()) {
+      if (!video.current?.paused && !seekHeld.current && !root.current?.querySelector(".player-panel, dialog[open]") && !choosingNext()) {
         if (isRemoteMode() && root.current?.contains(active()) && !active()?.closest(".translate-offer")) (active() as HTMLElement).blur();
         setChrome(false);
       }
@@ -1382,18 +1384,33 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
   const [foreground, setForeground] = useState(true);
   useEffect(() => {
     const doc = root.current?.ownerDocument ?? document;
-    const changed = () => { setForeground(!doc.hidden); if (doc.hidden) setHover(null); };
+    const changed = () => {
+      setForeground(!doc.hidden);
+      if (!doc.hidden) return;
+      // No pointerup arrives for a scrub interrupted by hiding; drop it so the time keeps following playback.
+      setHover(null);
+      setScrub(null);
+      // A countdown already skipped while the pointer rested needs re-arming, or the controls never hide on return.
+      if (seekHeld.current) { seekHeld.current = false; poke(); }
+    };
     changed();
     doc.addEventListener('visibilitychange', changed);
     return () => doc.removeEventListener('visibilitychange', changed);
-  }, [pipWindow]);
+  }, [pipWindow, poke]);
   const [scrub, setScrub] = useState<number | null>(null);
   const ratioAt = (clientX: number) => {
     const rect = bar.current!.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
+  // Leaving the bar restarts the usual countdown instead of hiding at once or never.
+  const releaseSeek = () => {
+    if (!seekHeld.current) return;
+    seekHeld.current = false;
+    poke();
+  };
   const onBarDown = (event: React.PointerEvent) => {
     resumeNextChecked.current = true;
+    seekHeld.current = true;
     setPreviewInterest(session?.sessionId);
     event.currentTarget.setPointerCapture(event.pointerId);
     const ratio = ratioAt(event.clientX);
@@ -1405,13 +1422,14 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
     const r = ratioAt(event.clientX);
     setHover(r);
     if (scrub !== null) setScrub(r);
+    seekHeld.current = event.pointerType !== "touch" || scrub !== null;
     poke();
   };
   const onBarUp = (event: React.PointerEvent) => {
     if (scrub === null) return;
     seekTo(ratioAt(event.clientX) * total);
     setScrub(null);
-    if (event.pointerType !== "mouse") setHover(null);
+    if (event.pointerType !== "mouse") { setHover(null); releaseSeek(); }
   };
   const shown = scrub !== null ? scrub * total : remoteSeek ?? time;
 
@@ -1597,7 +1615,7 @@ function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentP
         )}
         {notice && <PlayerNotice notice={notice} onDismiss={() => setNotice(null)} />}
         <div className="player-controls-chrome">
-        {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => setHover(null)} onPointerCancel={() => { setHover(null); setScrub(null); }}
+        {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => { setHover(null); releaseSeek(); }} onPointerCancel={() => { setHover(null); setScrub(null); releaseSeek(); }}
           role="slider" aria-label="재생 위치" aria-valuemin={0} aria-valuemax={Math.round(total)} aria-valuenow={Math.round(shown)} aria-valuetext={clock(shown)} tabIndex={0}>
           <div className="seek-rail">
             <i className="seek-buffer" style={{ width: `${total ? (buffered / total) * 100 : 0}%` }} />
