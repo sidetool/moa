@@ -2,16 +2,20 @@ import { mergePlaybackMarkers } from '../player/playback/skip-markers';
 import { nextUpTiming } from '../player/playback/next-up';
 import { Anime4kStatusNote, type Anime4kFailure, type Anime4kStatus } from '../player/playback/Anime4kStatusNote';
 import { attachAnime4k } from '../player/playback/anime4k';
+import { sampleResumeSeconds, resumeSceneEnabled, storeResumeScene } from '../player/playback/resume-scene';
+import { PlayerNotice, type PlayerNoticeValue } from '../player/playback/PlayerNotice';
 import { SeekPreview } from '../player/playback/SeekPreview';
+import { useSeekFrames } from '../player/playback/seek-frames';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { importSubtitleFile, exportSubtitle, SUBTITLE_FILES } from '../player/subtitles/subtitle-files';
 import { PluginScripts, PluginTools } from '../features/plugins/WebsitePlugins';
 import { CastButton } from '../player/casting/CastButton';
 import type { CastMedia } from '../player/casting/cast';
 import type { SubtitleTimingStep } from '../player/subtitles/subtitle-timing';
-import { checkSubtitleAlignment } from '../player/subtitles/subtitle-sync';
+import { SubtitleSyncControls } from '../player/subtitles/SubtitleSyncControls';
+import { checkSubtitleAlignment, subtitleAlignmentReference } from '../player/subtitles/subtitle-sync';
 import { preparePlayback, retirePlayback } from '../player/playback/session-lifecycle';
-import { subtitlesOffForTitle, rememberSubtitlesOff, subtitleOffsetForEpisode, rememberSubtitleOffset, subtitlePreference, rememberSubtitle, loadSubtitlePreference, restoreSubtitle } from "../player/subtitles/subtitle-preference";
+import { subtitlesOffForTitle, rememberSubtitlesOff, useEpisodeSubtitleOffset, subtitlePreference, rememberSubtitle, loadSubtitlePreference, findSessionSubtitle, restoreSubtitle } from "../player/subtitles/subtitle-preference";
 import { enterFullscreen } from "../lib/playback-fullscreen";
 import { documentPipSupported, useDocumentPip } from "../player/playback/document-pip";
 import { useDevicePrefs, setDevicePref } from "../lib/device-prefs";
@@ -25,9 +29,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import type { MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, SubtitleTrack } from "@moa/shared";
+import type { EpisodeProgress, MediaCard, Page, OnlineSubtitleQuery, OnlineSubtitleSearch, PlaybackSession, Settings as ProfileSettings, SubtitleTrack } from "@moa/shared";
 import { keyboardShortcutKey, playerShortcutLabel, type PlayerShortcutAction } from '@moa/shared';
-import { useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
+import { keys, useMe, useMedia, useSettings, useSaveSettings } from "../api/queries";
 import { useEpisodeDownload } from "../api/downloads";
 import { cancelTranslationJob, coveredUntil, isTranslationTrack, savedTranslations, translationModeOf, untranslatedGap, useTranslationConfig, type TranslatedRange, type TranslationJob } from "../api/translation";
 import { useSubtitleTranslation } from "../player/translation/subtitle-translation";
@@ -39,7 +43,7 @@ import { trackName } from "../player/subtitles/track-name";
 import { Stepper } from "../player/Stepper";
 import { Artwork } from "../components/Artwork";
 import { Button, ProgressBar, Spinner } from "../components/ui";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, currentProfileId } from "../lib/api";
 
 const KIDS_RESTRICTED = "어린이 프로필에서는 볼 수 없는 작품이에요";
 import { clock, cx, episodeTitle } from "../lib/format";
@@ -50,6 +54,11 @@ type Panel = null | "subs" | "settings" | "episodes";
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const HIDE_AFTER = 2600;
 const VOLUME_KEY = "moa.volume";
+const LAST_VOLUME_KEY = "moa.lastAudibleVolume";
+function savedVolume(key: string) {
+  const value = Number(localStorage.getItem(key) ?? 1);
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 1;
+}
 /** Longest a newer translation revision waits for a quiet moment (no translated cue on screen). */
 const REVISION_MAX_WAIT = 45_000;
 
@@ -67,6 +76,7 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
   const [audioTrackId, setAudioTrackId] = useState<string | undefined>();
   const resumeAt = useRef<number | null>(startOverride);
   const initialSession = useRef(true);
+  const viewing = useRef<Pick<PlaybackSession, "episodeId" | "continueVisibility"> | null>(null);
   const failedStreams = useRef(new Set<string>());
 
   useEffect(() => {
@@ -83,7 +93,11 @@ function useSession(episodeId: string, startOverride: number | null, initialLoca
       });
       created = result;
       if (cancelled) await retirePlayback(result.sessionId, result.runtimeDependent);
-      else setSession({ ...result, resumeFromHistory });
+      else {
+        // Reopening a stream or switching audio belongs to the current viewing. A later hide still wins.
+        if (viewing.current?.episodeId !== episodeId) viewing.current = { episodeId, continueVisibility: result.continueVisibility };
+        setSession({ ...result, continueVisibility: viewing.current.continueVisibility, resumeFromHistory });
+      }
     }).catch(e => { if (!cancelled) setError(e instanceof ApiError && e.code === "permission-denied" ? "영상 보기 권한이 없어요. 관리자에게 문의해 주세요." : e instanceof ApiError && e.code === "kids-restricted" ? KIDS_RESTRICTED : e instanceof ApiError && e.code === "apk_playback_capacity" ? "다른 기기에서 재생 중입니다. 재생이 끝난 뒤 다시 시도해 주세요." : e instanceof ApiError && e.code === "no-streams" ? "소스에서 재생할 영상을 찾지 못했습니다." : e instanceof ApiError && ["unsupported-stream-format", "unsupported-inline-hls"].includes(e.code) ? "소스가 반환한 영상 형식을 지원하지 않습니다." : "재생을 준비하지 못했습니다."); });
     return () => {
       cancelled = true;
@@ -129,15 +143,18 @@ export function WatchPage() {
   useNoPageZoom();
   const { episodeId = "" } = useParams();
   const fullscreenHost = useRef<HTMLDivElement>(null);
+  const profile = currentProfileId();
+  const [speedChoice, setSpeedChoice] = useState<{ profile: string | null; rate: number }>();
+  const speed = speedChoice?.profile === profile ? speedChoice.rate : 1;
   // A stable portal slot can move into a Document PiP window without remounting the player.
   const [slot] = useState(() => Object.assign(document.createElement("div"), { className: "watch-player-slot" }));
   useLayoutEffect(() => { if (slot.ownerDocument === document) fullscreenHost.current?.append(slot); }, [slot]);
   const pip = useDocumentPip(slot, fullscreenHost);
   // The fullscreen target survives episode changes; only playback state resets.
-  return <div className="watch-fullscreen-host" ref={fullscreenHost}>{createPortal(<WatchPlayer key={episodeId} episodeId={episodeId} fullscreenHost={fullscreenHost} pip={pip} />, slot)}</div>;
+  return <div className="watch-fullscreen-host" ref={fullscreenHost}>{createPortal(<WatchPlayer key={episodeId} episodeId={episodeId} speed={speed} onSpeed={rate => setSpeedChoice({ profile, rate })} fullscreenHost={fullscreenHost} pip={pip} />, slot)}</div>;
 }
 
-function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeId: string; fullscreenHost: RefObject<HTMLDivElement | null>; pip: ReturnType<typeof useDocumentPip> }) {
+function WatchPlayer({ episodeId, speed, onSpeed, fullscreenHost, pip: documentPip }: { episodeId: string; speed: number; onSpeed: (rate: number) => void; fullscreenHost: RefObject<HTMLDivElement | null>; pip: ReturnType<typeof useDocumentPip> }) {
   const pipWindow = documentPip.pipWindow;
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -174,6 +191,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [airplayMedia, setAirplayMedia] = useState<CastMedia | null>(null);
   const subs = useRef<SubtitleController | null>(null);
   const hideTimer = useRef<number>(0);
+  // A pointer resting on the seek bar (hover or held scrub) is still reading the preview.
+  const seekHeld = useRef(false);
   const nextHideTimer = useRef<number>(0);
   const nextPress = useRef<AbortController | null>(null);
   const lastSaved = useRef(0);
@@ -187,9 +206,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const [mediaDuration, setMediaDuration] = useState<{ sessionId: string; seconds: number }>();
   const duration = mediaDuration?.sessionId === session?.sessionId ? mediaDuration?.seconds ?? 0 : 0;
   const [buffered, setBuffered] = useState(0);
-  const [volume, setVolume] = useState(() => Number(localStorage.getItem(VOLUME_KEY) ?? 1));
+  const [volume, setVolume] = useState(() => savedVolume(VOLUME_KEY));
   const [muted, setMuted] = useState(false);
-  const [speed, setSpeed] = useState(1);
   const [chrome, setChrome] = useState(true);
   const [panel, setPanelState] = useState<Panel>(null);
   const [subsView, setSubsView] = useState<"main" | "style" | "search" | "translate">("main");
@@ -201,7 +219,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const resumePlaying = useRef<boolean | null>(null);
   const failPlayback = useRef<(message:string)=>void>(()=>{});
   const [fatal, setFatal] = useState<string | null>(null);
-  const [subtitle, setSubtitle] = useState<SubtitleTrack | null>(carried?.subtitle ?? null);
+  const [selectedSubtitle, setSubtitle] = useState<SubtitleTrack | null>(carried?.subtitle ?? null);
+  const [extraSubs, setExtraSubs] = useState<SubtitleTrack[]>(carried?.subtitle ? [carried.subtitle] : []);
+  const subtitle = useMemo(() => {
+    // Uploads and live translation revisions have their own URLs. Session tracks must use the current session's URL.
+    if (!selectedSubtitle || selectedSubtitle.source === 'upload' || isTranslationTrack(selectedSubtitle)) return selectedSubtitle;
+    return (session && findSessionSubtitle(session.subtitles, selectedSubtitle))
+      ?? extraSubs.find(track => track.id === selectedSubtitle.id) ?? null;
+  }, [selectedSubtitle, session, extraSubs]);
   const [resumeChip, setResumeChip] = useState(false);
   const [nextDismissed, setNextDismissed] = useState(false);
   const [nextCancelled, setNextCancelled] = useState(false);
@@ -261,17 +286,18 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     for (const event of ["loadedmetadata", "resize", "emptied"]) v.addEventListener(event, update);
     return () => { for (const event of ["loadedmetadata", "resize", "emptied"]) v.removeEventListener(event, update); };
   }, [session]);
-  const [manualSubOffset, setSubOffset] = useState(0);
+  const [viewingProfile] = useState(currentProfileId);
+  const { seconds: manualSubOffset, current: manualOffsetRef, save: saveOffset, saveFailed: offsetSaveFailed } = useEpisodeSubtitleOffset(viewingProfile, episodeId);
+  const manualSync = manualSubOffset !== undefined;
+  const previouslyManualTrack = useRef<string | null>(null);
   const segmentedSync = settings?.experimentalSegmentedSubtitleSync === true;
   const alignmentKey = JSON.stringify([session?.sessionId, subtitle?.id, subtitle?.url, segmentedSync]);
   const [autoAlignment, setAutoAlignment] = useState<{ key: string; offset: number; step?: SubtitleTimingStep; url?: string } | null>(null);
-  const manualSyncChoice = useRef(false);
-  const manualSync = manualSyncChoice.current || manualSubOffset !== 0;
   const alignment = !manualSync && settings?.experimentalSubtitleSync && autoAlignment?.key === alignmentKey ? autoAlignment : null;
   // A segmented render copy contains its final cue times. The controls show the correction
   // for the current scene, while the renderer and cast sender both use a zero extra offset.
   const renderTrack = useMemo(() => subtitle && alignment?.url ? { ...subtitle, url: alignment.url } : subtitle, [subtitle, alignment?.url]);
-  const renderOffset = manualSync ? manualSubOffset : alignment?.offset ?? 0;
+  const renderOffset = manualSubOffset ?? alignment?.offset ?? 0;
   const stepTiming = alignment?.step;
   const subOffset = stepTiming ? (time >= stepTiming.boundary + stepTiming.after ? stepTiming.after : stepTiming.before) : renderOffset;
   const subOffsetRef = useRef(0);
@@ -287,19 +313,23 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const originalSubAppearance = (subScale === undefined ? subSize === 'medium' : subScale === 100) && subBackground === 'original' && subShadow === 'original' && subOutline === 'original' && subHeight === 0;
   useEffect(() => { subs.current?.setHeight(subHeight); }, [subHeight, subtitle, session]);
   useEffect(() => { void subs.current?.setAppearance({ size: subSize, background: airplayMedia ? 'original' : subBackground, shadow: airplayMedia ? 'original' : subShadow, outline: airplayMedia ? 'original' : subOutline, scale: subScale, padding: subPadding, preserveAss: subPreserveAss }).catch(() => {}); }, [subSize, subBackground, subShadow, subOutline, subScale, subPadding, subPreserveAss, subtitle, session, airplayMedia]);
-  const [extraSubs, setExtraSubs] = useState<SubtitleTrack[]>(carried?.subtitle ? [carried.subtitle] : []);
   const [importing, setImporting] = useState(false);
   const [draggingSubtitle, setDraggingSubtitle] = useState(false);
   const subtitleInput = useRef<HTMLInputElement>(null);
   const uploadAbort = useRef<AbortController | null>(null);
   useEffect(() => () => { uploadAbort.current?.abort(); }, []);
   const [online, setOnline] = useState<{ status: "idle" | "searching" | "done" | "error"; result?: OnlineSubtitleSearch; applying?: string }>({ status: "idle" });
-  const [notice, setNotice] = useState<string | { text: string; action: { label: string; run: () => void } } | null>(null);
+  const [notice, setNotice] = useState<PlayerNoticeValue | null>(null);
+  const offerSubtitleChoice = (text: string) => {
+    const value = { text, action: { label: "변경", run: () => setPanel("subs") } };
+    setNotice(value);
+    return value;
+  };
   const onlineAbort = useRef<AbortController | null>(null);
   const applyAbort = useRef<AbortController | null>(null);
   const subtitleChoice = useRef(carried?.subtitle ? 1 : 0);
   const [subtitlesReady, setSubtitlesReady] = useState<string | null>(null);
-  const saveSubtitle = (...args: Parameters<typeof rememberSubtitle>) => { void rememberSubtitle(...args).catch(() => setNotice("자막 선택을 서버에 저장하지 못했어요. 다시 선택해 주세요.")); };
+  const saveSubtitle = (...args: Parameters<typeof rememberSubtitle>) => { void rememberSubtitle(...args).catch(() => offerSubtitleChoice("자막 선택을 서버에 저장하지 못했어요. 다시 선택해 주세요.")); };
 
   useEffect(()=>{if(sourcePicker) video.current?.pause();},[sourcePicker]);
   const live = session?.live || false;
@@ -307,11 +337,24 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const titleLine = session ? [session.mediaTitle, session.episodeLabel && `${session.episodeLabel}${session.episodeTitle ? ` ${episodeTitle(session.episodeTitle)}` : ""}`].filter(Boolean) : [];
 
   /* ---------- progress ---------- */
+  const accountId = useRef(account?.id);
+  accountId.current = account?.id;
+  const sampler = useRef<{ sessionId: string; owner: string; frames: ReturnType<typeof sampleResumeSeconds> } | null>(null);
   const saveProgress = useCallback((keepalive = false, v = video.current) => {
     const position = castProgress.current?.position ?? v?.currentTime, duration = castProgress.current?.duration ?? v?.duration;
-    if (!session || session.live || position === undefined || !Number.isFinite(duration) || !duration || position < 1) return;
+    if (viewingProfile !== currentProfileId() || !session || session.live || position === undefined || !Number.isFinite(duration) || !duration || position < 1) return;
     lastSaved.current = position;
-    void api("/progress", { method: "POST", body: { episodeId: session.episodeId, position, duration }, keepalive }).then(() => {
+    const owner = accountId.current;
+    // The attach cleanup and its acknowledgement can run after a profile setting changes or the player unmounts.
+    const scenesEnabled = () => resumeSceneEnabled(client.getQueryData<ProfileSettings>(keys.settings(viewingProfile)));
+    const source = sampler.current;
+    const scene = source && source.sessionId === session.sessionId && source.owner === owner && viewingProfile && v && scenesEnabled()
+      && !castProgress.current && (keepalive || v.paused) && position < duration * .9 && duration - position >= 120
+      ? source.frames.sceneFor(position) : undefined;
+    void api<EpisodeProgress>("/progress", { method: "POST", body: { episodeId: session.episodeId, continueVisibility: session.continueVisibility, position, duration }, keepalive }).then(saved => {
+      if (owner && viewingProfile && scene && scenesEnabled() && !saved?.completed && saved?.updatedAt && viewingProfile === currentProfileId() && owner === accountId.current) {
+        storeResumeScene(owner, viewingProfile, session.mediaId, session.episodeId, saved.updatedAt, saved.position, scene);
+      }
       // Periodic saves mark caches stale; final saves also refresh screens already mounted after exit.
       void client.invalidateQueries({ queryKey: ["home"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["recommendations"], refetchType: "none" });
@@ -319,7 +362,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       void client.invalidateQueries({ queryKey: ["grouped-cards"], refetchType: keepalive ? "active" : "none" });
       void client.invalidateQueries({ queryKey: ["media", session.mediaId], refetchType: keepalive ? "active" : "none" });
     }).catch(() => {});
-  }, [session, client]);
+  }, [session, client, viewingProfile]);
 
   /* ---------- attach ---------- */
   useEffect(() => {
@@ -351,12 +394,13 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     };
     failPlayback.current = onFailure;
     setLevels([]); setLevel(-1);
+    v.volume = volume;
+    v.defaultPlaybackRate = session.live ? 1 : speed;
+    v.playbackRate = v.defaultPlaybackRate;
     attach(v, session, start, onFailure, false, { preferredHeight: defaultHeightRef.current }).then(handle => {
       if (disposed) { handle.destroy(); return; }
       engine.current = handle;
       handle.setPreferredHeight(defaultHeightRef.current);
-      v.volume = volume;
-      v.playbackRate = speed;
       const shouldPlay = resumePlaying.current !== false; resumePlaying.current = null;
       if (shouldPlay) v.play().catch(() => setPlaying(false)); else setPlaying(false);
     }).catch(() => { if(!disposed) onFailure("이 영상을 재생하지 못했습니다."); });
@@ -374,6 +418,15 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
+
+  const sampleScenes = resumeSceneEnabled(settings);
+  useEffect(() => {
+    const v = video.current;
+    if (!sampleScenes || !v || !session || session.live || casting || airplayMedia || !account?.id || !viewingProfile || viewingProfile !== currentProfileId()) return;
+    const frames = sampleResumeSeconds(v);
+    sampler.current = { sessionId: session.sessionId, owner: account.id, frames };
+    return () => { frames.stop(); sampler.current = null; };
+  }, [session, sampleScenes, account?.id, viewingProfile, casting, airplayMedia]);
 
   useEffect(() => {
     if (!session?.runtimeDependent) return;
@@ -412,32 +465,27 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         if (controller.signal.aborted || subtitleChoice.current !== choice) return;
         if (track) {
           subtitleChoice.current ||= 1;
-          setExtraSubs(list => [...list.filter(item => item.id !== track.id), track]);
+          if (!session.subtitles.includes(track) || track.source === 'upload' || isTranslationTrack(track)) {
+            setExtraSubs(list => [...list.filter(item => item.id !== track.id), track]);
+          }
           setSubtitle(track);
           setNotice(null);
           return;
         }
-        setNotice("이전에 사용한 자막이 없어졌어요.");
+        offerSubtitleChoice("이전에 사용한 자막이 없어졌어요.");
       }
       if (subtitleChoice.current || isTranslationTrack(subtitle) || subtitle?.source === 'upload') {
-        setSubtitle(current => current ? session.subtitles.find(track => track.id === current.id) ?? (current.provenance || isTranslationTrack(current) || current.source === 'upload' ? current : null) : null);
+        setSubtitle(current => current ? findSessionSubtitle(session.subtitles, current) ?? (current.provenance || isTranslationTrack(current) || current.source === 'upload' ? current : null) : null);
         return;
       }
       const preferred = settings.defaultSubtitleLang;
       const own = session.subtitles.filter(track => !isTranslationTrack(track));
       setSubtitle(preferred === "off" ? null
         : own.find(track => track.lang === preferred) ?? own.find(track => track.default) ?? own[0] ?? null);
-    }).catch(() => { if (!controller.signal.aborted) setNotice("이전에 사용한 자막을 불러오지 못했어요. 다시 선택해 주세요."); })
+    }).catch(() => { if (!controller.signal.aborted) offerSubtitleChoice("이전에 사용한 자막을 불러오지 못했어요. 다시 선택해 주세요."); })
       .finally(() => { if (!controller.signal.aborted) setSubtitlesReady(session.sessionId); });
     return () => controller.abort();
   }, [session, Boolean(settings)]);
-
-  useLayoutEffect(() => {
-    const saved = subtitleOffsetForEpisode(episodeId);
-    manualSyncChoice.current = saved !== undefined;
-    subOffsetRef.current = saved ?? 0; setSubOffset(saved ?? 0);
-    subs.current?.setOffset(saved ?? 0);
-  }, [episodeId]);
 
   useLayoutEffect(() => {
     subOffsetRef.current = renderOffset;
@@ -446,16 +494,19 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
   useEffect(() => {
     setAutoAlignment(null);
-    if (!session || !subtitle || !settings?.experimentalSubtitleSync || manualSync) return;
+    if (manualSync) { previouslyManualTrack.current = alignmentKey; return; }
+    if (!session || !subtitle || !settings?.experimentalSubtitleSync) return;
+    const restoring = previouslyManualTrack.current === alignmentKey;
+    previouslyManualTrack.current = null;
     const stop = new AbortController(), choice = subtitleChoice.current;
     let renderUrl: string | undefined;
     void checkSubtitleAlignment(subtitle, session, stop.signal, segmentedSync).then(result => {
-      if (stop.signal.aborted || subtitleChoice.current !== choice || manualSyncChoice.current) return;
+      if (stop.signal.aborted || subtitleChoice.current !== choice || manualOffsetRef.current !== undefined) return;
       if (result.status === 'aligned') {
         renderUrl = result.blob && URL.createObjectURL(result.blob);
         setAutoAlignment({ key: alignmentKey, offset: result.offsetSeconds, step: result.step, url: renderUrl });
       }
-      else if (result.status === 'mismatch' && choice === 0) {
+      else if (result.status === 'mismatch' && choice === 0 && !restoring) {
         // A weak timing match vetoes automatic selection only; the track remains available manually.
         setSubtitle(session.subtitles.find(t => t.source !== 'online' && !isTranslationTrack(t)) ?? null);
       }
@@ -463,23 +514,34 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     return () => { stop.abort(); if (renderUrl) URL.revokeObjectURL(renderUrl); };
   }, [session, subtitle, settings?.experimentalSubtitleSync, manualSync, alignmentKey, segmentedSync]);
 
-  const shownTrack = useRef<{ controller: SubtitleController | null; track: SubtitleTrack | null }>({ controller: null, track: null });
+  const [subtitleRetry, setSubtitleRetry] = useState(0);
+  const shownTrack = useRef<{ controller: SubtitleController | null; track: SubtitleTrack | null; retry: number; failureNotice?: PlayerNoticeValue }>({ controller: null, track: null, retry: 0 });
   useEffect(() => {
     const controller = subs.current;
     const track: SubtitleTrack | null = airplayMedia ? airplayMedia.subtitle ? { id: 'cast-caption', format: 'vtt', ...airplayMedia.subtitle } : null : renderTrack;
-    let cancelled = false;
     const previous = shownTrack.current;
-    shownTrack.current = { controller, track };
-    // A newer revision of the same track (live AI translation) is swapped in place instead of reloaded.
-    const revision = Boolean(controller && track && previous.controller === controller && previous.track?.id === track.id);
-    if (revision && previous.track!.url === track!.url) return;
+    const sameId = track && previous.controller === controller && previous.track?.id === track.id;
+    const sameUrl = previous.track?.url === track?.url;
+    if (sameId && sameUrl && previous.retry === subtitleRetry) return;
+    if (previous.failureNotice) setNotice(current => current === previous.failureNotice ? null : current);
+    const shown: typeof previous = { controller, track, retry: subtitleRetry };
+    shownTrack.current = shown;
+    if (!controller) return;
+    const active = () => shownTrack.current === shown && subs.current === controller;
+    const reportFailure = () => {
+      if (active() && !shown.failureNotice) shown.failureNotice = offerSubtitleChoice("자막을 불러오지 못했어요.");
+    };
+    // A newer revision keeps its current cues visible while the replacement loads.
     const copyChanged = previous.track?.url.startsWith('blob:') || track?.url.startsWith('blob:');
-    const load = revision && !copyChanged ? controller!.replace(track!).catch(() => cancelled ? undefined : controller!.show(track)) : controller?.show(track);
-    void load?.then(() => {
-      if (!cancelled) controller!.setOffset(airplayMedia ? 0 : subOffsetRef.current);
-    }).catch(() => { if (!cancelled) setNotice("자막을 불러오지 못했습니다. 다른 자막을 선택해 주세요."); });
-    return () => { cancelled = true; };
-  }, [renderTrack, session, airplayMedia]);
+    let load: Promise<void>;
+    if (sameId && !sameUrl && !copyChanged && previous.track?.format === track.format) {
+      load = controller.replace(track);
+      if (track.format === 'ass') load = load.catch(() => active() ? controller.show(track) : undefined);
+    } else load = controller.show(track, reportFailure);
+    void load.then(() => {
+      if (active()) controller.setOffset(airplayMedia ? 0 : subOffsetRef.current);
+    }).catch(reportFailure);
+  }, [renderTrack, session, airplayMedia, subtitleRetry]);
 
   useEffect(() => {
     if(!session?.streams?.length || !waiting || fatal) return;
@@ -520,19 +582,20 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     try {
       const track = await api<SubtitleTrack>(`/episodes/${encodeURIComponent(session.episodeId)}/subtitles/online`, { method: "POST", body: { searchId: result.searchId, candidateId }, signal: controller.signal });
       if (controller.signal.aborted || subtitleChoice.current !== choice) return;
-      if (quiet && settings?.experimentalSubtitleSync && !manualSyncChoice.current) {
+      if (quiet && settings?.experimentalSubtitleSync && manualOffsetRef.current === undefined) {
         const alignment = await checkSubtitleAlignment(track, session, controller.signal, segmentedSync);
         if (controller.signal.aborted || subtitleChoice.current !== choice) return;
-        if (alignment.status === 'mismatch' && !manualSyncChoice.current) return;
+        if (alignment.status === 'mismatch' && manualOffsetRef.current === undefined) return;
       }
       setExtraSubs(list => [...list.filter(item => item.id !== track.id), track]);
       setSubtitle(track);
       saveSubtitle(session.episodeId, track);
       if (!quiet) rememberSubtitlesOff(session.mediaId, false);
       const who = track.provenance?.creatorName ?? result.candidates.find(item => item.id === candidateId)?.creatorName;
-      setNotice(quiet ? `${who ? `${who} 님의 ` : ""}한국어 자막을 찾아 적용했어요` : null);
+      if (quiet) offerSubtitleChoice(`${who ? `${who} 님의 ` : ""}한국어 자막을 찾아 적용했어요`);
+      else setNotice(null);
     } catch {
-      if (!controller.signal.aborted) setNotice("자막을 적용하지 못했습니다");
+      if (!controller.signal.aborted) offerSubtitleChoice("자막을 적용하지 못했습니다");
     } finally {
       if (applyAbort.current === controller) setOnline(state => ({ ...state, applying: undefined }));
     }
@@ -540,7 +603,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
 
   useEffect(() => {
     // Translations belong to the episode, not the playback session, so they survive audio/stream switches.
-    setExtraSubs(list => list.filter(track => isTranslationTrack(track) || track.source === 'upload')); setOnline({ status: "idle" }); setNotice(null);
+    setExtraSubs(list => list.filter(track => isTranslationTrack(track) || track.source === 'upload')); setOnline({ status: "idle" });
+    setNotice(previous => !session && typeof previous === "string" ? previous : null);
     return () => { onlineAbort.current?.abort(); applyAbort.current?.abort(); };
   }, [session]);
 
@@ -604,7 +668,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       liveShown.current = { id: track.id, ranges: job.translatedRanges };
       pendingRevision.current = null;
       showTranslated(track);
-      if (final) setNotice(`AI 번역 자막을 적용했어요${job.cached ? " · 저장된 번역" : ""}`);
+      if (final) offerSubtitleChoice(`AI 번역 자막을 적용했어요${job.cached ? " · 저장된 번역" : ""}`);
     } else {
       translationChoice.current = -1;
       if (final) setNotice({ text: "한국어 AI 번역이 끝났어요", action: { label: "적용", run: () => chooseSubtitle(track) } });
@@ -679,7 +743,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       void startTranslation(source, origin);
       if (origin === "auto") setNotice({ text: `한국어 자막이 없어 ${source.label} 자막을 AI로 번역하고 있어요`, action: { label: "취소", run: () => void cancelTranslation() } });
     },
-    useSaved: track => { showTranslated(track); setNotice("저장된 AI 번역 자막을 적용했어요"); }
+    useSaved: track => { showTranslated(track); offerSubtitleChoice("저장된 AI 번역 자막을 적용했어요"); }
   });
   // A suggestion steps aside after a while; the subtitle menu keeps offering translation.
   useEffect(() => {
@@ -702,6 +766,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     applyAbort.current?.abort();
     setOnline(state => ({ ...state, applying: undefined }));
     setNotice(null);
+    if (track && subtitle?.id === track.id && shownTrack.current.failureNotice) setSubtitleRetry(attempt => attempt + 1);
     pendingRevision.current = null;
     const live = translation.state.status === "active" ? translation.state.job : null;
     liveShown.current = track && live?.track?.id === track.id ? { id: track.id, ranges: live.translatedRanges } : null;
@@ -730,11 +795,11 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       controller.signal.throwIfAborted();
       setExtraSubs(list => [...list.filter(item => !tracks.some(track => track.id === item.id)), ...tracks]);
       if (tracks.length === 1 && subtitleChoice.current === choice) chooseSubtitle(tracks[0]);
-      else setNotice('가져온 자막 중 사용할 파일을 선택해 주세요.');
+      else offerSubtitleChoice('가져온 자막 중 사용할 파일을 선택해 주세요.');
       if (showMenu) setPanel('subs');
       return true;
     } catch (error) {
-      if (!controller.signal.aborted) setNotice(error instanceof Error ? error.message : '자막 파일을 읽지 못했어요.');
+      if (!controller.signal.aborted) offerSubtitleChoice(error instanceof Error ? error.message : '자막 파일을 읽지 못했어요.');
       return false;
     } finally { if (!controller.signal.aborted) setImporting(false); }
   };
@@ -745,12 +810,9 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     return () => clearTimeout(timer);
   }, [notice]);
   const nudgeSubs = (delta: number) => {
-    manualSyncChoice.current = true;
     setAutoAlignment(null);
     const next = Math.max(-600, Math.min(600, Math.round((subOffset + delta) * 10) / 10));
-    setSubOffset(next); subOffsetRef.current = next;
-    subs.current?.setOffset(next);
-    rememberSubtitleOffset(episodeId, next);
+    saveOffset(next);
     return next;
   };
 
@@ -772,7 +834,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
       // Hidden controls take the card out of remote navigation, so they stay while a card button is being chosen.
-      if (!video.current?.paused && !root.current?.querySelector(".player-panel, dialog[open]") && !choosingNext()) {
+      if (!video.current?.paused && !seekHeld.current && !root.current?.querySelector(".player-panel, dialog[open]") && !choosingNext()) {
         if (isRemoteMode() && root.current?.contains(active()) && !active()?.closest(".translate-offer")) (active() as HTMLElement).blur();
         setChrome(false);
       }
@@ -833,13 +895,20 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   const changeVolume = (value: number) => {
     const v = video.current;
     const next = Math.max(0, Math.min(1, value));
+    if (next === 0 && volume > 0) localStorage.setItem(LAST_VOLUME_KEY, String(volume));
     setVolume(next); setMuted(next === 0);
     if (v) { v.volume = next; v.muted = next === 0; }
     localStorage.setItem(VOLUME_KEY, String(next));
   };
-  const toggleMute = () => { const v = video.current; if (!v) return; v.muted = !v.muted; setMuted(v.muted); };
+  const toggleMute = () => {
+    const v = video.current;
+    if (!v) return;
+    if (volume === 0) changeVolume(savedVolume(LAST_VOLUME_KEY) || 1);
+    else { v.muted = !v.muted; setMuted(v.muted); }
+  };
   const changeSpeed = (value: number) => {
-    setSpeed(value);
+    onSpeed(value);
+    if (video.current) video.current.defaultPlaybackRate = value;
     if (boosting.current) boosting.current.rate = value;
     else if (video.current) video.current.playbackRate = value;
   };
@@ -1113,7 +1182,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         else if (action === 'mute') toggleMute();
         else if (action === 'nextEpisode') goNext();
         else if (action === 'subtitles') chooseSubtitle(subtitle ? null : allSubs[0] ?? null);
-        else if (action === 'speedDown' || action === 'speedUp') {
+        else if (session && !live && (action === 'speedDown' || action === 'speedUp')) {
           const current = boosting.current?.rate ?? v.playbackRate;
           const next = (action === 'speedUp' ? SPEEDS.find(value => value > current) : [...SPEEDS].reverse().find(value => value < current)) ?? current;
           changeSpeed(next);
@@ -1215,7 +1284,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
     holdOrigin.current = origin;
     pressTimer.current = window.setTimeout(() => {
       const v = video.current;
-      if (v && !v.paused && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
+      if (v && !v.paused && !live && !pinch.current) { boosting.current = { video: v, rate: v.playbackRate }; setBoost(true); v.playbackRate = prefs.holdSpeed; }
     }, 450);
   };
   useEffect(() => { if (panel || sourcePicker) endPress(true); }, [panel, sourcePicker, endPress]);
@@ -1309,35 +1378,92 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
   /* ---------- seek bar ---------- */
   const bar = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
-  const previewPosition = useRef<number | null>(null);
-  if (hover !== null) previewPosition.current = hover;
+  const [previewInterest, setPreviewInterest] = useState<string>();
+  const sampleSeekFrames = Boolean(settings && !casting && !airplayMedia && (sampleScenes || previewInterest === session?.sessionId));
+  const seekFrames = useSeekFrames(session, video, sampleSeekFrames);
+  const [foreground, setForeground] = useState(true);
+  useEffect(() => {
+    const doc = root.current?.ownerDocument ?? document;
+    const changed = () => {
+      setForeground(!doc.hidden);
+      if (!doc.hidden) return;
+      // No pointerup arrives for a scrub interrupted by hiding; drop it so the time keeps following playback.
+      setHover(null);
+      setScrub(null);
+      // A countdown already skipped while the pointer rested needs re-arming, or the controls never hide on return.
+      if (seekHeld.current) { seekHeld.current = false; poke(); }
+    };
+    changed();
+    doc.addEventListener('visibilitychange', changed);
+    return () => doc.removeEventListener('visibilitychange', changed);
+  }, [pipWindow, poke]);
   const [scrub, setScrub] = useState<number | null>(null);
   const ratioAt = (clientX: number) => {
     const rect = bar.current!.getBoundingClientRect();
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
+  // Leaving the bar restarts the usual countdown instead of hiding at once or never.
+  const releaseSeek = () => {
+    if (!seekHeld.current) return;
+    seekHeld.current = false;
+    poke();
+  };
   const onBarDown = (event: React.PointerEvent) => {
     resumeNextChecked.current = true;
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    setScrub(ratioAt(event.clientX));
+    seekHeld.current = true;
+    setPreviewInterest(session?.sessionId);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const ratio = ratioAt(event.clientX);
+    setHover(ratio);
+    setScrub(ratio);
   };
   const onBarMove = (event: React.PointerEvent) => {
+    setPreviewInterest(session?.sessionId);
     const r = ratioAt(event.clientX);
     setHover(r);
     if (scrub !== null) setScrub(r);
+    seekHeld.current = event.pointerType !== "touch" || scrub !== null;
     poke();
+  };
+  // Hidden controls take no pointer events, so a pointer that wakes them on the bar's spot never reaches
+  // the bar and, resting there, sends no further move. Read it from the player instead, and let go once it
+  // moves off the bar or leaves the player.
+  const followHiddenBar = (event: React.PointerEvent) => {
+    // Ordinary moves over visible controls cost nothing here.
+    if (chrome && !seekHeld.current) return;
+    const element = bar.current;
+    if (!element || scrub !== null || element.contains(event.target as Node)) return;
+    const rect = element.getBoundingClientRect();
+    // Idle controls sit lower (translateY); judge by where the rail shows once awake.
+    const transform = getComputedStyle(element.closest(".player-controls-chrome") ?? element).transform;
+    const lift = transform && transform !== "none" ? new DOMMatrixReadOnly(transform).m42 : 0;
+    const over = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top - lift && event.clientY <= rect.bottom - lift;
+    if (over && !chrome) {
+      setPreviewInterest(session?.sessionId);
+      setHover(ratioAt(event.clientX));
+      seekHeld.current = true;
+    } else if (!over && hover !== null) {
+      setHover(null);
+      releaseSeek();
+    }
   };
   const onBarUp = (event: React.PointerEvent) => {
     if (scrub === null) return;
     seekTo(ratioAt(event.clientX) * total);
     setScrub(null);
+    if (event.pointerType !== "mouse") { setHover(null); releaseSeek(); }
   };
   const shown = scrub !== null ? scrub * total : remoteSeek ?? time;
 
   const episodes = useMemo(() => media.data?.seasons.flatMap(season => season.episodes) ?? [], [media.data]);
+  const revealCurrentEpisode = useCallback((row: HTMLLIElement | null) => {
+    row?.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+  }, []);
   const switchServer = (id: string) => { setPanel(null); switchStream(id, live ? 0 : video.current?.currentTime || 0); };
   const playbackSource = [session?.saved ? '저장한 영상' : media.data?.provider?.name, session?.streams?.find(stream => stream.id === session.streamId)?.label].filter(Boolean).join(' · ');
-  const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
+  const silent = muted || volume === 0;
+  const muteLabel = shortcutLabel('mute', silent ? '소리 켜기' : '음소거');
+  const VolumeIcon = silent ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   const error = sessionError ?? fatal;
   const pluginPlayer = {
     episodeId, title: titleLine.join(' · '), getTime: () => video.current?.currentTime || 0, onImport: (files: File[]) => addSubtitleFiles(files, false),
@@ -1362,7 +1488,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
       onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDraggingSubtitle(false); }}
       onDrop={event => { event.preventDefault(); setDraggingSubtitle(false); void addSubtitleFiles(Array.from(event.dataTransfer.files)); }}
       onPointerDownCapture={onPlayerPointerDown}
-      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); } }}
+      onPointerMove={event => { if (event.pointerType !== "touch") { poke(); cancelNextCountdown(); followHiddenBar(event); } }}
+      onPointerLeave={event => { if (event.pointerType !== "touch" && scrub === null && hover !== null) { setHover(null); releaseSeek(); } }}
     >
       {session && <PluginScripts player={pluginPlayer} />}
       <input ref={subtitleInput} type="file" accept={SUBTITLE_FILES} multiple hidden aria-label="자막 파일 선택" onChange={event => { void addSubtitleFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
@@ -1379,7 +1506,9 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
         onSeeked={event => { setTime(event.currentTarget.currentTime); setEnded(event.currentTarget.ended || event.currentTarget.currentTime >= event.currentTarget.duration); setWaiting(false); swapRevision(); if (translation.busy) translation.prioritize(event.currentTarget.currentTime); }}
         onWaiting={() => setWaiting(true)}
         onPlaying={() => setWaiting(false)}
+        onVolumeChange={event => { setMuted(event.currentTarget.muted); setVolume(event.currentTarget.volume); }}
         onCanPlay={() => setWaiting(false)}
+        onDurationChange={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); }}
         onLoadedMetadata={event => { if (session) setMediaDuration({ sessionId: session.sessionId, seconds: event.currentTarget.duration }); setLevels(engine.current?.levels() ?? []); setLevel(engine.current?.level() ?? -1); }}
         onTimeUpdate={event => {
           const v = event.currentTarget;
@@ -1507,14 +1636,9 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             </div>
           </div>
         )}
-        {notice && <div className="player-notice" role="status">
-          <Captions size={16} /><span>{typeof notice === "string" ? notice : notice.text}</span>
-          {typeof notice === "string"
-            ? <button onClick={() => { setNotice(null); setPanel("subs"); }}>변경</button>
-            : <button onClick={() => { setNotice(null); notice.action.run(); }}>{notice.action.label}</button>}
-        </div>}
+        {notice && <PlayerNotice notice={notice} onDismiss={() => setNotice(null)} />}
         <div className="player-controls-chrome">
-        {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => setHover(null)}
+        {!live && <div className="seek" ref={bar} onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerLeave={() => { setHover(null); releaseSeek(); }} onPointerCancel={() => { setHover(null); setScrub(null); releaseSeek(); }}
           role="slider" aria-label="재생 위치" aria-valuemin={0} aria-valuemax={Math.round(total)} aria-valuenow={Math.round(shown)} aria-valuetext={clock(shown)} tabIndex={0}>
           <div className="seek-rail">
             <i className="seek-buffer" style={{ width: `${total ? (buffered / total) * 100 : 0}%` }} />
@@ -1522,7 +1646,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             {skipRanges.map(range => <i key={range.kind} className={`seek-marker seek-${range.kind}`} title={`${range.label} ${clock(range.start)}–${clock(range.end)}`} style={{ left: `${range.start / total * 100}%`, width: `${(range.end - range.start) / total * 100}%` }} />)}
           </div>
           <i className="seek-thumb" style={{ left: `${total ? (shown / total) * 100 : 0}%` }} />
-          {previewPosition.current !== null && total > 0 && <span className="seek-tip" hidden={hover === null} style={{ left: `clamp(84px, ${previewPosition.current * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={session.sessionId} session={session} seconds={previewPosition.current * total} />}<span>{skipRanges.find(range => previewPosition.current! * total >= range.start && previewPosition.current! * total < range.end)?.label} {clock(previewPosition.current * total)}</span></span>}
+          {hover !== null && foreground && chrome && total > 0 && <span className="seek-tip" style={{ left: `clamp(84px, ${hover * 100}%, calc(100% - 84px))` }}>{session && <SeekPreview key={JSON.stringify([session.sessionId, session.url])} session={session} seconds={hover * total} duration={total} cache={seekFrames} />}<span>{skipRanges.find(range => hover * total >= range.start && hover * total < range.end)?.label} {clock(hover * total)}</span></span>}
         </div>}
 
         <div className="player-controls" data-remote-group>
@@ -1532,8 +1656,8 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
             </button>
             {!live && <><button className="icon-btn icon-btn-l" aria-label={shortcutLabel('seekBackward', `${step}초 뒤로`)} title={shortcutLabel('seekBackward', `${step}초 뒤로`)} onClick={() => seekBy(-step)}><RotateCcw size={26} /></button>
             <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('seekForward', `${step}초 앞으로`)} title={shortcutLabel('seekForward', `${step}초 앞으로`)} onClick={() => seekBy(step)}><RotateCw size={26} /></button></>}
-            <div className="volume">
-              <button className="icon-btn icon-btn-l" aria-label={shortcutLabel('mute', '음소거')} title={shortcutLabel('mute', '음소거')} onClick={toggleMute}><VolumeIcon size={26} /></button>
+            <div className={cx("volume", silent && "is-silent")}>
+              <button className="icon-btn icon-btn-l" aria-label={muteLabel} title={muteLabel} onClick={toggleMute}><VolumeIcon size={26} /></button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="볼륨" onChange={event => changeVolume(Number(event.target.value))} style={{ "--fill": `${(muted ? 0 : volume) * 100}%` } as React.CSSProperties} />
             </div>
             <span className="player-time">{live ? <b className="live-label">● LIVE</b> : <>{clock(shown)} <span>/ {clock(total)}</span></>}</span>
@@ -1655,17 +1779,10 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
           )}
           {panel === "subs" && subsView === "style" && (
             <div className="panel-body panel-form">
-              <div className="pf-block">
-                <span className="pf-label">싱크</span>
-                <div className="sync-row">
-                  <button className="seg-btn" aria-label="-0.5" onClick={() => nudgeSubs(-0.5)}>−0.5</button>
-                  <button className="seg-btn" aria-label="-0.1" onClick={() => nudgeSubs(-0.1)}>−0.1</button>
-                  <button className={cx("sync-value", subOffset !== 0 && "is-shifted")} onClick={() => nudgeSubs(-subOffset)} title="초기화">{subOffset > 0 ? "+" : ""}{subOffset.toFixed(1)}초</button>
-                  <button className="seg-btn" aria-label="+0.1" onClick={() => nudgeSubs(0.1)}>+0.1</button>
-                  <button className="seg-btn" aria-label="+0.5" onClick={() => nudgeSubs(0.5)}>+0.5</button>
-                </div>
-                <p className="panel-note">자막이 늦게 나오면 −, 빨리 나오면 +. 이 영상과 기기에만 저장돼요.</p>
-              </div>
+              <SubtitleSyncControls offset={subOffset} manual={manualSync}
+                automatic={Boolean(settings?.experimentalSubtitleSync && subtitle && session && subtitleAlignmentReference(subtitle, session))}
+                onNudge={nudgeSubs} onRestore={() => saveOffset(undefined)}
+                saveFailed={offsetSaveFailed} onRetry={() => saveOffset(manualOffsetRef.current)} />
               <div className="pf-block">
                 <span className="pf-label">모양</span>
                 {settings && <SubtitleStyleControls variant="player" format={subtitle?.format} settings={settings} save={patch => void saveSettings(patch).catch(() => setNotice('자막 설정을 저장하지 못했어요. 다시 시도해 주세요.'))} />}
@@ -1699,14 +1816,14 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
           {panel === "settings" && (
             <div className="panel-body panel-form">
               <PluginTools {...pluginPlayer} />
-              <div className="pf-block">
+              {!live && <div className="pf-block">
                 <span className="pf-label">재생 속도</span>
                 <div className="seg seg-fill" role="group" aria-label="재생 속도" style={{ "--segments": SPEEDS.length, "--selected": SPEEDS.indexOf(speed) } as React.CSSProperties}>
                   {SPEEDS.map(value => (
                     <button key={value} className={cx(speed === value && "is-active")} aria-pressed={speed === value} onClick={() => changeSpeed(value)}>{value === 1 ? "1x" : `${value}x`}</button>
                   ))}
                 </div>
-              </div>
+              </div>}
               <QualityControl levels={levels} level={level} onLevel={index => { setLevel(index); engine.current?.setLevel(index); }}
                 streams={session.streams} streamId={session.streamId} onStream={switchServer}
                 playingHeight={playingHeight} transcode={session.mode === "transcode"} />
@@ -1739,7 +1856,7 @@ function WatchPlayer({ episodeId, fullscreenHost, pip: documentPip }: { episodeI
               {episodes.map(episode => {
                 const current = episode.id === session.episodeId;
                 return (
-                  <li key={episode.id}>
+                  <li key={episode.id} ref={current ? revealCurrentEpisode : undefined}>
                     <Link to={`/watch/${encodeURIComponent(episode.id)}`} replace className={cx("panel-episode", current && "is-current")} aria-current={current ? "true" : undefined}>
                       <span className="panel-episode-thumb"><Artwork src={episode.thumb} title={episode.title} ratio="landscape" width={240} labelFallback={false} />{episode.progress && !episode.progress.completed && episode.duration ? <ProgressBar ratio={episode.progress.position / episode.duration} className="card-progress" /> : null}</span>
                       <span className="panel-episode-body"><b>{episode.name ? `${episode.number}. ${episode.name}` : /^\d+화$/.test(episodeTitle(episode.title)) ? episodeTitle(episode.title) : `${episode.number}. ${episodeTitle(episode.title)}`}</b><small>{current ? "재생 중" : episode.progress?.completed ? "시청 완료" : episode.duration ? clock(episode.duration) : ""}</small></span>

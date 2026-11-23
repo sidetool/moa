@@ -8,22 +8,32 @@ const empty = (): Alignment => ({ status: 'uncertain', offsetSeconds: 0, match: 
 // A new playback session must compare its own files, even when both track URLs are reused.
 const sessions = new WeakMap<PlaybackSession, Map<string, RenderAlignment>>();
 
+// Extension and online subtitle URLs normally point to the player's same-origin proxy.
+function sameOriginTrack(track: SubtitleTrack): boolean {
+  if (!track.url?.trim()) return false;
+  try { return new URL(track.url, location.href).origin === location.origin; }
+  catch { return false; }
+}
+
 /** Online Korean subtitles only. Translated tracks already inherit their original timings. */
-export async function checkSubtitleAlignment(target: SubtitleTrack, session: PlaybackSession, signal: AbortSignal, segmented = false): Promise<RenderAlignment> {
-  if (target.source !== 'online' || !isKorean(target) || signal.aborted) return empty();
-  const originals = session.subtitles.filter(track => !/(?:forced|signs?|songs?|karaoke|가사|간판)/i.test(track.label));
-  const reference = originals.find(track => track.id !== target.id && ['embedded', 'local', 'extension'].includes(track.source || '') &&
+export function subtitleAlignmentReference(target: SubtitleTrack, session: PlaybackSession): SubtitleTrack | undefined {
+  if (target.source !== 'online' || !isKorean(target) || !sameOriginTrack(target)) return undefined;
+  const originals = session.subtitles.filter(track => !/(?:forced|signs?|songs?|karaoke|가사|간판)/i.test(track.label) && sameOriginTrack(track));
+  return originals.find(track => track.id !== target.id && ['embedded', 'local', 'extension'].includes(track.source || '') &&
     /^(?:en|eng|ja|jpn|jp)(?:-|$)/i.test(track.lang || ''))
     ?? originals.find(track => track.id !== target.id && !track.provenance && track.source !== 'online' && track.source !== 'translation' &&
       /english|japanese|日本語|영어|일본어/i.test(track.label));
+}
+
+export async function checkSubtitleAlignment(target: SubtitleTrack, session: PlaybackSession, signal: AbortSignal, segmented = false): Promise<RenderAlignment> {
+  if (signal.aborted) return empty();
+  const reference = subtitleAlignmentReference(target, session);
   if (!reference) return empty();
   const stop = new AbortController(), abort = () => stop.abort();
   signal.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(abort, 5000);
   let worker: Worker | undefined;
   try {
-    // Remote extensions use the existing same-origin subtitle proxy.
-    if ([target, reference].some(track => new URL(track.url, location.href).origin !== location.origin)) return empty();
     let cache = sessions.get(session);
     if (!cache) { cache = new Map(); sessions.set(session, cache); }
     const key = JSON.stringify([target.id, target.url, target.format, reference.id, reference.url, segmented]);

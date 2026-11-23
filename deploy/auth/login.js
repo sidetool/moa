@@ -1,6 +1,21 @@
 (function () {
   'use strict';
   // This page is served directly, outside Vite's browser compatibility build.
+  // The auth service sets this one-use marker when a session ends or a new session begins.
+  // Keep the marker for the next script-enabled page if storage is unavailable.
+  try {
+    var reset = document.cookie.match(/(?:^|;\s*)moa_scene_reset=([a-f0-9-]{36})(?:;|$)/);
+    if (reset) {
+      try {
+        localStorage.setItem('moa.resumeSceneLogout', reset[1]);
+      } finally {
+        Object.keys(localStorage).forEach(function (key) {
+          if (key.indexOf('moa.resumeScene:') === 0) localStorage.removeItem(key);
+        });
+      }
+      document.cookie = 'moa_scene_reset=; Path=/; SameSite=Lax; Max-Age=0' + (location.protocol === 'https:' ? '; Secure' : '');
+    }
+  } catch (_) { /* Storage is optional on the login page. */ }
   var reveal = document.querySelector('.reveal');
   var password = document.getElementById('password');
   if (reveal && password) reveal.addEventListener('click', function () {

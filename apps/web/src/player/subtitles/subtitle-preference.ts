@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { SubtitlePreference, SubtitleSelection, SubtitleTrack } from '@moa/shared';
 import { api, currentProfileId } from '../../lib/api';
 
@@ -47,15 +48,20 @@ export function rememberSubtitle(episodeId: string, track: SubtitleTrack | null,
   void save.finally(() => { if (saves.get(profile) === save) saves.delete(profile); }).catch(() => {});
   return save;
 }
-export async function restoreSubtitle(episodeId: string, tracks: SubtitleTrack[], preference: SubtitlePreference, signal: AbortSignal): Promise<SubtitleTrack | null> {
+export function findSessionSubtitle(tracks: SubtitleTrack[], preference: Omit<SubtitlePreference, 'episodeId'>, sameEpisode = true): SubtitleTrack | null {
   const saved = ['upload', 'translation', 'online'].includes(preference.source ?? '');
   const matches = (track: SubtitleTrack) => track.source === preference.source && track.label === preference.label && track.lang === preference.lang && track.format === preference.format;
   const current = tracks.find(track => track.id === preference.id && (saved || matches(track)));
   if (current) return current;
-  if (preference.episodeId === episodeId && !saved) {
+  if (sameEpisode && !saved) {
     const matching = tracks.filter(matches);
     return matching.length === 1 ? matching[0] : null;
   }
+  return null;
+}
+export async function restoreSubtitle(episodeId: string, tracks: SubtitleTrack[], preference: SubtitlePreference, signal: AbortSignal): Promise<SubtitleTrack | null> {
+  const current = findSessionSubtitle(tracks, preference, preference.episodeId === episodeId);
+  if (current) return current;
   if (preference.source !== 'upload' && preference.source !== 'translation') return null;
   const items = await api<SubtitleTrack[]>(`/episodes/${encodeURIComponent(preference.episodeId)}/subtitles/${preference.source === 'upload' ? 'uploads' : 'translations'}`, { signal });
   return items.find(track => track.id === preference.id) ?? null;
@@ -77,10 +83,43 @@ export function rememberSubtitlesOff(mediaId: string, off: boolean) {
   } catch { fallback.set(id, off); }
 }
 
-const offsetKey = (episodeId: string) => `moa.subtitleEpisodeOffset:${JSON.stringify([currentProfileId(), episodeId])}`;
-export function subtitleOffsetForEpisode(episodeId: string): number | undefined {
-  try { const saved = localStorage.getItem(offsetKey(episodeId)); if (saved === null) return undefined; const value = Number(saved); return Number.isFinite(value) ? Math.max(-600, Math.min(600, value)) : undefined; } catch { return undefined; }
+function storedOffset(key: string): number | undefined {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw?.trim()) return undefined;
+    const seconds = Number(raw);
+    return Number.isFinite(seconds) ? Math.max(-600, Math.min(600, seconds)) : undefined;
+  } catch { return undefined; }
 }
-export function rememberSubtitleOffset(episodeId: string, seconds: number) {
-  try { localStorage.setItem(offsetKey(episodeId), String(seconds)); } catch {}
+
+export function useEpisodeSubtitleOffset(profile: string | null, episodeId: string) {
+  const key = `moa.subtitleEpisodeOffset:${JSON.stringify([profile, episodeId])}`;
+  const [seconds, setSeconds] = useState(() => storedOffset(key));
+  const current = useRef(seconds);
+  const [saveFailed, setSaveFailed] = useState(false);
+  useLayoutEffect(() => {
+    const read = () => {
+      current.current = storedOffset(key);
+      setSeconds(current.current);
+      setSaveFailed(false);
+    };
+    const changed = (event: StorageEvent) => {
+      // Read the latest value: another tab's queued event can predate this tab's edit.
+      if (event.storageArea === localStorage && (event.key === null || event.key === key)) read();
+    };
+    window.addEventListener('storage', changed);
+    read();
+    return () => window.removeEventListener('storage', changed);
+  }, [key]);
+
+  const save = (value: number | undefined) => {
+    current.current = value;
+    setSeconds(value);
+    try {
+      if (value === undefined) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(value));
+      setSaveFailed(false);
+    } catch { setSaveFailed(true); }
+  };
+  return { seconds, current, save, saveFailed };
 }

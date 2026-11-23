@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Airplay, Cast, Pause, Play, RotateCcw, RotateCw, X } from 'lucide-react';
 import type { PlaybackSession, SubtitleTrack } from '@moa/shared';
 import { Button } from '../../components/ui';
-import { api } from '../../lib/api';
+import { api, currentProfileId } from '../../lib/api';
 import { clock } from '../../lib/format';
 import { readTrack } from '../translation/subtitle-translation';
 import { loadCast, loadCastMedia, type CastMedia, type CastSdk } from './cast';
@@ -12,6 +12,7 @@ type Props = { session: PlaybackSession; subtitle: SubtitleTrack | null; offset:
 
 export function CastButton(props: Props) {
   const { session, subtitle, offset, video } = props;
+  const [viewingProfile] = useState(currentProfileId);
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [sdk, setSdk] = useState<CastSdk | null>(null), [airplay, setAirplay] = useState<'prepared' | 'connected' | null>(null);
   const [remote, setRemote] = useState<{ name: string; time: number; duration: number; paused: boolean; volume: number } | null>(null);
@@ -59,14 +60,14 @@ export function CastButton(props: Props) {
       current.current.onProgress({ position: player.currentTime, duration: player.duration });
       video.current?.pause();
       setRemote({ name: sdk.context.getCurrentSession()?.getCastDevice().friendlyName || 'Chromecast', time: player.currentTime, duration: player.duration, paused: player.isPaused, volume: player.volumeLevel });
-      if (!session.live && player.duration > 0 && Math.abs(player.currentTime - progressAt.current) >= 10) {
+      if (viewingProfile === currentProfileId() && !session.live && player.duration > 0 && Math.abs(player.currentTime - progressAt.current) >= 10) {
         progressAt.current = player.currentTime;
-        void api('/progress', { method: 'POST', body: { episodeId: session.episodeId, position: player.currentTime, duration: player.duration } }).catch(() => {});
+        void api('/progress', { method: 'POST', body: { episodeId: session.episodeId, continueVisibility: session.continueVisibility, position: player.currentTime, duration: player.duration } }).catch(() => {});
       }
     };
     sdk.controller.addEventListener(sdk.event, update);
     return () => sdk.controller.removeEventListener(sdk.event, update);
-  }, [sdk, session]);
+  }, [sdk, session, viewingProfile]);
   useEffect(() => {
     const element = video.current as AirPlayVideo | null;
     if (!element) return;

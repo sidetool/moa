@@ -10,6 +10,9 @@ page.on('pageerror',error=>errors.push(error.message));
 const sources = ['fast','middle','slow'].map(id=>({id,name:id,lang:'ko',type:'anime',enabled:true,installed:true}));
 const card = (id,source='fast')=>({id,title:'작품 2기',type:'anime',provider:{id:source,name:source,lang:'ko',kind:'mangayomi-js'},seasonInfo:{kind:'season',season:2,label:'시즌 2'}});
 let failResolve = false, slowFinished = false, resolves = 0;
+// Keep the first slow source pending until Playwright observes the partial results.
+const firstSlowSource = Promise.withResolvers();
+let initialSearch = true;
 let device = { titleGrouping: true };
 const baseline = process.env.MOA_TEST_BASELINE === '1';
 await page.addInitScript(()=>{localStorage.setItem('moa.profile','test');window.framesSeen=[]; const sample=()=>{const cards=[...document.querySelectorAll('a.poster-card')].map(e=>e.textContent);window.framesSeen.push({cards,sk:document.querySelectorAll('.grid > div.poster-card > .sk').length});requestAnimationFrame(sample)};requestAnimationFrame(sample)});
@@ -21,7 +24,13 @@ await page.route(url=>url.pathname.startsWith('/api/'),async route=>{
  else if(url.pathname==='/api/settings/device') { if(route.request().method()==='PATCH') device={...device,...route.request().postDataJSON().settings}; body={settings:device}; }
  else if(url.pathname==='/api/me') body={role:'admin'};
  else if(url.pathname==='/api/search') {await new Promise(r=>setTimeout(r,700));body={query:'작품',groups:[]};}
- else if(url.pathname.endsWith('/browse')) {const id=url.pathname.split('/')[3];await new Promise(r=>setTimeout(r,{fast:100,middle:900,slow:1800}[id]));if(id==='slow') slowFinished=true;body={items:[card(id,id),card(id+'-duplicate',id)],page:1,hasNextPage:false};}
+ else if(url.pathname.endsWith('/browse')) {
+   const id=url.pathname.split('/')[3];
+   if (id === 'slow' && initialSearch) await firstSlowSource.promise;
+   else await new Promise(r=>setTimeout(r,{fast:100,middle:900,slow:1800}[id]));
+   if(id==='slow') slowFinished=true;
+   body={items:[card(id,id),card(id+'-duplicate',id)],page:1,hasNextPage:false};
+ }
  else if(url.pathname==='/api/media/groups/resolve') {resolves++;await new Promise(r=>setTimeout(r,350));body=[card('grouped')];if(route.request().postDataJSON().query==='오디오') body=[{...card('dub'),title:'(더빙) 작품 2기',baseTitle:'더빙 작품',audio:'dub'},{...card('next'),title:'작품 3기',baseTitle:'작품',seasonInfo:{kind:'season',season:3,label:'시즌 3'}},{...card('sub'),title:'작품 2기 (자막)',baseTitle:'작품 자막',audio:'sub'}];if(failResolve){status=500;body={error:'test-failure'}}}
  else body=[];
  await route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
@@ -31,6 +40,8 @@ try {
  await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===1);
  assert.equal(slowFinished,false,'fast grouped result appears before the slow source finishes');
  if(!baseline) await page.waitForFunction(()=>window.framesSeen.some(f=>f.cards.length===1&&f.sk===6));
+ initialSearch = false;
+ firstSlowSource.resolve();
  await page.waitForFunction(()=>document.querySelector('.search-sources')?.textContent.includes('slow2'));
  await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===1 && document.querySelectorAll('.grid > div.poster-card > .sk').length===0);
  const frames=await page.evaluate(()=>window.framesSeen);
@@ -47,7 +58,13 @@ try {
  failResolve=true;
  await page.goto(base+'/search?q=실패');
  await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===6);
+ const retryGrouping = page.locator('.search-error').filter({hasText:'작품 묶기'}).getByRole('button');
+ await retryGrouping.waitFor();
+ const fallbackFrame = await page.evaluate(()=>window.framesSeen.length);
  failResolve=false;
+ await retryGrouping.click();
+ await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===1 && !document.querySelector('.search-error'));
+ assert.ok(await page.evaluate(start=>window.framesSeen.slice(start).every(frame=>frame.cards.length>0),fallbackFrame),'resolver retry retains the displayed fallback cards');
  await page.goto(base+'/search?q=오디오');
  await page.waitForFunction(()=>document.querySelectorAll('a.poster-card').length===3);
  assert.deepEqual(await page.locator('a.poster-card .card-season').allTextContents(),['시즌 2','시즌 2 · 더빙','시즌 3']);

@@ -40,7 +40,14 @@ test('completed progress promotes next episode; history groups before pagination
     assert.equal(history.items.length,40);
     assert.equal(history.items[0].groupedCount,undefined);
     assert.equal((await get('/api/history?page=2')).items.length,3);
+    const groupedView = await get('/api/history?groupHistory=true&page=1');
+    assert.equal(groupedView.total, 2);
+    assert.equal(groupedView.items[0].groupedCount, 42);
+    assert.equal((await get('/api/settings')).groupHistory, false);
     await settings(true);
+    const continued = await get('/api/history?groupHistory=false&page=2');
+    assert.equal(continued.items.length, 3);
+    assert.equal(continued.items[0].groupedCount, undefined);
     assert.equal(db.get('SELECT COUNT(*) n FROM progress WHERE profile_id=?',profile)!.n,43);
     await app.inject({method:'POST',url:'/api/progress',headers,payload:{episodeId:'ep43',position:1400,duration:1400}});
     assert.ok(!(await get('/api/home?providers=local')).rows.find((r:any)=>r.kind==='continue')?.items.some((c:any)=>c.id==='show'));

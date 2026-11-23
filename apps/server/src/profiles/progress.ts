@@ -12,7 +12,8 @@ export function continueTarget(episodes: Episode[], movie = false, history = epi
     .sort((a,b) => b.progress!.updatedAt.localeCompare(a.progress!.updatedAt) || episodeOrder(b,a))[0];
   if (!latest) return null;
   if (!latest.progress!.completed && sorted.some(e => e.id === latest.id)) return {
-    episodeId: latest.id, position: latest.progress!.position, kind: 'resume',
+    episodeId: latest.id, position: latest.progress!.position, kind: 'resume', updatedAt: latest.progress!.updatedAt,
+    ...(latest.thumb ? { thumb: latest.thumb } : {}),
     label: movie ? '이어보기' : `이어보기 S${latest.season}:E${latest.number}`,
   };
   if (movie) return null;

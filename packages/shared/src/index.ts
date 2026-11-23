@@ -49,6 +49,10 @@ export interface ProgressSummary {
 export interface SeasonInfo { kind: "season" | "part" | "final" | "movie" | "ova" | "special"; season?: number; part?: number; label: string }
 
 export interface ResumeTarget {
+  /** Server revision of the unfinished episode's progress, for matching a device-local still. */
+  updatedAt?: string;
+  /** Thumbnail of the partially watched target episode, including cached metadata stills. */
+  thumb?: string;
   episodeId: string;
   position: number;
   label: string;
@@ -196,20 +200,22 @@ export interface HomeResponse {
 }
 // GET /api/home?type=movie|series|anime&providers=&continueScope=tab|all&watchlistScope=tab|all -> HomeResponse
 // Scope defaults to tab; main Home requests all for personal rows. Type/profile/kids filters still apply.
+// PUT /api/home/continue/:mediaId/hidden (grouped cards supply groupId and resumeMediaId) -> { mediaIds: string[] } for the current profile
 // GET /api/media?type=&genre=&provider=&sort=recent|title|year&page= -> Page<MediaCard>
 // GET /api/genres?type= -> string[]
 
-export interface SearchGroup { provider: ProviderRef; items: MediaCard[]; error?: string }
+/** genreMatch marks results found only by a persisted genre. */
+export interface SearchGroup { provider: ProviderRef; items: (MediaCard & { genreMatch?: true })[]; error?: string }
 // GET /api/search?q= -> { query: string; groups: SearchGroup[] }
 
 /* ---------- Watchlist / history / progress ---------- */
 // GET    /api/watchlist                -> MediaCard[]
 // PUT    /api/watchlist/:mediaId       -> 204
 // DELETE /api/watchlist/:mediaId       -> 204
-// GET    /api/history?page=            -> Page<HistoryEntry>
+// GET    /api/history?page=&groupHistory= -> Page<HistoryEntry> (omit groupHistory to use the profile setting)
 // DELETE /api/history/media/:mediaId -> 204 (current profile, whole title)
 // DELETE /api/history/:episodeId       -> 204
-// POST   /api/progress                 { episodeId, position, duration } -> EpisodeProgress
+// POST   /api/progress                 { episodeId, position, duration, continueVisibility? } -> EpisodeProgress
 //   Marks completed when position >= 90% of duration or < 120s remain.
 
 export interface HistoryEntry { media: MediaCard; episode: Episode; watchedAt: string; groupedCount?: number }
@@ -344,7 +350,11 @@ export function preferredResolutionIndex(heights: readonly (number | undefined)[
 }
 
 export interface PlaybackSession {
+  /** Echo on progress saves from a session opened after this edition was hidden from Continue. */
+  continueVisibility?: { token: string; startPosition: number };
   saved?: boolean;
+  /** A row-major JPEG sheet for local file playback. GET url?index=N, zero-based. */
+  previewSheet?: { url: string; interval: number; columns: number; rows: number; width: number; height: number };
   /** APK process must stay alive; client sends heartbeats while paused and can recreate an expired session once. */
   runtimeDependent?: boolean;
   sessionId: string;
@@ -465,6 +475,8 @@ export interface Settings {
   navigation?: NavigationTab[];
   /** Show one history entry per title. Does not merge stored episode records. */
   groupHistory: boolean;
+  /** Capture and display stills on Home continue-watching cards for this profile. Defaults to true. */
+  showResumeScene: boolean;
   autoplayNext: boolean;
   /** Seconds before the next episode starts automatically. */
   autoplayDelay: number;

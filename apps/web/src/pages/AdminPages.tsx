@@ -1,15 +1,17 @@
+import { useSettingSaveFeedback } from '../features/settings/useSettingSaveFeedback';
 import { PlayerShortcutSettings } from '../features/settings/PlayerShortcutSettings';
 import { SubtitleStyleControls } from '../features/settings/SubtitleStyleControls';
 import { SubtitleMemorySettings } from '../features/settings/SubtitleMemorySettings';
 import { WebsitePlugins } from '../features/plugins/WebsitePlugins';
 import { SubtitleLibrarySettings } from '../features/settings/SubtitleLibrarySettings';
 import { remotePreference, setRemotePreference, type RemotePreference } from "../lib/remote";
+import { ResumeSceneSetting } from "../features/settings/ResumeSceneSetting";
 import { NavigationSettings } from "../features/settings/NavigationSettings";
-import { useDevicePrefs, setDevicePref, saveDevicePrefs, type DevicePrefs } from "../lib/device-prefs";
+import { useDevicePrefs, saveDevicePrefs, type DevicePrefs } from "../lib/device-prefs";
 import { ChevronLeft, FlaskConical, HardDriveDownload, Gamepad2, Languages, LayoutGrid, Network, Play, UserRound, Globe, Info, ChevronRight, Folder, FolderOpen, FolderPlus, Puzzle, RefreshCw, Subtitles, Trash2, Tv, Users, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder, MediaType, ScanStatus, Settings } from "@moa/shared";
 import { NetworkSettings } from "../features/settings/NetworkSettings";
 import { CatalogRefreshSettings } from "../features/settings/CatalogRefreshSettings";
@@ -17,7 +19,7 @@ import { TmdbSettings } from "../features/settings/TmdbSettings";
 import { YouTubeSettings } from "../features/settings/YouTubeSettings";
 import { TranslationSettings } from "../features/settings/TranslationSettings";
 import { DownloadSettings } from "../features/settings/DownloadSettings";
-import { recommendationsKey, useResetDismissals } from "../api/recommendations";
+import { useResetDismissals } from "../api/recommendations";
 import { UpdateSettings } from "../features/settings/UpdateSettings";
 import { ComponentSettings } from "../features/settings/ComponentSettings";
 import { SystemInfo } from "../features/settings/SystemInfo";
@@ -31,44 +33,81 @@ import { SourcesPage } from "./SourcesPage";
 import { AboutPage } from "./AboutPage";
 import { RemoteAccessPage } from "./RemoteAccessPage";
 import { Button, ConfirmDialog, EmptyState, IconButton, SegmentedControl, Select, Skeleton, Spinner, Toggle } from "../components/ui";
-import { api, currentProfileId, hasLoginGate } from "../lib/api";
+import { api, ApiError, currentProfileId, hasLoginGate } from "../lib/api";
+import { keepTabInDialog } from "../lib/dialog-focus";
 import { TYPE_LABEL, cx } from "../lib/format";
 
-function FolderPicker({ onPick, onClose }: { onPick: (path: string, type: MediaType, label: string) => void; onClose: () => void }) {
-  const [path, setPath] = useState("/media");
+function FolderPicker({ onPick, onClose }: { onPick: (path: string, type: MediaType, label: string) => Promise<void>; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const currentCrumb = useRef<HTMLButtonElement>(null);
+  const browseRetry = useRef<HTMLButtonElement>(null);
+  const [paths, setPaths] = useState<string[]>([]);
   const [type, setType] = useState<MediaType>("anime");
   const [label, setLabel] = useState("");
-  const browse = useQuery({ queryKey: ["browse", path], queryFn: () => api<{ path: string; dirs: string[] }>(`/library/browse?path=${encodeURIComponent(path)}`) });
-  const crumbs = path.split("/").filter(Boolean);
+  const path = paths.at(-1);
+  const browse = useQuery({
+    queryKey: ["browse", path], retry: false, networkMode: "always",
+    queryFn: ({ signal }) => api<{ path: string; dirs: string[] }>(path ? `/library/browse?path=${encodeURIComponent(path)}` : "/library/browse", { signal })
+  });
+  const crumbs = paths.length ? paths : browse.data ? [browse.data.path] : [];
+  const selectedPath = browse.data?.path;
+  const add = useMutation({ networkMode: "always", mutationFn: (folder: string) => onPick(folder, type, label) });
+  const selectPath = (next: string[]) => {
+    add.reset();
+    setPaths(next);
+  };
+  useLayoutEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (active === document.body || active === dialog.current || (browse.isError && active === currentCrumb.current)) {
+      // Entering a directory or retrying can remove the focused row. Keep typing and other actions undisturbed.
+      (browseRetry.current ?? currentCrumb.current ?? dialog.current?.querySelector('button'))?.focus({ preventScroll: true });
+    }
+  }, [path, browse.isError, browse.data]);
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label="폴더 추가" onClick={event => event.stopPropagation()}>
+    <dialog ref={dialog} className="sheet-backdrop folder-picker" aria-modal="true" aria-label="폴더 추가"
+      onKeyDown={keepTabInDialog}
+      onCancel={event => { event.preventDefault(); onClose(); }}
+      onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="sheet">
         <header className="sheet-head"><h2>폴더 추가</h2><IconButton label="닫기" onClick={onClose}><X size={20} /></IconButton></header>
         <nav className="crumbs" aria-label="현재 위치">
           {crumbs.map((crumb, i) => (
-            <button key={i} className="crumb" onClick={() => setPath(`/${crumbs.slice(0, i + 1).join("/")}`)}>{crumb}</button>
+            <button key={crumb} ref={i === crumbs.length - 1 ? currentCrumb : undefined} className="crumb" disabled={add.isPending} onClick={() => selectPath(crumbs.slice(0, i + 1))}>{crumb.split("/").filter(Boolean).at(-1) || "/"}</button>
           ))}
         </nav>
         <ul className="dir-list">
           {browse.isPending && Array.from({ length: 4 }, (_, i) => <li key={i}><Skeleton className="dir-sk" /></li>)}
           {browse.data?.dirs.map(dir => (
-            <li key={dir}><button className="dir" onClick={() => setPath(dir.startsWith("/") ? dir : `${browse.data!.path.replace(/\/$/, "")}/${dir}`)}><Folder size={18} /><span>{dir.split("/").filter(Boolean).at(-1)}</span><ChevronRight size={16} /></button></li>
+            <li key={dir}><button className="dir" disabled={add.isPending} onClick={() => {
+              const next = dir.startsWith("/") ? dir : `${browse.data!.path.replace(/\/$/, "")}/${dir}`;
+              const ancestor = crumbs.indexOf(next);
+              selectPath(ancestor < 0 ? [...crumbs, next] : crumbs.slice(0, ancestor + 1));
+            }}><Folder size={18} /><span>{dir.split("/").filter(Boolean).at(-1)}</span><ChevronRight size={16} /></button></li>
           ))}
-          {browse.data && !browse.data.dirs.length && <li className="dir-empty">하위 폴더가 없습니다</li>}
+          {browse.isError && <li className="dir-empty"><p className="settings-error" role="alert">폴더를 열지 못했어요.</p><Button ref={browseRetry} onClick={() => void browse.refetch({ cancelRefetch: false })}>다시 시도</Button></li>}
+          {!browse.isError && browse.data && !browse.data.dirs.length && <li className="dir-empty">하위 폴더가 없습니다</li>}
         </ul>
         <div className="field-row">
           <label className="field"><span>종류</span>
-            <SegmentedControl label="종류" value={type} onChange={setType}
+            <SegmentedControl label="종류" value={type} onChange={setType} disabled={add.isPending}
               options={(["anime", "series", "movie"] as const).map(value => ({ value, label: TYPE_LABEL[value] }))} />
           </label>
-          <label className="field"><span>이름 (선택)</span><input value={label} placeholder={crumbs.at(-1)} onChange={event => setLabel(event.target.value)} /></label>
+          <label className="field"><span>이름 (선택)</span><input value={label} disabled={add.isPending} placeholder={crumbs.at(-1)?.split("/").at(-1)} onChange={event => setLabel(event.target.value)} /></label>
         </div>
         <footer className="sheet-foot">
-          <span className="sheet-path">{path}</span>
-          <Button variant="primary" onClick={() => onPick(path, type, label)}>이 폴더 추가</Button>
+          <span className="sheet-path">{selectedPath ?? path}</span>
+          <Button variant="primary" disabled={!selectedPath || browse.isError} aria-disabled={add.isPending || undefined} onClick={() => {
+            if (selectedPath && !add.isPending) add.mutate(selectedPath, { onSuccess: onClose });
+          }}>{add.isPending ? "추가 중…" : "이 폴더 추가"}</Button>
+          {add.isError && <p className="settings-error folder-add-error" role="alert">{add.error instanceof ApiError && add.error.code === "folder-overlap" ? "이미 등록된 폴더와 경로가 겹쳐요." : "폴더를 추가하지 못했어요. 다시 시도해 주세요."}</p>}
         </footer>
       </div>
-    </div>
+    </dialog>
   );
 }
 
@@ -88,6 +127,14 @@ export function LibraryPage({ embedded = false }: { embedded?: boolean }) {
   const folders = useFolders();
   const client = useQueryClient();
   const [picking, setPicking] = useState(false);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const emptyOpener = useRef<HTMLButtonElement | null>(null);
+  useLayoutEffect(() => {
+    if (picking || !folders.data?.length || !emptyOpener.current) return;
+    if (!emptyOpener.current.isConnected && document.activeElement === document.body)
+      addButton.current?.focus({ preventScroll: true });
+    emptyOpener.current = null;
+  }, [picking, folders.data?.length]);
   const [scanning, setScanning] = useState(false);
   const [deleting, setDeleting] = useState<LibraryFolder[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -100,12 +147,18 @@ export function LibraryPage({ embedded = false }: { embedded?: boolean }) {
     void client.invalidateQueries({ queryKey: keys.folders });
     void client.invalidateQueries({ queryKey: ["home"] });
   }, [scanning, status.data, client]);
-  const scan = async () => { client.setQueryData(keys.scan, await api<ScanStatus>("/library/scan", { method: "POST" })); setScanning(true); };
+  const scan = useMutation({
+    networkMode: "always",
+    mutationFn: async () => {
+      await client.cancelQueries({ queryKey: keys.scan, exact: true });
+      return api<ScanStatus>("/library/scan", { method: "POST" });
+    },
+    onSuccess: result => { client.setQueryData(keys.scan, result); setScanning(true); }
+  });
   const add = async (path: string, type: MediaType, label: string) => {
-    setPicking(false);
     await api<LibraryFolder>("/library/folders", { method: "POST", body: { path, type, label: label || undefined } });
     void client.invalidateQueries({ queryKey: keys.folders });
-    void scan();
+    scan.mutate();
   };
   const remove = async (rows: LibraryFolder[]) => {
     setRemoving(true); setRemoveError(false);
@@ -124,13 +177,15 @@ export function LibraryPage({ embedded = false }: { embedded?: boolean }) {
       <header className="page-head page-head-row">
         {!embedded && <h1>라이브러리</h1>}
         <div className="page-head-actions">
-          <Button icon={<RefreshCw size={18} />} onClick={() => void scan()} disabled={status.data?.running}>다시 스캔</Button>
-          <Button variant="primary" icon={<FolderPlus size={18} />} onClick={() => setPicking(true)}>폴더 추가</Button>
+          <Button icon={<RefreshCw size={18} />} onClick={() => { if (!scan.isPending) scan.mutate(); }} disabled={status.data?.running} aria-disabled={scan.isPending || undefined}>다시 스캔</Button>
+          <Button ref={addButton} variant="primary" icon={<FolderPlus size={18} />} onClick={() => { emptyOpener.current = null; setPicking(true); }}>폴더 추가</Button>
         </div>
       </header>
+      {scan.isError && <p className="settings-error" role="alert">스캔을 시작하지 못했어요. 다시 스캔해 주세요.</p>}
+      {!scan.isError && !scan.isPending && status.data?.error && <p className="settings-error" role="alert">스캔을 마치지 못했어요. 다시 스캔해 주세요.</p>}
       <ScanBanner status={status.data} />
       {folders.isPending && <Skeleton className="folder-sk" />}
-      {folders.data?.length === 0 && <EmptyState icon={<FolderPlus size={40} />} title="등록된 폴더가 없습니다" body="영상이 있는 폴더를 추가하면 자동으로 정리해 줍니다." action={<Button variant="primary" onClick={() => setPicking(true)}>폴더 추가</Button>} />}
+      {folders.data?.length === 0 && <EmptyState icon={<FolderPlus size={40} />} title="등록된 폴더가 없습니다" body="영상이 있는 폴더를 추가하면 자동으로 정리해 줍니다." action={<Button variant="primary" onClick={event => { emptyOpener.current = event.currentTarget; setPicking(true); }}>폴더 추가</Button>} />}
       {!!folders.data?.length && <div className="list-selection"><label><input type="checkbox" aria-label="라이브러리 폴더 모두 선택" checked={selectedFolders.length === folders.data.length} ref={input => { if (input) input.indeterminate = selectedFolders.length > 0 && selectedFolders.length < (folders.data?.length ?? 0); }} disabled={removing} onChange={event => setSelected(event.target.checked ? folders.data!.map(folder => folder.id) : [])} />전체 선택</label><span>{selectedFolders.length}개 선택</span><Button icon={<Trash2 size={16} />} disabled={!selectedFolders.length || removing} onClick={() => { setRemoveError(false); setDeleting(selectedFolders); }}>선택 제거</Button></div>}
       <ul className="folder-list">
         {folders.data?.map(folder => (
@@ -146,7 +201,7 @@ export function LibraryPage({ embedded = false }: { embedded?: boolean }) {
           </li>
         ))}
       </ul>
-      {picking && <FolderPicker onPick={(path, type, label) => void add(path, type, label)} onClose={() => setPicking(false)} />}
+      {picking && <FolderPicker onPick={add} onClose={() => setPicking(false)} />}
       {deleting && <ConfirmDialog title="라이브러리 폴더 제거" confirmLabel="제거" busy={removing} onClose={() => setDeleting(null)} onConfirm={() => void remove(deleting)}>{deleting.length === 1 ? `‘${deleting[0].label}’ 폴더를` : `선택한 폴더 ${deleting.length}개를`} 라이브러리에서 뺄까요? 파일은 삭제되지 않습니다.{removeError && <p className="settings-error" role="alert">일부 폴더를 빼지 못했어요. 남은 폴더만 다시 시도해 주세요.</p>}</ConfirmDialog>}
     </div>
   );
@@ -173,11 +228,14 @@ function TranslationModeRow({ mode, available, korean, onChange }: { mode: Trans
 }
 
 export function SettingsPage() {
+  return <ProfileSettingsPage key={currentProfileId()} />;
+}
+
+function ProfileSettingsPage() {
   const [remote, setRemote] = useState(remotePreference);
   const device = useDevicePrefs();
-  const setPref = setDevicePref;
+
   const settings = useSettings();
-  const client = useQueryClient();
   const admin = useMe().data?.role === "admin";
   const kids = useProfiles().data?.find(item => item.id === currentProfileId())?.kids === true;
   const translation = useTranslationConfig().data;
@@ -213,11 +271,12 @@ export function SettingsPage() {
   useEffect(() => { window.scrollTo(0, 0); }, [category]);
   const categoryPath = (value: string) => `/settings#${value}`;
   const saveSettings = useSaveSettings();
-  const save = (patch: Partial<Settings>) => saveSettings(patch).catch(() => {});
+  const { save, feedback } = useSettingSaveFeedback(saveSettings);
+  const setPref = <K extends keyof DevicePrefs>(key: K, value: DevicePrefs[K]) => void save({ [key]: value });
   const s = settings.data;
   if (!s) return <div className="page-pad narrow"><header className="page-head"><h1>설정</h1></header>{settings.isError ? <EmptyState title="설정을 불러오지 못했습니다" action={<Button onClick={() => void settings.refetch()}>다시 시도</Button>} /> : <><Skeleton className="settings-sk" /><Skeleton className="settings-sk" /></>}</div>;
-  const row = (title: string, desc: string, control: React.ReactNode) => (
-    <div className="setting"><div><b>{title}</b><small>{desc}</small></div>{control}</div>
+  const row = (title: string, desc: string, control: React.ReactNode, field?: string) => (
+    <><div className="setting"><div><b>{title}</b><small>{desc}</small></div>{control}</div>{field && feedback(field)}</>
   );
   const select = <K extends keyof Settings>(key: K, options: Array<[Settings[K], string]>) => (
     <Select className="setting-select" aria-label={String(key)} value={String(s[key])} onChange={value => void save({ [key]: (typeof s[key] === "number" ? Number(value) : value) } as Partial<Settings>)} options={options.map(([value, label]) => ({ value: String(value), label }))} />
@@ -246,50 +305,55 @@ export function SettingsPage() {
       {category === "playback" && <section className="settings-group">
         <h2>모든 기기</h2>
         <div className="settings-card">
-          {row("다음 화 자동 재생", "에피소드가 끝나면 다음 화를 이어서 재생합니다.", <Toggle label="다음 화 자동 재생" checked={s.autoplayNext} onChange={value => void save({ autoplayNext: value })} />)}
-          {s.autoplayNext && row("자동 재생 대기 시간", "다음 화 카드가 나온 뒤 재생까지 기다리는 시간", select("autoplayDelay", [[3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]]))}
-          {row("시청 기록 작품별로 보기", "시청 기록에서 작품마다 가장 최근 회차만 보여줘요. 끄면 회차별로 모두 보여줘요.", <Toggle label="시청 기록 작품별로 보기" checked={s.groupHistory} onChange={value => void save({ groupHistory: value }).then(() => client.invalidateQueries({ queryKey: keys.history }))} />)}
-          {row("영화·드라마 구간 건너뛰기", "외부 구간 정보가 있는 영화·드라마에서 오프닝·크레딧 건너뛰기 버튼을 보여줘요. 작품 정보만 조회하며 애니 구간은 이 설정과 관계없이 그대로예요.", <Toggle label="영화·드라마 구간 건너뛰기" checked={s.generalSkipEnabled !== false} onChange={value => void save({ generalSkipEnabled: value })} />)}
-          {row("기본 화질", "여러 화질을 제공하는 영상은 이 화질 이하에서 가장 높은 화질로 시작해요. 재생 중에도 바꿀 수 있어요.", select("preferredQuality", [["auto", "자동"], ["1080", "1080p"], ["720", "720p"], ["480", "480p"]]))}
-          {row("하드웨어 변환", "브라우저가 재생할 수 없는 영상을 서버 GPU로 변환합니다.", <Toggle label="하드웨어 변환" checked={s.hardwareTranscoding} onChange={value => void save({ hardwareTranscoding: value })} />)}
+          {row("다음 화 자동 재생", "에피소드가 끝나면 다음 화를 이어서 재생합니다.", <Toggle label="다음 화 자동 재생" checked={s.autoplayNext} onChange={value => void save({ autoplayNext: value })} />, "autoplayNext")}
+          {s.autoplayNext && row("자동 재생 대기 시간", "다음 화 카드가 나온 뒤 재생까지 기다리는 시간", select("autoplayDelay", [[3, "3초"], [5, "5초"], [10, "10초"], [15, "15초"]]), "autoplayDelay")}
+          {row("시청 기록 작품별로 보기", "시청 기록에서 작품마다 가장 최근 회차만 보여줘요. 끄면 회차별로 모두 보여줘요.", <Toggle label="시청 기록 작품별로 보기" checked={s.groupHistory} onChange={value => void save({ groupHistory: value })} />, "groupHistory")}
+          {row("영화·드라마 구간 건너뛰기", "외부 구간 정보가 있는 영화·드라마에서 오프닝·크레딧 건너뛰기 버튼을 보여줘요. 작품 정보만 조회하며 애니 구간은 이 설정과 관계없이 그대로예요.", <Toggle label="영화·드라마 구간 건너뛰기" checked={s.generalSkipEnabled !== false} onChange={value => void save({ generalSkipEnabled: value })} />, "generalSkipEnabled")}
+          {row("기본 화질", "여러 화질을 제공하는 영상은 이 화질 이하에서 가장 높은 화질로 시작해요. 재생 중에도 바꿀 수 있어요.", select("preferredQuality", [["auto", "자동"], ["1080", "1080p"], ["720", "720p"], ["480", "480p"]]), "preferredQuality")}
+          {row("하드웨어 변환", "브라우저가 재생할 수 없는 영상을 서버 GPU로 변환합니다.", <Toggle label="하드웨어 변환" checked={s.hardwareTranscoding} onChange={value => void save({ hardwareTranscoding: value })} />, "hardwareTranscoding")}
           <PlaybackAdvancedSettings settings={s} />
         </div>
       </section>}
       {category === "playback" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
-        {row("재생 시 전체 화면", "작품을 누르면 바로 전체 화면으로 재생합니다. 끄면 재생 화면에서 직접 전환해요.", <Toggle label="재생 시 전체 화면" checked={device.fullscreenOnPlay} onChange={value => setPref("fullscreenOnPlay", value)} />)}
-        {row("오프닝·엔딩 자동 건너뛰기", "구간 정보가 있는 회차에서 오프닝과 엔딩을 알아서 넘깁니다. 되감으면 다시 볼 수 있어요.", <Toggle label="오프닝·엔딩 자동 건너뛰기" checked={device.autoSkip} onChange={value => setPref("autoSkip", value)} />)}
-        {row("화면 채우기", "영상을 화면 비율에 맞춰 꽉 채웁니다. 가장자리가 조금 잘릴 수 있어요.", <Toggle label="화면 채우기" checked={device.videoFill} onChange={value => setPref("videoFill", value)} />)}
-        <Anime4kSetting checked={device.experimentalAnime4k} onChange={value => setPref("experimentalAnime4k", value)} />
+        {row("재생 시 전체 화면", "작품을 누르면 바로 전체 화면으로 재생합니다. 끄면 재생 화면에서 직접 전환해요.", <Toggle label="재생 시 전체 화면" checked={device.fullscreenOnPlay} onChange={value => setPref("fullscreenOnPlay", value)} />, "fullscreenOnPlay")}
+        {row("오프닝·엔딩 자동 건너뛰기", "구간 정보가 있는 회차에서 오프닝과 엔딩을 알아서 넘깁니다. 되감으면 다시 볼 수 있어요.", <Toggle label="오프닝·엔딩 자동 건너뛰기" checked={device.autoSkip} onChange={value => setPref("autoSkip", value)} />, "autoSkip")}
+        {row("화면 채우기", "영상을 화면 비율에 맞춰 꽉 채웁니다. 가장자리가 조금 잘릴 수 있어요.", <Toggle label="화면 채우기" checked={device.videoFill} onChange={value => setPref("videoFill", value)} />, "videoFill")}
+        <Anime4kSetting checked={device.experimentalAnime4k} onChange={value => setPref("experimentalAnime4k", value)} />{feedback("experimentalAnime4k")}
       </div></section>}
       {category === "controls" && <section className="settings-group"><div className="settings-card">
         {row("TV 리모컨 모드", "방향키로 이동하고 확인 버튼으로 선택합니다. 자동 모드는 TV 감지 또는 탐색 화면의 방향키 입력으로 켜집니다.", <Select className="setting-select" aria-label="TV 리모컨 모드" value={remote} onChange={value => { setRemote(value as RemotePreference); setRemotePreference(value as RemotePreference); }} options={[{ value: "auto", label: "자동" }, { value: "on", label: "항상 켜기" }, { value: "off", label: "끄기" }]} />)}
-        {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 탐색 단축키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />)}
-        {row("길게 누르기 배속", "영상이나 Space 키를 길게 누르는 동안 적용할 속도", <Select className="setting-select" aria-label="길게 누르기 배속" value={String(device.holdSpeed)} onChange={value => setPref("holdSpeed", Number(value) as DevicePrefs["holdSpeed"])} options={[1.25, 1.5, 2, 2.5, 3].map(value => ({ value: String(value), label: `${value}배속` }))} />)}
+        {row("빠른 탐색 간격", "두 번 탭, 앞으로·뒤로 버튼과 탐색 단축키로 이동하는 시간", <Select className="setting-select" aria-label="빠른 탐색 간격" value={String(device.seekStep)} onChange={value => setPref("seekStep", Number(value) as DevicePrefs["seekStep"])} options={[5, 10, 15, 30].map(value => ({ value: String(value), label: `${value}초` }))} />, "seekStep")}
+        {row("길게 누르기 배속", "영상이나 Space 키를 길게 누르는 동안 적용할 속도", <Select className="setting-select" aria-label="길게 누르기 배속" value={String(device.holdSpeed)} onChange={value => setPref("holdSpeed", Number(value) as DevicePrefs["holdSpeed"])} options={[1.25, 1.5, 2, 2.5, 3].map(value => ({ value: String(value), label: `${value}배속` }))} />, "holdSpeed")}
       </div></section>}
       {category === "controls" && <PlayerShortcutSettings key={currentProfileId()} shortcuts={device.playerShortcuts} save={value => saveDevicePrefs({ playerShortcuts: value })} />}
       {category === "subtitles" && <section className="settings-group">
         <h2>언어와 자동 찾기</h2>
         <div className="settings-card">
-          {row("기본 자막 언어", "여러 자막이 있으면 이 언어를 먼저 고릅니다.", select("defaultSubtitleLang", [["ko", "한국어"], ["en", "영어"], ["ja", "일본어"], ["off", "끄기"]]))}
-          {row("한국어 자막 자동 찾기", "애니에 한국어 자막이 없으면 애니시아·자막 블로그에서 찾아 적용합니다.", <Toggle label="한국어 자막 자동 찾기" checked={s.autoFetchSubtitles} onChange={value => void save({ autoFetchSubtitles: value })} />)}
-          {translation && <TranslationModeRow mode={translationModeOf(s)} available={translation.configured && translation.enabled} korean={s.defaultSubtitleLang === "ko"} onChange={translationMode => void save({ translationMode })} />}
-          <SubtitleAdvancedSettings settings={s} admin={false} save={patch => void save(patch)} />
+          {row("기본 자막 언어", "여러 자막이 있으면 이 언어를 먼저 고릅니다.", select("defaultSubtitleLang", [["ko", "한국어"], ["en", "영어"], ["ja", "일본어"], ["off", "끄기"]]), "defaultSubtitleLang")}
+          {row("한국어 자막 자동 찾기", "애니에 한국어 자막이 없으면 애니시아·자막 블로그에서 찾아 적용합니다.", <Toggle label="한국어 자막 자동 찾기" checked={s.autoFetchSubtitles} onChange={value => void save({ autoFetchSubtitles: value })} />, "autoFetchSubtitles")}
+          {translation && <TranslationModeRow mode={translationModeOf(s)} available={translation.configured && translation.enabled} korean={s.defaultSubtitleLang === "ko"} onChange={translationMode => void save({ translationMode })} />}{feedback("translationMode")}
+          <SubtitleAdvancedSettings settings={s} admin={false} save={patch => void save(patch, "subtitle-advanced")} />{feedback("subtitle-advanced")}
         </div>
       </section>}
       {category === "subtitles" && <section className="settings-group">
         <h2>자막 모양 · 이 기기</h2>
-        <div className="settings-card"><SubtitleStyleControls settings={s} save={patch => void save(patch)} /></div>
+        <div className="settings-card"><SubtitleStyleControls settings={s} save={patch => void save(patch, "subtitle-style")} />{feedback("subtitle-style")}</div>
         <p className="settings-hint">싱크는 재생 화면의 자막 설정에서 조절해요.</p>
       </section>}
-      {category === "experimental" && <ShortsSettings settings={s} kids={kids} save={patch => void save(patch)} />}
+      {category === "experimental" && <><ShortsSettings settings={s} kids={kids} save={patch => void save(patch, "shorts")} />{feedback("shorts")}</>}
       {category === "experimental" && <section className="settings-group"><h2>이 기기에서만</h2><div className="settings-card">
-        {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />)}
-        {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />)}
+        {row("다른 소스 시즌 모아보기", "작품 상세의 시즌 메뉴에 다른 소스에 있는 정규 시즌까지 모아 순서대로 보여줘요. 시즌을 찾는 동안 목록이 늦게 채워질 수 있어요.", <Toggle label="다른 소스 시즌 모아보기" checked={device.seasonSwitcher} onChange={value => setPref("seasonSwitcher", value)} />, "seasonSwitcher")}
+        {row("작품 묶기", "여러 소스의 같은 작품을 카드 하나로 합쳐 보여줘요. 끄면 소스별 결과를 그대로 보여줘요.", <Toggle label="작품 묶기" checked={device.titleGrouping} onChange={value => setPref("titleGrouping", value)} />, "titleGrouping")}
       </div></section>}
       {category === "about" && <>{admin && <><SystemInfo /><UpdateSettings /><ComponentSettings /></>}<AboutPage embedded /></>}
-      {category === "tabs" && <NavigationSettings />}
-      {category === "tabs" && <RecommendationSettings enabled={s.recommendationsEnabled !== false} anilist={s.anilistRecommendationsEnabled === true}
-        onChange={patch => void save(patch).then(() => client.invalidateQueries({ queryKey: recommendationsKey }))} />}
+      {category === "tabs" && <>
+        <section className="settings-group">
+          <ResumeSceneSetting checked={s.showResumeScene !== false} save={showResumeScene => saveSettings({ showResumeScene })} />
+        </section>
+        <NavigationSettings />
+      </>}
+      {category === "tabs" && <><RecommendationSettings enabled={s.recommendationsEnabled !== false} anilist={s.anilistRecommendationsEnabled === true}
+        onChange={patch => void save(patch, "recommendations")} />{feedback("recommendations")}</>}
       {admin && category === "sources" && <SourcesPage embedded />}
       {admin && category === "accounts" && <AccountsPage embedded />}
       {admin && category === "library" && <><LibraryPage embedded /><section className="settings-group"><h2>작품 정보</h2><div className="settings-card"><CatalogRefreshSettings /><TmdbSettings /><YouTubeSettings /></div><p className="settings-hint">This product uses the TMDB API but is not endorsed or certified by TMDB.</p></section></>}

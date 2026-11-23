@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Settings, NavigationTab } from '@moa/shared';
 
-export const DEFAULT_SETTINGS: Settings = { shortsEnabled: false, shortsPlayback: 'embed', shortsQuality: 'auto', shortsScreenFit: true, shortsCategories: ['movie','series','anime'], shortsMode: 'mixed', shortsHideWatched: true, shortsRepeatDays: 7, recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, autoplayNext: true, autoplayDelay: 5, nextEpisodeLeadSeconds: 0, defaultSubtitleLang: 'ko', subtitleSize: 'medium', preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true };
+export const DEFAULT_SETTINGS: Settings = { shortsEnabled: false, shortsPlayback: 'embed', shortsQuality: 'auto', shortsScreenFit: true, shortsCategories: ['movie','series','anime'], shortsMode: 'mixed', shortsHideWatched: true, shortsRepeatDays: 7, recommendationsEnabled: true, generalSkipEnabled: true, groupHistory: true, showResumeScene: true, autoplayNext: true, autoplayDelay: 5, nextEpisodeLeadSeconds: 0, defaultSubtitleLang: 'ko', subtitleSize: 'medium', preferredQuality: 'auto', hardwareTranscoding: true, autoFetchSubtitles: true, experimentalSubtitleSync: true, experimentalSegmentedSubtitleSync: false, translationMode: 'manual', translationSourcePriority: 'site', skipSubtitleSearchWithSiteTrack: true, skipTranslationWithoutSubtitles: true };
 export class Store {
   db: DatabaseSync;
   constructor(dataDir: string, database?: DatabaseSync) {
@@ -20,6 +20,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS episodes(id TEXT PRIMARY KEY,media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,season INTEGER NOT NULL,number INTEGER NOT NULL,title TEXT NOT NULL,duration REAL NOT NULL,thumb TEXT);
       CREATE TABLE IF NOT EXISTS files(episode_id TEXT PRIMARY KEY REFERENCES episodes(id) ON DELETE CASCADE,path TEXT UNIQUE NOT NULL,size INTEGER NOT NULL,mtime REAL NOT NULL,fingerprint TEXT NOT NULL,probe TEXT NOT NULL,subtitles TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS progress(profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,episode_id TEXT REFERENCES episodes(id) ON DELETE CASCADE,position REAL NOT NULL,duration REAL NOT NULL,completed INTEGER NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(profile_id,episode_id));
+      CREATE TABLE IF NOT EXISTS hidden_continue(profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,media_id TEXT NOT NULL REFERENCES media(id) ON DELETE CASCADE,token TEXT NOT NULL,PRIMARY KEY(profile_id,media_id));
       CREATE TABLE IF NOT EXISTS watchlist(profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,media_id TEXT REFERENCES media(id) ON DELETE CASCADE,added_at TEXT NOT NULL,PRIMARY KEY(profile_id,media_id));
       CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY,path TEXT NOT NULL,local INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS enrichment_cache(key TEXT PRIMARY KEY,payload TEXT NOT NULL,expires_at INTEGER);

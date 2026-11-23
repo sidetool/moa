@@ -163,7 +163,7 @@ export function AppShell() {
         </div>
       </header>
 
-      <main className="page" key={location.pathname}>
+      <main className="page" key={location.pathname} tabIndex={onShorts ? -1 : undefined}>
         <Outlet />
       </main>
       {!onShorts && <UpdateNotice />}

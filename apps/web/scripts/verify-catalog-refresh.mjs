@@ -11,7 +11,7 @@ const failures = [];
 
 function installFixture() {
   if (!localStorage.getItem('moa.profile')) localStorage.setItem('moa.profile', 'p1');
-  const state = window.catalogFixture = { titleReads: 0, sourceReads: 0, listReads: [], statusReads: 0, settingsReads: 0, refreshes: [], saves: [], observed: 1 };
+  const state = window.catalogFixture = { titleReads: 0, sourceReads: 0, listReads: [], statusReads: 0, settingsReads: 0, refreshes: [], saves: [], observed: 1, failedGroupDeletes: 0 };
   const wait = key => new Promise(resolve => { state[key] = resolve; });
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
   function withSeasons(detail) {
@@ -78,6 +78,9 @@ function installFixture() {
           return json(localStorage.getItem('verify.groupRemoved') ? [] : [{ ...card, id: 'saved-edition', inWatchlist: true,
             groupId: 'manual:fixture', groupMemberIds: ['saved-edition'], watchlistMediaId: 'saved-edition', resumeMediaId: 'demo-1' }]);
         }
+        // Writes that bypass the saved group; counted across reloads.
+        if (localStorage.getItem('verify.savedGroup') && url.pathname === '/api/watchlist/demo-1' && method !== 'GET')
+          localStorage.setItem('verify.ungroupedWrites', String(Number(localStorage.getItem('verify.ungroupedWrites') ?? 0) + 1));
         if (localStorage.getItem('verify.savedGroup') && url.pathname === '/api/watchlist/demo-1/group' && url.searchParams.get('savedEdition') === 'saved-edition') {
           if (method === 'GET') {
             if (localStorage.getItem('verify.failGroupRead')) return json({ error: 'fixture-unavailable' }, 503);
@@ -86,7 +89,7 @@ function installFixture() {
           }
           if (method === 'DELETE') {
             if (localStorage.getItem('verify.failGroupWrite')) {
-              state.groupWriteFailed = true;
+              state.failedGroupDeletes++;
               return json({ error: 'fixture-unavailable' }, 503);
             }
             localStorage.setItem('verify.groupRemoved', '1');
@@ -409,7 +412,8 @@ try {
     const path = '/title/demo-1?savedEdition=saved-edition';
     assert.equal(await card.getAttribute('href'), path);
     await card.click();
-    const saved = page.getByRole('button', { name: '내 목록에 있음', exact: true });
+    const actions = page.locator('.hero-actions');
+    const saved = actions.getByRole('button', { name: '내 목록에 있음', exact: true, pressed: true, disabled: false });
     await saved.waitFor();
     assert.equal(await saved.getAttribute('aria-pressed'), 'true');
     const direct = await page.context().newPage();
@@ -418,24 +422,38 @@ try {
     await direct.close();
     await fixture(page, () => localStorage.setItem('verify.failGroupWrite', '1'));
     await saved.click();
-    await page.waitForFunction(() => window.catalogFixture.groupWriteFailed && document.querySelector('.hero-actions [aria-pressed]')?.disabled === false);
-    assert.equal(await saved.getAttribute('aria-pressed'), 'true');
+    await page.getByRole('alert').filter({ hasText: '내 목록에서 빼지 못했어요' }).waitFor();
+    await saved.waitFor();
+    assert.equal(await fixture(page, () => window.catalogFixture.failedGroupDeletes), 3);
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), null);
     await fixture(page, () => localStorage.removeItem('verify.failGroupWrite'));
     await saved.click();
-    const removed = page.getByRole('button', { name: '내 목록', exact: true });
+    const removed = actions.getByRole('button', { name: '내 목록', exact: true, pressed: false, disabled: false });
     await removed.waitFor();
-    assert.equal(await removed.getAttribute('aria-pressed'), 'false');
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), '1');
     await page.reload();
     await removed.waitFor();
     await removed.click();
     await saved.waitFor();
     await fixture(page, () => localStorage.setItem('verify.failGroupRead', '1'));
     await page.reload();
-    const retry = page.getByRole('button', { name: '내 목록 상태 다시 확인', exact: true });
-    await retry.waitFor();
+    // An unreadable group keeps the same "내 목록" button without a pressed state and a short note;
+    // pressing it only checks again and never writes to the ungrouped edition.
+    const ungrouped = () => fixture(page, () => localStorage.getItem('verify.ungroupedWrites'));
+    const ungroupedBefore = await ungrouped();
+    await page.getByRole('alert').filter({ hasText: '내 목록 상태를 확인하지 못했어요' }).waitFor({ timeout: 10_000 });
+    const unknown = page.locator('.hero-actions').getByRole('button', { name: '내 목록', exact: true });
+    assert.equal(await unknown.getAttribute('aria-pressed'), null);
+    await unknown.click();
+    // Let the re-check and its quiet retries finish before the fixture recovers.
+    await page.locator('.hero-actions button[aria-disabled="true"]').waitFor();
+    await page.waitForFunction(() => !document.querySelector('.hero-actions button[aria-disabled="true"]') && document.querySelector('.title-action-note'), null, { timeout: 10_000 });
+    assert.equal(await fixture(page, () => localStorage.getItem('verify.groupRemoved')), null);
+    assert.equal(await ungrouped(), ungroupedBefore, 'no write to another edition while the group is unknown');
     await fixture(page, () => localStorage.removeItem('verify.failGroupRead'));
-    await retry.click();
+    await unknown.click();
     await saved.waitFor();
+    assert.equal(await ungrouped(), ungroupedBefore);
     await fixture(page, () => localStorage.setItem('verify.groupSeparated', '1'));
     await page.reload();
     await removed.waitFor();

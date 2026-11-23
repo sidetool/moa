@@ -9,9 +9,10 @@ import { useSources } from "./SourcesPage";
 import { keys, useHistory, useMe, useProfiles, useSearch, useSettings, useWatchlist } from "../api/queries";
 import { PosterCard } from "../components/Cards";
 import { Avatar } from "../features/layout/AppShell";
+import { clearResumeScenes } from '../player/playback/resume-scene';
 import { logout } from "./AccountsPage";
 import { Artwork } from "../components/Artwork";
-import { Button, ConfirmDialog, EmptyState, ProgressBar, Skeleton, Toggle, Select } from "../components/ui";
+import { Button, ConfirmDialog, EmptyState, ProgressBar, ScrollLoader, Skeleton, Toggle, Select } from "../components/ui";
 import { api, currentProfileId, setCurrentProfileId } from "../lib/api";
 import { clock } from "../lib/format";
 import { settledQuery, useSettledQuery } from "../lib/search-input";
@@ -35,6 +36,14 @@ export function SearchPage() {
   useSettledQuery(value, q, commit);
 
   const groups = result.data?.groups.filter(group => group.items.length || group.error) ?? [];
+  const failures = [];
+  if (result.isError) failures.push({ label: "내 라이브러리", retry: result.refetch });
+  else {
+    const failedGroups = groups.filter(group => group.error);
+    if (failedGroups.length) failures.push({ label: failedGroups.map(group => group.provider.name).join(", "), retry: result.refetch });
+  }
+  if (sources.isError) failures.push({ label: "설치된 소스 목록", retry: sources.refetch });
+  const local = groups.flatMap(group => group.items).sort((a, b) => Number(!!a.genreMatch) - Number(!!b.genreMatch));
   return (
     <div className="page-pad search-page">
       <div className="searchbox searchbox-page">
@@ -44,8 +53,7 @@ export function SearchPage() {
         {value && <button className="searchbox-clear" aria-label="지우기" onClick={() => { setValue(""); commit(""); input.current?.focus(); }}><X size={18} /></button>}
       </div>
       {!q && <EmptyState icon={<SearchIcon size={40} />} title="무엇을 볼까요?" body="내 라이브러리와 설치된 소스에서 한 번에 찾습니다." />}
-      {q && result.isSuccess && !groups.length && !installed.length && <EmptyState title={`'${q}'에 대한 결과가 없습니다`} body="다른 제목이나 원제로 검색해 보세요." />}
-      {q && <GroupedSearch key={q} sources={installed} query={q} local={groups.flatMap(g=>g.items)} pending={result.isPending || sources.isPending}/>}
+      {q && <GroupedSearch key={q} sources={installed} query={q} local={local} pending={result.isPending || sources.isPending} failures={failures} />}
 
     </div>
   );
@@ -99,44 +107,56 @@ export function MyListPage() {
 }
 
 export function HistoryPage() {
-  const history = useHistory();
   const settings = useSettings();
+  const history = useHistory();
+  const firstEntry = history.data?.pages[0]?.items[0];
+  const grouping = firstEntry ? firstEntry.groupedCount !== undefined : settings.data?.groupHistory;
+  const profile = currentProfileId();
   const client = useQueryClient();
   const [confirm, setConfirm] = useState<HistoryEntry | null>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const heading = useRef<HTMLHeadingElement>(null);
   // A grouped entry stands for the whole title, so deleting it clears every episode's record.
-  const remove = async (entry: HistoryEntry) => {
+  const remove = async (entry: HistoryEntry, opener?: HTMLButtonElement) => {
     setBusy(true); setError("");
     try {
       const grouped = entry.groupedCount !== undefined;
       await api(grouped ? `/history/media/${encodeURIComponent(entry.media.id)}` : `/history/${encodeURIComponent(entry.episode.id)}`, { method: "DELETE" });
+      if (profile) clearResumeScenes(profile, grouped ? { mediaId: entry.media.id } : { episodeId: entry.episode.id });
+      if (opener && document.activeElement === opener) {
+        const row = opener.closest("li");
+        const neighbor = row?.nextElementSibling ?? row?.previousElementSibling;
+        (neighbor?.querySelector<HTMLElement>(".history-body") ?? heading.current)?.focus();
+      }
       setConfirm(null);
       void client.invalidateQueries({ queryKey: ["recommendations"] });
-      void client.invalidateQueries({ queryKey: keys.history });
       void client.invalidateQueries({ queryKey: ["grouped-cards"] });
       void client.invalidateQueries({ queryKey: ["home"] });
+      await client.invalidateQueries({ queryKey: [...keys.history, profile] });
     } catch {
       setError("기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.");
     } finally { setBusy(false); }
   };
-  const grouping = settings.data?.groupHistory ?? true;
-  // One save at a time: the switch stays disabled until the server answers, so toggles cannot race.
   const setGrouping = async (groupHistory: boolean) => {
     setSaving(true); setError("");
-    client.setQueryData<Settings>(keys.settings, old => (old ? { ...old, groupHistory } : old));
-    try { client.setQueryData(keys.settings, await api<Settings>("/settings", { method: "PATCH", body: { groupHistory } })); }
-    catch { setError("설정을 저장하지 못했어요."); await client.invalidateQueries({ queryKey: keys.settings }); }
+    try {
+      const saved = await api<Settings>("/settings", { method: "PATCH", body: { groupHistory } });
+      if (currentProfileId() !== profile) return;
+      client.setQueryData<Settings>(keys.settings(profile), old => old ? { ...old, groupHistory: saved.groupHistory } : saved);
+      await client.resetQueries({ queryKey: [...keys.history, profile] });
+    } catch { setError("설정을 저장하지 못했어요."); }
     finally { setSaving(false); }
-    void client.invalidateQueries({ queryKey: keys.history });
   };
-  const items = history.data?.items ?? [];
+  const entries = history.data?.pages.flatMap(page => page.items) ?? [];
+  const items = [...new Map(entries.map(entry => [grouping ? entry.media.id : entry.episode.id, entry])).values()];
+  const retry = () => history.isFetchNextPageError ? history.fetchNextPage() : history.refetch();
   return (
     <div className="page-pad">
       <header className="page-head page-head-row">
-        <h1>시청 기록</h1>
-        {settings.data && <label className="history-grouping"><span>작품별로 보기</span><Toggle label="작품별로 보기" checked={grouping} disabled={saving} onChange={value => void setGrouping(value)} /></label>}
+        <h1 ref={heading} tabIndex={-1}>시청 기록</h1>
+        {grouping !== undefined && <label className="history-grouping"><span>작품별로 보기</span><Toggle label="작품별로 보기" checked={grouping} aria-disabled={saving || busy} onChange={value => void setGrouping(value)} /></label>}
       </header>
       {error && !confirm && <p className="history-error" role="alert">{error}</p>}
       {history.isPending && <div className="history-list">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="history-sk" />)}</div>}
@@ -145,25 +165,35 @@ export function HistoryPage() {
         {items.map(entry => {
           const p = entry.episode.progress;
           const count = entry.groupedCount;
+          const rowId = count !== undefined ? `media:${entry.media.id}` : `episode:${entry.episode.id}`;
           const episodes = count !== undefined && count > 1 ? `${count}개 회차` : null;
           return (
-            <li key={count !== undefined ? `media:${entry.media.id}` : entry.episode.id} className="history-item">
+            <li key={rowId} className="history-item">
               <Link to={`/watch/${encodeURIComponent(entry.episode.id)}`} className="history-thumb" aria-label={`${entry.media.title} ${entry.media.type === "movie" ? "" : entry.episode.title} 재생`}>
                 <Artwork src={entry.episode.thumb ?? entry.media.backdrop} title={entry.media.title} ratio="landscape" width={320} labelFallback={false} />
                 {p && <ProgressBar ratio={p.completed ? 1 : p.position / Math.max(1, p.duration)} className="card-progress" />}
               </Link>
-              <Link to={`/title/${encodeURIComponent(entry.media.id)}`} className="history-body">
+              <Link to={`/title/${encodeURIComponent(entry.media.id)}`} className="history-body" data-remote-id={`history-title:${rowId}`}>
                 <b>{entry.media.title}</b>
                 <span>{entry.media.type === "movie" ? "" : `${count !== undefined ? "최근 " : ""}${entry.episode.title} · `}{p?.completed ? "시청 완료" : p ? `${clock(p.position)} / ${clock(p.duration)}` : ""}</span>
                 <small>{[new Date(entry.watchedAt).toLocaleString("ko-KR", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }), episodes].filter(Boolean).join(" · ")}</small>
               </Link>
-              {count !== undefined
-                ? <button className="icon-btn" aria-label={`${entry.media.title} 작품 기록 모두 삭제`} title="작품 기록 모두 삭제" disabled={busy} onClick={() => { setError(""); if (count > 1) setConfirm(entry); else void remove(entry); }}><Trash2 size={18} /></button>
-                : <button className="icon-btn" aria-label="기록에서 삭제" title="기록에서 삭제" disabled={busy} onClick={() => void remove(entry)}><X size={18} /></button>}
+              <button className="icon-btn" data-remote-id={`history-delete:${rowId}`}
+                aria-label={count !== undefined ? `${entry.media.title} 작품 기록 모두 삭제` : "기록에서 삭제"}
+                title={count !== undefined ? "작품 기록 모두 삭제" : "기록에서 삭제"} aria-disabled={busy || saving}
+                onClick={event => {
+                  if (busy || saving) return;
+                  if (count !== undefined && count > 1) { setError(""); setConfirm(entry); }
+                  else void remove(entry, event.currentTarget);
+                }}>
+                {count !== undefined ? <Trash2 size={18} /> : <X size={18} />}
+              </button>
             </li>
           );
         })}
       </ul>
+      {history.isError && <EmptyState title="시청 기록을 불러오지 못했어요" action={<Button onClick={() => void retry()}>다시 시도</Button>} />}
+      <ScrollLoader hasMore={history.hasNextPage} loading={history.isFetching || saving || busy} failed={history.isError} onLoad={history.fetchNextPage} />
       {confirm && <ConfirmDialog title="작품 기록을 모두 삭제할까요?" confirmLabel="모두 삭제" busy={busy} onConfirm={() => void remove(confirm)} onClose={() => { setConfirm(null); setError(""); }}>
         <p>‘{confirm.media.title}’의 {confirm.groupedCount}개 회차 기록과 이어볼 위치가 모두 지워져요.</p>
         {error && <p className="history-error" role="alert">{error}</p>}

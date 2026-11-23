@@ -7,6 +7,7 @@ import { preferredResolutionIndex } from '../../../packages/shared/src/index.ts'
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 
 const source = stripTypeScriptTypes(await readFile(new URL('../src/player/playback/engine.ts', import.meta.url), 'utf8'), { mode: 'transform' });
+const fragments = stripTypeScriptTypes(await readFile(new URL('../src/player/playback/preview-fragments.ts', import.meta.url), 'utf8'), { mode: 'transform' });
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => {
   let resolve, reject;
@@ -48,6 +49,9 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
   const context = createContext({ performance, setTimeout, clearTimeout, document: {
     createElement() {
       const el = new EventTarget();
+      el.LOADED = 2;
+      el.readyState = 0;
+      el.addEventListener('load', () => { el.readyState = el.LOADED; });
       el.track = { mode: 'disabled', cues: null };
       el.track.removeCue = cue => el.track.cues.splice(el.track.cues.indexOf(cue), 1);
       el.track.addCue = cue => el.track.cues.push(cue);
@@ -73,6 +77,7 @@ async function harness({ importGate, readyGate, constructorError, destroyError, 
   }, { context });
   await module.link(specifier => {
     if (specifier === '@moa/shared') return shared;
+    if (specifier === './preview-fragments') return new SourceTextModule(fragments, { context });
     throw new Error('Unexpected static import: ' + specifier);
   });
   await module.evaluate();
@@ -101,6 +106,22 @@ test('VTT restores native cue placement after controls lift or custom height is 
   assert.ok(positioned.line < 0);
   controller.setHeight(0);
   assert.equal(positioned.line, 20);
+});
+
+test('only the current VTT element can report a failure, once per attempt', async () => {
+  const { controller, tracks } = await harness();
+  const failures = [];
+  await controller.show(vtt, () => failures.push('superseded'));
+  const old = tracks[0];
+  await controller.show(vtt, () => failures.push('active'));
+  old.dispatchEvent(new Event('error'));
+  tracks[0].dispatchEvent(new Event('error'));
+  tracks[0].dispatchEvent(new Event('error'));
+  await controller.show(vtt, () => failures.push('disposed'));
+  const disposed = tracks[0];
+  controller.destroy();
+  disposed.dispatchEvent(new Event('error'));
+  assert.deepEqual(failures, ['active']);
 });
 
 test('ASS defaults preserve authored styles and background overrides restore inline tags exactly', async () => {
@@ -166,6 +187,23 @@ test('VTT positive/negative offsets are absolute, survive switches, and apply af
   assert.equal(tracks[0].track.cues[0].startTime, 2);
   await controller.show(null);
   assert.equal(tracks.length, 0);
+});
+
+test('a saved VTT offset waits for all cues before applying to the first track', async () => {
+  const { controller, tracks } = await harness();
+  controller.setOffset(-1.5);
+  await controller.show(vtt);
+  const el = tracks[0];
+  el.readyState = 1;
+  el.track.cues = [];
+  controller.setOffset(-1.5);
+  el.track.cues.push(cue(10.135, 12));
+  controller.setOffset(-1.5);
+  el.track.cues.push(cue(13, 15));
+  el.dispatchEvent(new Event('load'));
+  assert.deepEqual(el.track.cues.map(c => [c.startTime, c.endTime]), [[8.635, 10.5], [11.5, 13.5]]);
+  controller.setOffset(0);
+  assert.deepEqual(el.track.cues.map(c => [c.startTime, c.endTime]), [[10.135, 12], [13, 15]]);
 });
 
 test('ASS shadow and outline controls preserve unrelated overrides and restore authored effects', async () => {

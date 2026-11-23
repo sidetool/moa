@@ -1,0 +1,27 @@
+.title-overview {
+  margin-top: var(--space-5);
+  max-width: 620px;
+  color: var(--text-2);
+  font-size: var(--font-body);
+  line-height: 1.65;
+}
+.title-tagline + .title-overview { margin-top: 6px; }
+.title-overview p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.title-overview p.is-expanded { display: block; }
+html[data-tv] .title-overview p.is-expanded {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.title-overview,
+.title-overview .text-btn { scroll-margin-block: calc(var(--nav-h) + var(--space-2)) var(--space-2); }
+.title-overview label { cursor: pointer; }
+.title-overview .text-btn { min-height: var(--control-height-compact); }
+@media (max-width: 760px) {
+  .title-overview { font-size: .92rem; }
+  .title-overview, .title-overview .text-btn { scroll-margin-block-start: var(--space-2); }
+}

@@ -1,9 +1,9 @@
 import { catalogReadOptions } from '../../api/catalog-refresh';
 import { useTitleGrouping } from '../../lib/device-prefs';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
-import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, VideoSource } from '@moa/shared';
+import type { BrowseSchema, BrowseSelection, MediaCard, NavigationTab, Row as RowData, SearchGroup, VideoSource } from '@moa/shared';
 import { api, currentProfileId } from '../../lib/api';
 import { categorySelection, sourcePage, sourceUrl } from '../sources/source-browse';
 import { Row, RowSkeleton } from '../../components/Row';
@@ -178,7 +178,7 @@ function useSearchSlots(cards: MediaCard[], scope: string) {
   const used = new Set<string>();
   const identities = new Set<string>();
   const rendered = new Map<string, MediaCard>();
-  for (const card of byFranchise(cards)) {
+  for (const card of cards) {
     const id = card.groupId ?? card.id;
     if (identities.has(id)) continue;
     identities.add(id);
@@ -211,18 +211,74 @@ function useSearchSlots(cards: MediaCard[], scope: string) {
   return slots.flatMap(slot => rendered.has(slot.key) ? [{ key: slot.key, card: rendered.get(slot.key)! }] : []);
 }
 
-export function GroupedSearch({ sources, query, local, pending = false }: { sources: VideoSource[]; query: string; local: MediaCard[]; pending?: boolean }) {
+// Observe the first batch until the latest batch settles. Both observers share a request
+// while their inputs match; later editions can resolve immediately without cancelling the first.
+function useSearchGrouping(cards: MediaCard[], query: string, scope: string) {
+  const latest = useGroupedCards(cards, query, scope);
+  const [first, setFirst] = useState<{ scope: string; cards: MediaCard[] } | null>(null);
+  const visible = new Set(cards);
+  const keepFirst = latest.groupingEnabled && latest.isPending && first?.scope === scope && first.cards.every(card => visible.has(card));
+  const initial = useGroupedCards(keepFirst ? first.cards : [], query, scope);
+  useEffect(() => {
+    if (!latest.groupingEnabled || !latest.isPending || !cards.length) {
+      if (first) setFirst(null);
+    } else if (!keepFirst) {
+      setFirst({ scope, cards });
+    }
+  }, [cards, scope, first, keepFirst, latest.groupingEnabled, latest.isPending]);
+  return { ...latest, data: latest.data ?? (keepFirst ? initial.data : undefined) };
+}
+
+type FailedSearchRequest = { label: string; retry: () => Promise<unknown> };
+
+export function GroupedSearch({ sources, query, local, pending, failures }: {
+  sources: VideoSource[]; query: string; local: SearchGroup['items']; pending: boolean; failures: FailedSearchRequest[];
+}) {
   const location = useLocation();
   const scope = JSON.stringify([currentProfileId(), query, sources.map(s => s.id).sort()]);
   const pages = useQueries({ queries: sources.map(s => ({ ...catalogReadOptions, queryKey: ['source-page', s.id, 'search', query, currentProfileId()], queryFn: ({ signal }: { signal: AbortSignal }) => sourcePage(s.id, 'search', query, 1, undefined, signal), staleTime: 60_000, retry: false })) });
-  const all = [...pages.flatMap(p => p.data?.items || []), ...local], grouped = useGroupedCards(all, query, scope);
+  const [retrying, setRetrying] = useState<FailedSearchRequest[] | null>(null);
+  const retryFocus = useRef<HTMLButtonElement | null>(null);
+  const results = useRef<HTMLDivElement>(null);
+  const sourceCards = pages.flatMap(p => p.data?.items || []);
+  const all = [...sourceCards, ...local], grouped = useSearchGrouping(all, query, scope);
   const langs = useMemo(() => new Map(sources.map(s => [s.id, s.lang])), [sources]);
-  const cards = (!grouped.groupingEnabled || grouped.isError ? all : all.length ? grouped.data || [] : []).map(card => withLang(card, langs));
-  const stable = useSearchSlots(cards, `${location.key}:${scope}:${grouped.groupingEnabled}`);
+  const failedRequests = [...failures, ...sources.flatMap((source, i) => pages[i].isError ? [{ label: source.name, retry: pages[i].refetch }] : [])];
+  if (grouped.groupingEnabled && all.length && grouped.isError) failedRequests.push({ label: '작품 묶기', retry: grouped.refetch });
+  const groupingFallback = grouped.isError || retrying?.some(request => request.retry === grouped.refetch);
+  const visible = grouped.groupingEnabled ? grouped.data ?? (groupingFallback ? all : []) : all;
+  const cards = visible.map(card => withLang(card, langs));
+  // A direct source result or a title-matched edition keeps the whole group in the first tier.
+  const genreOnly = new Set(local.filter(card => card.genreMatch).map(card => card.id));
+  for (const card of sourceCards) genreOnly.delete(card.id);
+  const titles: MediaCard[] = [], genres: MediaCard[] = [];
+  for (const card of cards) {
+    const members = card.groupMemberIds ?? [card.id];
+    (members.every(id => genreOnly.has(id)) ? genres : titles).push(card);
+  }
+  const stable = useSearchSlots([...byFranchise(titles), ...byFranchise(genres)], `${location.key}:${scope}:${grouped.groupingEnabled}`);
   const searching = pending || pages.some(p => p.isPending) || (grouped.groupingEnabled && !!all.length && grouped.isFetching);
   // Sources with nothing to show stay out of the way; pending and failed ones still say so.
   const chips = sources.map((source, i) => ({ source, page: pages[i] })).filter(({ page }) => page.isPending || page.isError || !!page.data?.items.length);
-  return <>
+  const notice = retrying ?? failedRequests;
+  async function retryFailed(button: HTMLButtonElement) {
+    if (retrying) return;
+    retryFocus.current = button;
+    setRetrying(failedRequests);
+    try { await Promise.all(failedRequests.map(request => request.retry())); }
+    finally { setRetrying(null); }
+  }
+  useEffect(() => {
+    const button = retryFocus.current;
+    if (!button || retrying || notice.length || searching) return;
+    // Only restore the retry control's lost focus. A card selected during the retry keeps focus.
+    if (!button.isConnected && document.activeElement === document.body) {
+      const next = results.current?.querySelector<HTMLElement>('a.poster-card, .search-empty');
+      next?.focus({ preventScroll: true });
+    }
+    retryFocus.current = null;
+  }, [notice.length, retrying, searching]);
+  return <div ref={results}>
     {!!chips.length && <div className="search-sources no-scrollbar">
       {chips.map(({ source, page }) => {
         const code = foreignCode(source.lang);
@@ -232,10 +288,14 @@ export function GroupedSearch({ sources, query, local, pending = false }: { sour
         </Link>;
       })}
     </div>}
+    {notice.length > 0 && <p className="search-error search-retry" role="status">
+      {notice.map(request => request.label).join(', ')} 조회에 실패했어요.{' '}
+      <button className="text-btn" aria-disabled={!!retrying} onClick={event => void retryFailed(event.currentTarget)}>{retrying ? '다시 시도 중…' : '다시 시도'}</button>
+    </p>}
     {(cards.length > 0 || searching) && <div className="grid">
       {stable.map(({ key, card }) => <PosterCard key={key} card={card} identity={`search:${key}`} />)}
       {searching && Array.from({ length: cards.length ? 6 : 12 }, (_, i) => <div key={`pending-${i}`} className="card poster-card" aria-hidden="true"><span className="sk art art-poster" /></div>)}
     </div>}
-    {!cards.length && !searching && <p className="search-empty">‘{query}’에 대한 결과가 없어요. 다른 제목으로 검색해 보세요.</p>}
-  </>;
+    {!cards.length && !searching && !notice.length && <p className="search-empty" tabIndex={-1}>‘{query}’에 대한 결과가 없어요. 다른 제목으로 검색해 보세요.</p>}
+  </div>;
 }
